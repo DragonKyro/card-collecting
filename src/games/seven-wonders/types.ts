@@ -1,16 +1,16 @@
-// 7 Wonders — types. Designed up-front to leave room for the major expansions
-// (Leaders, Cities, Babel, Armada, Edifice). Each expansion is its own module
-// under src/games/seven-wonders/expansions/<id>/ contributing extra decks,
-// extra board slots (e.g. armada fleets), and post-action hooks.
+// 7 Wonders — types.
 //
-// Turn structure — pure deterministic state machine:
-// - Each Age, 7 cards dealt per player.
-// - Simultaneous: each player picks 1 card from hand, then applies
-//   (build / wonder-stage / discard for 3 coins). All applied as a batch.
-// - Hands rotate (clockwise in Ages I and III, counter-clockwise in Age II).
-// - End of Age: military resolution against L/R neighbors.
-// - End of Age III: final scoring across 7 categories (military, treasury,
-//   wonder, civilian, commercial, guild, science).
+// Turn structure (pure deterministic state machine):
+//   - Each Age (I, II, III) every player is dealt 7 cards.
+//   - 6 picks per Age: each player submits a pick (build / wonder-stage / discard),
+//     reducer reveals + applies in batch, hands rotate (CW in I/III, CCW in II).
+//   - After the 6th pick the last card is discarded (base 7W).
+//   - End of Age: military resolution against L+R neighbors (-1/+1/+3/+5 tokens).
+//   - End of Age III: final scoring across 7 categories.
+//
+// Expansion hooks: see expansions/<id>/ directories. Each expansion contributes
+// extra decks and post-action hooks via a module — no `if (expansion === ...)`
+// switches in the base reducer.
 
 import type { Seat, PlayerId, GamePhase } from '@/core/types';
 import type { RngState } from '@/core/rng';
@@ -18,70 +18,229 @@ import type { RngState } from '@/core/rng';
 export type SwAge = 1 | 2 | 3;
 
 export type SwCardColor =
-  | 'brown'    // raw materials
-  | 'gray'     // manufactured
-  | 'blue'     // civilian (VP)
-  | 'yellow'   // commercial
-  | 'red'      // military
-  | 'green'    // science
-  | 'purple';  // guild (Age III)
+  | 'brown'    // raw materials (Age I/II)
+  | 'gray'     // manufactured (Age I/II)
+  | 'blue'     // civilian VPs
+  | 'yellow'   // commercial (income/discounts/VP)
+  | 'red'      // military shields
+  | 'green'    // science (compass/gear/tablet)
+  | 'purple';  // guild (Age III only)
+
+// ---------- Resources ----------
+
+export type SwRawResource = 'wood' | 'stone' | 'ore' | 'clay';
+export type SwManufacturedResource = 'glass' | 'papyrus' | 'loom';
+export type SwResource = SwRawResource | SwManufacturedResource;
+
+export const RAW_RESOURCES: readonly SwRawResource[] = ['wood', 'stone', 'ore', 'clay'];
+export const MANUFACTURED_RESOURCES: readonly SwManufacturedResource[] = ['glass', 'papyrus', 'loom'];
+export const ALL_RESOURCES: readonly SwResource[] = [...RAW_RESOURCES, ...MANUFACTURED_RESOURCES];
+
+/** A resource production token. A list of resources means "choose any one each
+ *  age". Single-element list = fixed production. */
+export type SwProduction = readonly SwResource[];
+
+/** A scientific symbol. */
+export type SwScience = 'compass' | 'gear' | 'tablet';
+
+// ---------- Card effects ----------
+
+export interface SwCost {
+  coins?: number;
+  resources?: SwResource[]; // each entry is one unit required; duplicates allowed
+}
+
+export type SwCardEffect =
+  // Single fixed resource production (brown w/ 1 type, or gray manufactured).
+  | { kind: 'produce'; production: SwProduction[] }
+  // Income on play (yellow cards like Tavern: +5 coins).
+  | { kind: 'coins'; amount: number }
+  // Military shields (red).
+  | { kind: 'shields'; shields: number }
+  // Civilian victory points (blue).
+  | { kind: 'vp'; vp: number }
+  // Science symbol (green).
+  | { kind: 'science'; symbol: SwScience }
+  // Discount on raw resources from neighbors (1 coin instead of 2). Yellow.
+  | { kind: 'tradeDiscountRaw'; sides: ('east' | 'west' | 'both')[] }
+  // Discount on manufactured resources from neighbors (1 coin instead of 2). Yellow.
+  | { kind: 'tradeDiscountManufactured'; sides: ('east' | 'west' | 'both')[] }
+  // End-of-game VPs based on what you/neighbors built. Yellow + purple.
+  // `from` indicates whose tableau to count from; each match awards `coinsPer`
+  // (commercial yellows) and/or `vpPer`. `wonderStagesPer` counts wonder stages
+  // built. coinsPer applies immediately when played (Haven, Lighthouse).
+  | {
+      kind: 'endVp';
+      from: 'self' | 'neighbors' | 'all'; // 'all' = self + both neighbors
+      countWhat:
+        | { kind: 'cardColor'; color: SwCardColor }
+        | { kind: 'wonderStages' }
+        | { kind: 'military' };          // count military tokens (not used yet but reserved)
+      coinsPerOnPlay?: number;            // immediate coins per match (Haven, Lighthouse, Chamber of Commerce)
+      vpPer?: number;                     // end-of-game VPs per match
+    }
+  // Guild cards' final VPs — same shape as endVp but kept as a separate kind for clarity.
+  // (Folded into endVp above; this entry kept for future "loose" guild effects.)
+  ;
 
 export interface SwCard {
   id: number;
   name: string;
   age: SwAge;
   color: SwCardColor;
-  // Cost / production / chain-link data filled in by the engine. Stubbed for now.
+  /** Player-count restriction. Card is in the deck only when minPlayers <= seats <= maxPlayers. */
+  minPlayers: number;
+  maxPlayers: number;
+  cost: SwCost;
+  /** Cards from a previous age whose owner may build this card for free. */
+  chainFrom?: string[];
+  /** Names of cards in a *later* age this card chains TO (informational only). */
+  chainTo?: string[];
+  effects: SwCardEffect[];
 }
 
-export type SwWonderId = string;       // e.g. 'gizah-a', 'gizah-b', 'rhodes-a', ...
+// ---------- Wonders ----------
+
+export interface SwWonderStage {
+  cost: SwCost;
+  effects: SwCardEffect[];
+  /** Short human-readable description (e.g., "+3 VP"). */
+  text: string;
+}
+
+export interface SwWonder {
+  id: string;          // 'gizah-a', 'gizah-b', etc.
+  name: string;        // "Gizah" / "Pyramids of Gizah"
+  side: 'A' | 'B';
+  /** Starting resource production. */
+  initialProduction: SwProduction[];
+  stages: SwWonderStage[];
+  flavor?: string;
+}
+
+// ---------- Player state ----------
 
 export interface SwPlayer {
   id: PlayerId;
-  wonderId: SwWonderId;
+  wonderId: string;
+  /** Current hand for this Age's draft. Empty between Ages. */
   hand: SwCard[];
-  /** Built cards in tableau, by color. */
+  /** Built cards in tableau. */
   tableau: SwCard[];
-  /** Wonder stages built (0..N). */
+  /** Wonder stages built (0..N), in order. */
   wonderStagesBuilt: number;
   coins: number;
-  /** Military tokens accumulated (-1, +1, +3, +5 from end-of-age battles). */
+  /** Military tokens accumulated (-1, +1, +3, +5). Order = Age 1, 2, 3 outcomes. */
   militaryTokens: number[];
-  /** Submitted card pick for the current tick, applied on reveal. */
+  /** Submitted card pick for the current tick, applied on reveal. null if no submission. */
   pendingPick: SwPendingPick | null;
 }
 
+/** What a player has chosen to do with the picked card this tick. */
 export type SwPendingPick =
-  | { kind: 'build'; cardId: number; paidLeft: number; paidRight: number }
-  | { kind: 'wonder'; cardId: number; paidLeft: number; paidRight: number }
+  | { kind: 'build'; cardId: number; payment: SwPayment }
+  | { kind: 'wonder'; cardId: number; stageIndex: number; payment: SwPayment }
   | { kind: 'discard'; cardId: number };
 
-export interface SwConfig {
-  /** Which expansion modules are active. Stub for now. */
-  expansions: ('leaders' | 'cities' | 'babel' | 'armada' | 'edifice')[];
-  /** Wonder assignment: 'random' | 'pickByHost' | 'preset'. */
-  wonderAssignment: 'random' | 'pickByHost' | 'preset';
-  /** If 'preset', the assigned wonder per seat (in seat order). */
-  presetWonders?: SwWonderId[];
+/** Resources purchased from neighbors (1-element-per-unit lists like cost). */
+export interface SwPayment {
+  /** Resources you pay neighbors for. Empty if none needed / all self-produced. */
+  fromWest: SwResource[];
+  fromEast: SwResource[];
+  /** Coins paid in card cost (excludes coins to neighbors which are computed). */
+  coins: number;
 }
+
+// ---------- Config ----------
+
+export type SwExpansionId = 'leaders' | 'cities' | 'babel' | 'armada' | 'edifice';
+
+export interface SwConfig {
+  /** Which expansion modules are active (none implemented yet — toggles only). */
+  expansions: SwExpansionId[];
+  /** Wonder assignment strategy. */
+  wonderAssignment: 'random' | 'preset';
+  /** Wonder side selection. */
+  wonderSide: 'random' | 'A' | 'B';
+  /** When wonderAssignment === 'preset', the wonder per seat (in seat order). */
+  presetWonders?: string[];
+}
+
+// ---------- Game state ----------
+
+export type SwSubPhase =
+  | 'picking'        // each player submits a pick this tick
+  | 'militaryEnd'    // post-age military resolution shown briefly
+  | 'finalScoring'   // game over; finalScores populated
+  ;
 
 export interface SwState {
   phase: GamePhase;
   seats: Seat[];
+  /** Set to the next unpicked AI player during 'picking' so the host AI driver
+   *  can tick through them. Null when waiting on humans. */
   activePlayerId: PlayerId | null;
   finalScores: Record<PlayerId, number> | null;
   rngState: RngState;
 
   config: SwConfig;
   age: SwAge;
-  /** Within an Age, which "round" — 1 through 6 (last card auto-discards in base 7W). */
+  /** Within an Age, which pick — 1 through 6. */
   ageRound: number;
-  subPhase: 'picking' | 'revealing' | 'militaryResolution' | 'ageEnd' | 'finalScoring';
+  subPhase: SwSubPhase;
   players: SwPlayer[];
-  /** Discard pile (visible) — used by Halicarnassus stage, Solomon, etc. */
+  /** Discard pile (visible across all ages). */
   discard: SwCard[];
+  /** Pass direction this age — 'cw' in I/III, 'ccw' in II. */
+  passDirection: 'cw' | 'ccw';
+
+  /** Summary of last military age resolution. Populated after each age. */
+  lastMilitaryResolution: SwMilitarySummary | null;
+  /** Final scoring breakdown when phase === 'gameOver'. */
+  finalScoringBreakdown: SwFinalScoringRow[] | null;
+
+  /** Append-only event log for the sidebar history. */
+  log: SwLogEntry[];
+  logSeq: number;
 }
+
+// ---------- Summaries ----------
+
+export interface SwMilitarySummary {
+  age: SwAge;
+  perPlayer: Array<{
+    playerId: PlayerId;
+    /** Wins / losses / draws against each neighbor. */
+    vsWest: 'win' | 'loss' | 'draw';
+    vsEast: 'win' | 'loss' | 'draw';
+    tokenGained: number; // 1, 3, or 5 for wins; -1 per loss; 0 for draw
+  }>;
+}
+
+export interface SwFinalScoringRow {
+  playerId: PlayerId;
+  military: number;
+  treasury: number;
+  wonder: number;
+  civilian: number;
+  commercial: number;
+  guild: number;
+  science: number;
+  total: number;
+}
+
+// ---------- Log ----------
+
+export type SwLogEntry =
+  | { seq: number; age: SwAge; ageRound: number; kind: 'pickSubmitted'; playerId: PlayerId }
+  | { seq: number; age: SwAge; ageRound: number; kind: 'pickRevealed'; playerId: PlayerId; pick: SwPendingPick; cardName: string }
+  | { seq: number; age: SwAge; ageRound: number; kind: 'militaryResolution'; summary: SwMilitarySummary }
+  | { seq: number; age: SwAge; ageRound: number; kind: 'ageStart' }
+  | { seq: number; age: SwAge; ageRound: number; kind: 'matchEnd'; winnerId: PlayerId | null };
+
+// ---------- Actions ----------
 
 export type SwAction =
   | { type: 'submitPick'; playerId: PlayerId; pick: SwPendingPick }
-  | { type: 'advanceTick' };
+  /** Advance from a between-age pause (military summary shown) into the next age. */
+  | { type: 'continue' };

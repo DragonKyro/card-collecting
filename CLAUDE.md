@@ -107,11 +107,19 @@ Each turn: draw 2 (keep 1 or both), optional play-pair-for-ability, then STOP / 
 
 ## Roadmap
 
-See [README.md](README.md#project-plan--roadmap). Current status: **Phases 0–3 + 6 (partial) complete.** SSP + Sushi Go playable hot-seat and online; Trystero room, lobby sync, action broadcast, snapshot on join, lobby + in-game chat, host-only AI driver, spectator fallback all wired. SSP has both Extra Salt (full) and Extra Pepper (6/12 events) togglable in the lobby.
+See [README.md](README.md#project-plan--roadmap). Current status: **Phases 0–4 + 6 (partial) complete.** SSP + Sushi Go + 7 Wonders (base) playable hot-seat and online. Trystero room, lobby sync, action broadcast, snapshot on join, lobby + in-game chat, host-only AI driver, spectator fallback all wired. SSP has both Extra Salt (full) and Extra Pepper (6/12 events) togglable in the lobby. 7 Wonders has expansion toggles in the lobby UI but none of the expansions are implemented yet.
+
+### 7 Wonders implementation notes
+
+- Cards: `src/games/seven-wonders/cards.ts` — templates for Ages I/II/III + Age III guilds. Per-player-count copy fidelity is approximate; the reducer's `dealAge` pads with duplicate ids when the deck is short of `playerCount × 7`.
+- Wonders: `wonders.ts` — all 7 wonders × A/B sides. A few stage effects ("build from discard", "play your last card free", "copy a guild") are deliberately not modeled — they have empty effect lists and a "not modeled" label in the stage text.
+- Resources: `resources.ts` — production set, neighbor purchase (`suggestCheapestPurchase`), trade discounts (raw/manufactured, per side), chain-builds.
+- Scoring: `scoring.ts` — 7 categories. Scientists Guild adds a wild science symbol via `bestScienceScore`. Olympia A's "build free per age" / Halicarnassus / Babylon B / Olympia B "copy guild" are NOT scored.
+- Reducer: `reducer.ts` — simultaneous picks via `pendingPick`; reveal tick when all submit. Cards purchased from neighbors transfer coins via seat-order pass through `applyPick`. Active player is repurposed during `picking` to point at the next un-submitted AI seat so the existing `GameHost` AI driver ticks them one at a time.
 
 ## Where to start next
 
-1. **7 Wonders base game** — fill out `src/games/seven-wonders/` reducer (3 ages × 6 picks, simultaneous `pendingPick`, hand rotation CW/CCW by age, military resolution at age end, final scoring across 7 categories).
-2. **Finish Pepper** — add the remaining 6 event cards to `events.ts` once authoritative rule text is in hand. Each new event needs an id in `SspEventId`, an entry in `EVENT_BY_ID`/`ALL_EVENT_IDS`, and (if it has a per-player rule effect) a hook into the reducer.
-3. **AI heuristics** — improve each game's `ai.ts` beyond "first legal move". Should be Salt/Pepper-aware (jellyfish/lobster pair recognition is automatic via `isValidDuoPair`; smarter play of starfish trios and seahorse needs explicit heuristics).
-4. **7 Wonders expansions** — Leaders, Cities, Babel, Armada, Edifice. Each under `src/games/seven-wonders/expansions/` with module-level hooks; no `if (expansion === ...)` switches.
+1. **7 Wonders expansions** — Leaders, Cities, Babel, Armada, Edifice. Each under `src/games/seven-wonders/expansions/` with module-level hooks; no `if (expansion === ...)` switches. Lobby UI already toggles them (no-op today).
+2. **7 Wonders polish** — model the deferred wonder stage effects (Olympia A "free per age", Halicarnassus "build from discard", Babylon A "play last card", Olympia B "copy guild", Babylon B "choose science"). The state machine already has hooks for between-age UI.
+3. **Finish Pepper** — add the remaining 6 event cards to `events.ts` once authoritative rule text is in hand. Each new event needs an id in `SspEventId`, an entry in `EVENT_BY_ID`/`ALL_EVENT_IDS`, and (if it has a per-player rule effect) a hook into the reducer.
+4. **AI heuristics** — improve each game's `ai.ts` beyond "first legal move". The 7W AI is intentionally simple — should weigh military/science/civilian more dynamically against the round.
