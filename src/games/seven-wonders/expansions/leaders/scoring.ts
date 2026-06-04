@@ -112,7 +112,7 @@ function evaluateScoreExtra(
 function countColors(p: SwPlayer): Record<SwCardColor, number> {
   const counts: Record<SwCardColor, number> = {
     brown: 0, gray: 0, blue: 0, yellow: 0, red: 0, green: 0, purple: 0,
-    leader: 0, black: 0, orange: 0,
+    leader: 0, black: 0, orange: 0, navy: 0,
   };
   for (const c of p.tableau) counts[c.color] += 1;
   return counts;

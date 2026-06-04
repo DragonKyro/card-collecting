@@ -27,7 +27,8 @@ export type SwCardColor =
   | 'purple'   // guild (Age III only)
   | 'leader'   // expansion: Leaders
   | 'black'    // expansion: Cities
-  | 'orange';  // expansion: Babel
+  | 'orange'   // expansion: Babel
+  | 'navy';    // expansion: Armada
 
 // ---------- Resources ----------
 
@@ -138,6 +139,15 @@ export type SwCardEffect =
         | { type: 'vpPerScienceSet'; vpPerSet: number }            // +V per {compass,gear,tablet} set including leader symbols
         | { type: 'vpPerNeighborCards'; color: SwCardColor; vpPer: number } // +V per matching card across BOTH neighbors
         | { type: 'vpPerOwnColors'; colors: readonly SwCardColor[]; vpPer: number } // +V per matching card across listed colors in own tableau
+      }
+
+  // ---------- Armada-owned effect kinds ----------
+  // ARMADA: end-game scoring extra.
+  | { kind: 'armadaScoreExtra';
+      rule:
+        | { type: 'vpPerNeighborMilitaryLosses'; vpPer: number }    // +V per defeat token across both neighbors
+        | { type: 'vpPerOwnAgeIIIBuilds'; vpPer: number }           // +V per Age III card in own tableau
+        | { type: 'vpPerOwnNavalSet'; vpPerSet: number }            // +V per (red+blue+green+yellow) set in own tableau
       }
   ;
 
@@ -303,7 +313,38 @@ export interface SwState {
   leaderDraftPassDir?: 'cw' | 'ccw';
   /** Solomon's owner if we're in solomonAwaitPick subphase. */
   solomonPickerId?: PlayerId | null;
+
+  // ---------- Edifice expansion fields (only set when Edifice is active) ----------
+
+  /** Three project tiles drawn at match start, one per age. Index by age - 1. */
+  edificeProjects?: SwEdificeProject[];
+  /** Contributors recorded for each age: parallel to edificeProjects.
+   *  Index i lists the playerIds who contributed to age (i+1)'s project. */
+  edificeContributors?: PlayerId[][];
 }
+
+// ---------- Edifice ----------
+
+export interface SwEdificeProject {
+  id: string;
+  name: string;
+  age: SwAge;
+  /** Minimum contributors required for the reward to trigger at age end. */
+  threshold: number;
+  /** Granted to every contributor (only if threshold met). */
+  reward: SwEdificeOutcome;
+  /** Applied to every non-contributor (only if threshold met). */
+  penalty: SwEdificeOutcome;
+  description: string;
+}
+
+export type SwEdificeOutcome =
+  | { kind: 'vp'; vp: number }
+  | { kind: 'coins'; coins: number }
+  | { kind: 'shields'; shields: number }
+  | { kind: 'debtTokens'; amount: number }   // Cities-style debt; if Cities is off, treated as -1 VP each at endgame regardless
+  | { kind: 'science'; symbol: SwScience }
+  | { kind: 'none' };                         // some projects have no reward/penalty
 
 // ---------- Summaries ----------
 

@@ -6,6 +6,7 @@ Shipping targets:
 - **Sushi Go! Party** (incl. menu builder, not just the base set)
 - **Sea Salt & Paper**
 - **7 Wonders** (with expansion hooks: Leaders, Cities, Babel, Armada, Edifice)
+- **7 Wonders Duel** (planned — standalone 2-player variant; separate game module)
 - **Air, Land & Sea**
 - More to follow.
 
@@ -84,9 +85,10 @@ npm run test:run    # vitest single run
   - [x] *Leaders* — pick-and-pass draft of 4 leaders at match start, then one leader per Age (play / bury / discard / skip). All 36 leaders modeled across 7 hook tiers (pure on-play, end-game per-X, cost modifier, on-play trigger, activated ability, set-completion, on-recruit). Bilkis once-per-turn ability and Solomon "build from discard" sub-phase wired.
   - [x] *Cities* — 27 black cards (9 per age) shuffled into existing age decks. Debt tokens (−1 VP each) handed to neighbors via the `citiesDebtToNeighbors` effect. Diplomacy tokens auto-spent at age-end military (holder is skipped, neighbors compare across the gap). Tourist Office (+7 per 7-color set) and Gambling Hall (+1 VP per debt token across all players) scoring extras implemented. A few card abilities still placeholder no-ops pending authoritative rulebook text.
   - [x] *Babel* (partial) — 15 orange cards (5 per age) shuffled into existing age decks. Three Babel-themed scoring rules implemented (`vpPerScienceSet`, `vpPerNeighborCards`, `vpPerOwnColors`). Central Tower of Babel (shared law tiles) and Great Projects of Babylon (cooperative goals) NOT modeled in v1 — they require shared central state coordinated across all picks, pending authoritative rule text.
-  - [ ] *Armada* — naval boards + island cards + 4th end-of-age track.
-  - [ ] *Edifice* — cooperative project tiles.
+  - [x] *Armada* (partial) — 15 navy cards (5 per age) shuffled into existing age decks. Three Armada-themed scoring rules implemented (`vpPerNeighborMilitaryLosses`, `vpPerOwnAgeIIIBuilds`, `vpPerOwnNavalSet`). Personal shipyards (4 fleets × 3 levels), naval combat at age-end, island cards (separate deck via Naval action), and the pirate track are NOT modeled in v1.
+  - [x] *Edifice* — 3 central project tiles (one per age) drawn from a pool of 8 at match setup. A player contributes to age N's project by building any wonder stage during that age. At endgame, projects whose threshold of contributors is met reward each contributor and penalize each non-contributor. Outcomes (VP, shields, science, coins, debt tokens) are surfaced as an "edifice" column in final scoring.
 - [x] **Phase 8** — Air, Land & Sea (2-player; 3-theater battles; Deploy / Improvise (face-down) / Withdraw; instant + ongoing abilities; best-to-12 across rotating battles). Spies, Lies, & Supplies expansion scaffolded — its 3 new theaters (Intel/Diplo/Econ) and 18 cards are playable with raw strengths; per-card abilities are placeholder no-ops pending authoritative rulebook text. Epic Mode (5 theaters, 9-card hands) wired through the lobby toggle.
 - [ ] **Phase 9** — Additional games as desired.
+  - [ ] *7 Wonders Duel* — standalone 2-player variant. Separate game module under `src/games/seven-wonders-duel/`; shares zero state with the base 7 Wonders module. Different draft (revealed-card pyramid instead of pass-hands), 12 unique wonders, 3 Progress Tokens, single-line military track with two-sided markers, Science Supremacy / Military Supremacy / Civilian Victory.
 
 Game-specific design notes live in each game's `types.ts` and in [CLAUDE.md](CLAUDE.md).
