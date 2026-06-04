@@ -30,7 +30,7 @@ export const sushiGoModule: GameModule<SushiGoState, SushiGoAction, SushiGoConfi
     return errors;
   },
 
-  createInitialState(config, seed) {
+  createInitialState(config, seed, _seats) {
     return {
       phase: 'playing',
       seats: [],

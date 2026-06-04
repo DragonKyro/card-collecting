@@ -58,9 +58,7 @@ export function GameLobby({ module, onBack, onStart }: Props) {
     const errors = module.validateConfig(config);
     if (errors.length) { alert(errors.join('\n')); return; }
     const seed = randomSeed();
-    const initial = module.createInitialState(config, seed);
-    initial.seats = seats;
-    initial.activePlayerId = seats[0]?.id ?? null;
+    const initial = module.createInitialState(config, seed, seats);
     // Local-only for now; hot-seat reveals the active player's hand to whichever
     // device they're sitting at. Online flow will swap localPlayerId per peer.
     useGameStore.getState().loadGame(module, initial, localUuid);

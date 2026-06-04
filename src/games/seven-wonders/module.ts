@@ -24,7 +24,7 @@ export const sevenWondersModule: GameModule<SwState, SwAction, SwConfig> = {
     return errors;
   },
 
-  createInitialState(config, seed) {
+  createInitialState(config, seed, _seats) {
     return {
       phase: 'playing',
       seats: [],

@@ -19,6 +19,7 @@
 //     replicated to every peer. We rely on friends-only honor, no anti-cheat.
 
 import type { PlayerId, Seat, GamePhase } from './types';
+export type { Seat };
 import type { RngState } from './rng';
 
 // All game states must expose these top-level fields so the shell can render
@@ -54,8 +55,9 @@ export interface GameModule<
   /** Validate a chosen config — return a list of human-readable errors, [] if OK. */
   validateConfig(config: C): string[];
 
-  /** Build the opening GameState. Pure given (config, seed). */
-  createInitialState(config: C, seed: number): S;
+  /** Build the opening GameState. Pure given (config, seed, seats). Seats are
+   *  passed in so the module can size hands, set the first turn, etc. */
+  createInitialState(config: C, seed: number, seats: Seat[]): S;
 
   /** Reducer. Throws on invalid actions. Must be pure. */
   applyAction(state: S, action: A): S;

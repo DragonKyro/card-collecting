@@ -1,9 +1,12 @@
-// Sea Salt & Paper module — STUB.
+// Sea Salt & Paper module.
 
 import type { GameModule } from '@/core/module';
-import type { Seat } from '@/core/types';
+import type { Seat, PlayerId } from '@/core/types';
 import { createRng } from '@/core/rng';
-import type { SspState, SspAction, SspConfig } from './types';
+import type { SspState, SspAction, SspConfig, SspPlayer } from './types';
+import { applyAction, setupNewMatch } from './reducer';
+import { chooseAIAction } from './ai';
+import { defaultTargetScore } from './cards';
 
 export const seaSaltPaperModule: GameModule<SspState, SspAction, SspConfig> = {
   id: 'sea-salt-paper',
@@ -12,8 +15,8 @@ export const seaSaltPaperModule: GameModule<SspState, SspAction, SspConfig> = {
   minPlayers: 2,
   maxPlayers: 4,
 
-  defaultConfig(_seats: Seat[]): SspConfig {
-    return { targetScore: 35 };
+  defaultConfig(seats: Seat[]): SspConfig {
+    return { targetScore: defaultTargetScore(seats.length || 2) };
   },
 
   validateConfig(config) {
@@ -22,8 +25,8 @@ export const seaSaltPaperModule: GameModule<SspState, SspAction, SspConfig> = {
       : ['Target score must be 20–100.'];
   },
 
-  createInitialState(config, seed) {
-    return {
+  createInitialState(config, seed, seats) {
+    const state: SspState = {
       phase: 'playing',
       seats: [],
       activePlayerId: null,
@@ -32,17 +35,24 @@ export const seaSaltPaperModule: GameModule<SspState, SspAction, SspConfig> = {
       config,
       round: 1,
       deck: [],
-      discard: [],
+      discards: [[], []],
+      pendingDraw: [],
       players: [],
-      subPhase: 'draw',
+      subPhase: 'awaitingAction',
       lastChanceFrom: null,
       lastChanceRemaining: [],
+      lastRoundSummary: null,
+      mermaidWinnerId: null,
     };
+    return attachSeatsAndStart(state, seats ?? []);
   },
 
-  applyAction(state, _action) {
-    // TODO: implement reducer.
-    return state;
+  applyAction(state, action) {
+    return applyAction(state, action);
+  },
+
+  chooseAIAction(state, playerId: PlayerId) {
+    return chooseAIAction(state, playerId);
   },
 
   ui: async () => {
@@ -50,3 +60,17 @@ export const seaSaltPaperModule: GameModule<SspState, SspAction, SspConfig> = {
     return mod.bundle;
   },
 };
+
+/** Helper to attach seats and start the match. Called by the lobby on game start. */
+export function attachSeatsAndStart(state: SspState, seats: Seat[]): SspState {
+  state.seats = seats;
+  state.players = seats.map<SspPlayer>((s) => ({
+    id: s.id,
+    hand: [],
+    table: [],
+    roundScore: 0,
+    matchScore: 0,
+  }));
+  setupNewMatch(state);
+  return state;
+}
