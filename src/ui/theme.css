@@ -102,6 +102,19 @@ input, select {
 .game-card h3 { margin: 0 0 8px; }
 .game-card p { margin: 0; color: var(--fg-muted); font-size: 14px; }
 .game-card .player-range { margin-top: 12px; font-size: 13px; color: var(--fg-muted); }
+.game-card-art {
+  margin: -18px -18px 14px;
+  display: block;
+  overflow: hidden;
+  border-top-left-radius: var(--radius);
+  border-top-right-radius: var(--radius);
+  background: #111;
+}
+.game-card-art svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
 
 .lobby {
   display: grid;

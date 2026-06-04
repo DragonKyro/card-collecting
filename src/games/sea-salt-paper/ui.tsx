@@ -7,6 +7,7 @@ import type {
 import { CardView, FaceDownCard } from './Card';
 import { isValidDuoPair, tentativeScore, totalScore } from './scoring';
 import { FAMILY } from './cards';
+import { Sidebar } from './Sidebar';
 import './ssp.css';
 
 function LobbyConfig({ config, seats, onChange }: { config: SspConfig; seats: Seat[]; onChange: (c: SspConfig) => void }) {
@@ -43,29 +44,58 @@ function GameView({
   localPlayerId: PlayerId | null;
   dispatch: (a: SspAction) => void;
 }) {
-  // Selected card ids for forming a duo pair.
+  // selected hand-card ids for forming a duo pair
   const [selected, setSelected] = useState<number[]>([]);
+  // streamlined keep-from-draw: which of the two pending-draw cards to keep
+  const [keepIndex, setKeepIndex] = useState<0 | 1 | null>(null);
 
   useEffect(() => {
-    // clear selection when our turn changes
     setSelected([]);
+    setKeepIndex(null);
   }, [state.activePlayerId, state.subPhase, state.round]);
 
   const isLocalActive = localPlayerId !== null && state.activePlayerId === localPlayerId;
   const me = state.players.find((p) => p.id === localPlayerId) ?? null;
   const opponents = state.players.filter((p) => p.id !== localPlayerId);
+  const mySeatName = getSeat(state, localPlayerId ?? '')?.name ?? 'You';
+
+  // ----- Auto-end-turn: if active human has no plays AND can't stop, just pass.
+  // We let the AI driver in GameHost handle AI seats; for humans we only auto
+  // when the local player is the active seat AND it's their turn AND no plays
+  // are available AND they cannot call STOP/LAST CHANCE.
+  useEffect(() => {
+    if (!isLocalActive) return;
+    if (state.subPhase !== 'awaitingPlayOrEnd') return;
+    if (!me) return;
+    const pairs = findHandPairs(me.hand);
+    const score = tentativeScore(me.hand, me.table);
+    const noPair = pairs.length === 0;
+    const cannotEnd = score < 7;
+    if (noPair && cannotEnd) {
+      const t = setTimeout(() => dispatch({ type: 'pass' }), 400);
+      return () => clearTimeout(t);
+    }
+  }, [isLocalActive, state.subPhase, me?.hand.length, me?.table.length]);
 
   if (state.phase === 'gameOver') {
-    return <GameOver state={state} />;
+    return (
+      <div className="ssp-layout">
+        <div className="ssp"><GameOver state={state} /></div>
+        <Sidebar state={state} mySeatName={mySeatName} />
+      </div>
+    );
   }
 
   if (state.subPhase === 'roundEnd') {
     return (
-      <div className="ssp">
-        <RoundSummary state={state} />
-        <div style={{ display: 'flex', justifyContent: 'center', marginTop: 16 }}>
-          <button onClick={() => dispatch({ type: 'nextRound' })}>Next round →</button>
+      <div className="ssp-layout">
+        <div className="ssp">
+          <RoundSummary state={state} />
+          <div style={{ display: 'flex', justifyContent: 'center', marginTop: 16 }}>
+            <button onClick={() => dispatch({ type: 'nextRound' })}>Next round →</button>
+          </div>
         </div>
+        <Sidebar state={state} mySeatName={mySeatName} />
       </div>
     );
   }
@@ -91,139 +121,194 @@ function GameView({
     });
   };
 
+  // Keep-from-draw helper: when the user clicks a pile we commit the draw with
+  // the previously-selected keepIndex.
+  const onPileClick = (pileIdx: 0 | 1) => {
+    if (!isLocalActive) return;
+    if (state.subPhase === 'awaitingAction') {
+      // direct draw from this discard pile
+      if (state.discards[pileIdx].length === 0) return;
+      dispatch({ type: 'drawFromDiscard', pile: pileIdx });
+      return;
+    }
+    if (state.subPhase === 'awaitingKeep' && keepIndex !== null) {
+      dispatch({ type: 'keepFromDraw', keepIndex, discardToPile: pileIdx });
+      setKeepIndex(null);
+      return;
+    }
+    if (state.subPhase === 'awaitingCrabPick') {
+      // surfaced in CrabPicker; ignore on the pile itself for now
+      return;
+    }
+  };
+
+  const onDeckClick = () => {
+    if (!isLocalActive) return;
+    if (state.subPhase === 'awaitingAction' && state.deck.length >= 2) {
+      dispatch({ type: 'drawPair' });
+    }
+  };
+
   return (
-    <div className="ssp">
-      <div className="board">
-        <div className="target-info">
-          <span>Round {state.round}</span>
-          <span>Target: {state.config.targetScore} pts to win the match</span>
-          <span>{state.deck.length} cards left in deck</span>
-        </div>
+    <div className="ssp-layout">
+      <div className="ssp">
+        <div className="board">
+          <div className="target-info">
+            <span>Round {state.round}</span>
+            <span>Target: {state.config.targetScore} pts to win the match</span>
+            <span>{state.deck.length} cards left in deck</span>
+          </div>
 
-        <div className="opponents">
-          {opponents.map((p) => (
-            <PlayerStrip key={p.id} player={p} seat={getSeat(state, p.id)} isActive={state.activePlayerId === p.id} reveal={false} />
-          ))}
-        </div>
+          <div className="opponents">
+            {opponents.map((p) => (
+              <PlayerStrip key={p.id} player={p} seat={getSeat(state, p.id)} isActive={state.activePlayerId === p.id} reveal={false} />
+            ))}
+          </div>
 
-        <CenterStrip state={state} dispatch={dispatch} isLocalActive={isLocalActive} me={me} />
+          <CenterStrip
+            state={state}
+            isLocalActive={isLocalActive}
+            keepIndex={keepIndex}
+            onDeckClick={onDeckClick}
+            onPileClick={onPileClick}
+          />
 
-        {state.subPhase === 'awaitingKeep' && state.pendingDraw.length === 2 && isLocalActive && (
-          <PendingDrawPanel pending={state.pendingDraw as [SspCard, SspCard]} dispatch={dispatch} />
-        )}
+          {state.subPhase === 'awaitingKeep' && state.pendingDraw.length === 2 && isLocalActive && (
+            <PendingDrawPanel
+              pending={state.pendingDraw as [SspCard, SspCard]}
+              keepIndex={keepIndex}
+              setKeepIndex={setKeepIndex}
+            />
+          )}
 
-        {me ? (
-          <div className="hand-area">
-            <h3>
-              <span>{getSeat(state, me.id)?.name ?? 'You'} — {myTentative} pt{myTentative === 1 ? '' : 's'}</span>
-              <span style={{ fontSize: 12, opacity: 0.7 }}>
-                {me.matchScore} match • {me.hand.length} in hand
-              </span>
-            </h3>
+          {me ? (
+            <div className="hand-area">
+              <h3>
+                <span>{getSeat(state, me.id)?.name ?? 'You'} — {myTentative} pt{myTentative === 1 ? '' : 's'}</span>
+                <span style={{ fontSize: 12, opacity: 0.7 }}>
+                  {me.matchScore} match • {me.hand.length} in hand
+                </span>
+              </h3>
 
-            <div className="cards">
-              {me.hand.map((c) => {
-                const allowSelect =
-                  isLocalActive && state.subPhase === 'awaitingPlayOrEnd';
-                return (
-                  <CardView
-                    key={c.id}
-                    card={c}
-                    selectable={allowSelect}
-                    selected={selected.includes(c.id)}
-                    onClick={allowSelect ? () => toggleSelect(c.id) : undefined}
-                  />
-                );
-              })}
-              {me.hand.length === 0 && <p className="help">No cards yet — draw to start.</p>}
-            </div>
+              <div className="cards">
+                {me.hand.map((c) => {
+                  const allowSelect =
+                    isLocalActive && state.subPhase === 'awaitingPlayOrEnd';
+                  return (
+                    <CardView
+                      key={c.id}
+                      card={c}
+                      selectable={allowSelect}
+                      selected={selected.includes(c.id)}
+                      onClick={allowSelect ? () => toggleSelect(c.id) : undefined}
+                    />
+                  );
+                })}
+                {me.hand.length === 0 && <p className="help">No cards yet — click the deck or a discard pile to draw.</p>}
+              </div>
 
-            {me.table.length > 0 && (
-              <>
-                <h3 style={{ marginTop: 14 }}>
-                  <span>On the table</span>
-                </h3>
-                <div className="table-strip">
-                  {me.table.map((c) => (
-                    <CardView key={c.id} card={c} size="small" />
-                  ))}
-                </div>
-              </>
-            )}
-
-            <div className="actions">
-              {state.subPhase === 'awaitingPlayOrEnd' && (
+              {me.table.length > 0 && (
                 <>
-                  <button
-                    disabled={!canPlaySelectedPair}
-                    onClick={() => {
-                      if (!canPlaySelectedPair) return;
-                      dispatch({ type: 'playPair', cardIds: [selected[0], selected[1]] });
-                      setSelected([]);
-                    }}
-                  >
-                    Play pair {selected.length === 2 ? `(${describeSelection(me, selected)})` : ''}
-                  </button>
-                  <button className="stop" disabled={!canStop} onClick={() => dispatch({ type: 'stop' })}>
-                    STOP {canStop ? `(${myTentative})` : ''}
-                  </button>
-                  <button className="lastchance" disabled={!canLastChance} onClick={() => dispatch({ type: 'lastChance' })}>
-                    LAST CHANCE
-                  </button>
-                  <button className="pass" disabled={!canPass} onClick={() => dispatch({ type: 'pass' })}>
-                    End turn
-                  </button>
+                  <h3 style={{ marginTop: 14 }}>
+                    <span>On the table</span>
+                  </h3>
+                  <div className="table-strip">
+                    {me.table.map((c) => (
+                      <CardView key={c.id} card={c} size="small" />
+                    ))}
+                  </div>
                 </>
               )}
-              {state.subPhase === 'awaitingSharkSteal' && isLocalActive && (
-                <StealPicker state={state} dispatch={dispatch} />
-              )}
-              {state.subPhase === 'awaitingCrabPick' && isLocalActive && (
-                <CrabPicker state={state} dispatch={dispatch} />
-              )}
+
+              <div className="actions">
+                {state.subPhase === 'awaitingPlayOrEnd' && (
+                  <>
+                    <button
+                      disabled={!canPlaySelectedPair}
+                      onClick={() => {
+                        if (!canPlaySelectedPair) return;
+                        dispatch({ type: 'playPair', cardIds: [selected[0], selected[1]] });
+                        setSelected([]);
+                      }}
+                    >
+                      Play pair {selected.length === 2 ? `(${describeSelection(me, selected)})` : ''}
+                    </button>
+                    <button className="stop" disabled={!canStop} onClick={() => dispatch({ type: 'stop' })}>
+                      STOP {canStop ? `(${myTentative})` : ''}
+                    </button>
+                    <button className="lastchance" disabled={!canLastChance} onClick={() => dispatch({ type: 'lastChance' })}>
+                      LAST CHANCE
+                    </button>
+                    <button className="pass" disabled={!canPass} onClick={() => dispatch({ type: 'pass' })}>
+                      End turn
+                    </button>
+                  </>
+                )}
+                {state.subPhase === 'awaitingSharkSteal' && isLocalActive && (
+                  <StealPicker state={state} dispatch={dispatch} />
+                )}
+                {state.subPhase === 'awaitingCrabPick' && isLocalActive && (
+                  <CrabPicker state={state} dispatch={dispatch} />
+                )}
+              </div>
             </div>
-          </div>
-        ) : (
-          <p className="help">Spectator view.</p>
+          ) : (
+            <p className="help">Spectator view.</p>
+          )}
+        </div>
+
+        {!isLocalActive && (
+          <p className="help center" style={{ marginTop: 12 }}>
+            Waiting for {getSeat(state, state.activePlayerId ?? '')?.name ?? 'opponent'}…
+          </p>
         )}
       </div>
 
-      {!isLocalActive && (
-        <p className="help center" style={{ marginTop: 12 }}>
-          Waiting for {getSeat(state, state.activePlayerId ?? '')?.name ?? 'opponent'}…
-        </p>
-      )}
+      <Sidebar state={state} mySeatName={mySeatName} />
     </div>
   );
 }
 
 function CenterStrip({
-  state, dispatch, isLocalActive,
-}: { state: SspState; dispatch: (a: SspAction) => void; isLocalActive: boolean; me: SspPlayer | null }) {
-  const canDraw =
-    isLocalActive && state.subPhase === 'awaitingAction';
+  state, isLocalActive, keepIndex, onDeckClick, onPileClick,
+}: {
+  state: SspState;
+  isLocalActive: boolean;
+  keepIndex: 0 | 1 | null;
+  onDeckClick: () => void;
+  onPileClick: (pile: 0 | 1) => void;
+}) {
+  const canDraw = isLocalActive && state.subPhase === 'awaitingAction';
+  const canCommitKeep = isLocalActive && state.subPhase === 'awaitingKeep' && keepIndex !== null;
+
   return (
     <div className="center">
-      <div className="deck-stack">
+      <div
+        className={`deck-stack ${canDraw && state.deck.length >= 2 ? 'clickable' : ''}`}
+        onClick={canDraw && state.deck.length >= 2 ? onDeckClick : undefined}
+        title={canDraw ? 'Click to draw two from the deck' : ''}
+      >
         <FaceDownCard />
-        <button disabled={!canDraw || state.deck.length < 2} onClick={() => dispatch({ type: 'drawPair' })}>
-          Draw 2
-        </button>
-        <span>{state.deck.length}</span>
+        <div className="label">Deck · {state.deck.length}</div>
+        {canDraw && <div className="label" style={{ color: '#f4d268' }}>Click to draw 2</div>}
       </div>
       {[0, 1].map((i) => {
         const pile = state.discards[i];
         const top = pile[pile.length - 1];
+        const canTakeFromPile = canDraw && !!top;
+        const canDropHere = canCommitKeep;
+        const clickable = canTakeFromPile || canDropHere;
         return (
-          <div key={i} className={`pile ${pile.length === 0 ? 'empty' : ''}`}>
+          <div
+            key={i}
+            className={`pile ${pile.length === 0 ? 'empty' : ''} ${clickable ? 'clickable' : ''} ${canDropHere ? 'target-discard' : ''}`}
+            onClick={clickable ? () => onPileClick(i as 0 | 1) : undefined}
+            title={canTakeFromPile ? `Click to take ${FAMILY[top.family].label} from pile ${i + 1}` : canDropHere ? `Discard the other card to pile ${i + 1}` : ''}
+          >
             {top ? <CardView card={top} /> : <div className="empty-slot">empty</div>}
-            <button
-              disabled={!canDraw || !top}
-              onClick={() => dispatch({ type: 'drawFromDiscard', pile: i as 0 | 1 })}
-            >
-              Take from pile {i + 1}
-            </button>
-            <span>{pile.length} card{pile.length === 1 ? '' : 's'}</span>
+            <div className="label">Pile {i + 1} · {pile.length} card{pile.length === 1 ? '' : 's'}</div>
+            {canTakeFromPile && <div className="label" style={{ color: '#f4d268' }}>Click to take</div>}
+            {canDropHere && <div className="label" style={{ color: '#f4d268' }}>Drop here</div>}
           </div>
         );
       })}
@@ -231,37 +316,32 @@ function CenterStrip({
   );
 }
 
-function PendingDrawPanel({ pending, dispatch }: { pending: [SspCard, SspCard]; dispatch: (a: SspAction) => void }) {
-  const [keep, setKeep] = useState<0 | 1 | null>(null);
-  const [discardPile, setDiscardPile] = useState<0 | 1>(0);
+function PendingDrawPanel({
+  pending, keepIndex, setKeepIndex,
+}: {
+  pending: [SspCard, SspCard];
+  keepIndex: 0 | 1 | null;
+  setKeepIndex: (i: 0 | 1) => void;
+}) {
   return (
     <div className="pending-draw">
-      <div>
-        <p style={{ margin: '0 0 8px', textAlign: 'center', fontSize: 13 }}>
-          Pick one to keep — the other goes face-up onto a discard pile.
-        </p>
+      <div style={{ width: '100%' }}>
+        <div className="keep-hint">
+          {keepIndex === null
+            ? 'Step 1: click the card you want to keep.'
+            : 'Step 2: click a discard pile (left) to drop the other card there.'}
+        </div>
         <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
           {pending.map((c, i) => (
             <CardView
               key={c.id}
               card={c}
               selectable
-              selected={keep === i}
-              onClick={() => setKeep(i as 0 | 1)}
+              selected={keepIndex === i}
+              onClick={() => setKeepIndex(i as 0 | 1)}
             />
           ))}
         </div>
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, color: 'rgba(255,255,255,0.9)', fontSize: 13 }}>
-        <span>Discard the other onto:</span>
-        <label><input type="radio" name="dp" checked={discardPile === 0} onChange={() => setDiscardPile(0)} /> Pile 1</label>
-        <label><input type="radio" name="dp" checked={discardPile === 1} onChange={() => setDiscardPile(1)} /> Pile 2</label>
-        <button
-          disabled={keep === null}
-          onClick={() => keep !== null && dispatch({ type: 'keepFromDraw', keepIndex: keep, discardToPile: discardPile })}
-        >
-          Confirm
-        </button>
       </div>
     </div>
   );
@@ -406,6 +486,16 @@ function GameOver({ state }: { state: SspState }) {
       </div>
     </div>
   );
+}
+
+function findHandPairs(hand: SspCard[]): Array<[SspCard, SspCard]> {
+  const out: Array<[SspCard, SspCard]> = [];
+  for (let i = 0; i < hand.length; i++) {
+    for (let j = i + 1; j < hand.length; j++) {
+      if (isValidDuoPair(hand[i], hand[j])) out.push([hand[i], hand[j]]);
+    }
+  }
+  return out;
 }
 
 function getSeat(state: SspState, id: PlayerId): Seat | undefined {

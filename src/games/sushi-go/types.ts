@@ -1,74 +1,114 @@
-// Sushi Go! Party — types. Implementation lives alongside in state.ts /
-// actions.ts (TBD). This file fixes the shapes the engine and netcode will see.
+// Sushi Go! Party — types.
 //
-// Party-edition design notes (relevant to the engine, not yet implemented):
-// - Menu builder picks 8 card types (1 nigiri set, 1–3 rolls, 5 appetizers,
-//   3 specials, 1 dessert) before round 1. The chosen menu drives deck
-//   composition only — turn structure is identical across menus.
-// - Three rounds. Players are dealt a hand each round, simultaneously pick one
-//   card, then pass hands. Engine model: each "tick" collects every player's
-//   `play` action, applies them as a batch, rotates hands. Engine waits at a
-//   "selection" phase until all live players have submitted.
-// - Chopsticks / Spoon / Special Order / Takeout Box / Menu / Soy Sauce / Tea /
-//   Wasabi are all "trigger after pick" — we'll model them as a second pending
-//   phase per turn the player who played the special enters.
-// - Pudding / fruit / scoring cards persist across rounds; non-dessert cards
-//   reset.
+// A "menu" is the set of 8 card kinds chosen in the lobby:
+//   1 nigiri set + 1 roll + 3 appetizers + 3 specials + 1 dessert.
+// The chosen menu drives deck composition only; turn flow is identical across
+// menus.
+//
+// Turn structure: every round players are dealt a hand, simultaneously submit
+// one pick from their hand, then hands rotate. Engine waits at
+// `subPhase: 'selecting'` until all live players have submitted, then
+// batch-applies and advances. Three rounds; dessert pile persists across rounds.
 
 import type { Seat, PlayerId, GamePhase } from '@/core/types';
 import type { RngState } from '@/core/rng';
 
+export type SushiGoCategory = 'nigiri' | 'roll' | 'appetizer' | 'special' | 'dessert';
+
 export type SushiGoCardKind =
-  // Nigiri set (always one)
+  // Nigiri set (always one, scored egg/salmon/squid).
   | 'nigiri'
-  // Rolls (choose one)
+  // Rolls (pick 1).
   | 'maki' | 'temaki' | 'uramaki'
-  // Appetizers (choose 3)
-  | 'dumpling' | 'tempura' | 'sashimi' | 'mizu_onigiri' | 'tofu' | 'edamame' | 'eel' | 'eggNigiri'
-  // Specials (choose 3)
+  // Appetizers (pick 3).
+  | 'dumpling' | 'tempura' | 'sashimi' | 'mizuOnigiri' | 'tofu' | 'edamame' | 'eel' | 'eggNigiri'
+  // Specials (pick 3).
   | 'soySauce' | 'wasabi' | 'tea' | 'specialOrder' | 'takeoutBox' | 'chopsticks' | 'spoon' | 'menu'
-  // Desserts (choose 1)
+  // Desserts (pick 1).
   | 'pudding' | 'greenTeaIceCream' | 'fruit';
 
+/** Some card kinds carry a variant (nigiri = egg/salmon/squid, maki = icon count, fruit = which fruits). */
 export interface SushiGoCard {
-  id: number;                 // unique within a game
+  id: number;
   kind: SushiGoCardKind;
-  /** For nigiri: 1/2/3 (egg/salmon/squid). For fruit: which 3 fruits. Otherwise unused. */
+  /** Free-text discriminator. Documented per-kind in cards.ts. */
   variant?: string;
 }
 
 export interface SushiGoConfig {
-  /** Eight card kinds drawn from the menu, set in lobby. */
+  /** Exactly 8 unique kinds: 1 nigiri + 1 roll + 3 appetizers + 3 specials + 1 dessert. */
   menu: SushiGoCardKind[];
-  /** Number of rounds (party game is always 3 — kept configurable for sanity). */
+  /** Number of rounds (party = 3; configurable 1-5 for sanity testing). */
   rounds: number;
 }
 
 export interface SushiGoPlayer {
   id: PlayerId;
-  hand: SushiGoCard[];              // current hand (hidden — UI gates by localPlayerId)
-  table: SushiGoCard[];             // cards played this round
-  dessertPile: SushiGoCard[];       // cards kept across rounds
-  pendingPick: SushiGoCard[] | null; // submitted picks for the current tick (face down until reveal)
+  hand: SushiGoCard[];
+  /** Cards played this round. Order matters for some scoring (wasabi → next nigiri). */
+  table: SushiGoCard[];
+  /** Cards kept across rounds (dessert only). */
+  dessertPile: SushiGoCard[];
+  /** This round's submitted pick — set during the selection phase. */
+  pendingPick: SushiGoCard[] | null;
+  /** Per-round score breakdown; index 0 = round 1 total, etc. */
   scoreByRound: number[];
+  /** Dessert score, applied at the end of the match. */
+  dessertScore: number;
+}
+
+export type SushiGoSubPhase =
+  | 'selecting'      // waiting for all players to submit picks
+  | 'roundEnd'       // round scored; awaiting next-round confirm
+  | 'matchEnd';
+
+export interface SushiGoRoundScore {
+  playerId: PlayerId;
+  /** Itemized score per kind played this round. */
+  perKind: Array<{ kind: SushiGoCardKind; points: number; detail?: string }>;
+  /** Sum of perKind. */
+  total: number;
+}
+
+export interface SushiGoRoundSummary {
+  round: number;
+  perPlayer: SushiGoRoundScore[];
 }
 
 export interface SushiGoState {
   phase: GamePhase;
   seats: Seat[];
-  activePlayerId: PlayerId | null;  // null during simultaneous selection
+  /** Null while in simultaneous selection. */
+  activePlayerId: PlayerId | null;
   finalScores: Record<PlayerId, number> | null;
   rngState: RngState;
 
   config: SushiGoConfig;
   round: number;
-  /** 'selecting' = waiting on picks; 'revealing' = applying batch; 'specialResolution' = post-pick triggers. */
-  subPhase: 'selecting' | 'revealing' | 'specialResolution' | 'roundEnd';
+  subPhase: SushiGoSubPhase;
+
+  /** Whole-round draw deck. Built from the menu. */
   deck: SushiGoCard[];
   players: SushiGoPlayer[];
+
+  /** Last round's score breakdown (shown on the round-end screen). */
+  lastRoundSummary: SushiGoRoundSummary | null;
+  /** Whether hands rotate clockwise this round (alternates). Default true. */
+  passDirection: 'cw' | 'ccw';
+
+  /** Append-only event log for the history sidebar. */
+  log: SushiGoLogEntry[];
+  logSeq: number;
 }
 
+export type SushiGoLogEntry =
+  | { seq: number; round: number; kind: 'pickSubmitted'; playerId: PlayerId }
+  | { seq: number; round: number; kind: 'pickRevealed'; playerId: PlayerId; cards: { kind: SushiGoCardKind; variant?: string }[] }
+  | { seq: number; round: number; kind: 'roundEnd' }
+  | { seq: number; round: number; kind: 'matchEnd'; winnerId: PlayerId | null };
+
 export type SushiGoAction =
-  | { type: 'submitPick'; playerId: PlayerId; cardIds: number[] }   // 1 card normally; 2 with chopsticks/spoon
-  | { type: 'resolveSpecial'; playerId: PlayerId; payloadJson: string }
-  | { type: 'advanceTick' };  // host-only sentinel
+  /** Player submits their pick (1 card normally; 2 if they have chopsticks/spoon on the table). */
+  | { type: 'submitPick'; playerId: PlayerId; cardIds: number[] }
+  /** Move from roundEnd to the next round (or to matchEnd if final). */
+  | { type: 'nextRound' };

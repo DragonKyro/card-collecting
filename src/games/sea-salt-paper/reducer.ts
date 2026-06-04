@@ -31,7 +31,7 @@ import type { PlayerId } from '@/core/types';
 import { rngInt } from '@/core/rng';
 import type {
   SspState, SspAction, SspCard, SspPlayer,
-  SspRoundSummary, SspPlayerRoundScore,
+  SspRoundSummary, SspPlayerRoundScore, SspLogEntry,
 } from './types';
 import { buildShuffledDeck, duoPartner, isMultiplierFamily } from './cards';
 import {
@@ -63,6 +63,15 @@ function requireActivePlayer(state: SspState): SspPlayer {
 
 function popDeck(state: SspState): SspCard | null {
   return state.deck.pop() ?? null;
+}
+
+type LogPartial = DistributiveOmit<SspLogEntry, 'seq' | 'round'>;
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+
+function pushLog(state: SspState, partial: LogPartial): void {
+  state.logSeq = (state.logSeq ?? 0) + 1;
+  if (!state.log) state.log = [];
+  state.log.push({ seq: state.logSeq, round: state.round, ...partial } as SspLogEntry);
 }
 
 /** Count mermaids on a player's table; if 4 → instant win. */
@@ -161,6 +170,12 @@ function endRound(state: SspState, endedBy: SspRoundSummary['endedBy'], endedByP
   state.subPhase = 'roundEnd';
   state.lastChanceFrom = null;
   state.lastChanceRemaining = [];
+  pushLog(state, {
+    kind: 'roundEnd',
+    endedBy,
+    endedByPlayerId,
+    lastChanceWon: summary.lastChanceWon,
+  });
 }
 
 function startNewRound(state: SspState): void {
@@ -188,12 +203,20 @@ function startNewRound(state: SspState): void {
 }
 
 function gameOverIfReached(state: SspState): void {
-  const winner = state.players.find((p) => p.matchScore >= state.config.targetScore);
+  // Pick the player with the highest matchScore among any that have crossed the
+  // target — ties go to the first player in seat order.
+  let winner: SspPlayer | null = null;
+  for (const p of state.players) {
+    if (p.matchScore >= state.config.targetScore) {
+      if (!winner || p.matchScore > winner.matchScore) winner = p;
+    }
+  }
   if (!winner) return;
   state.phase = 'gameOver';
   state.subPhase = 'gameOver';
   state.finalScores = {};
   for (const p of state.players) state.finalScores[p.id] = p.matchScore;
+  pushLog(state, { kind: 'matchEnd', winnerId: winner.id });
 }
 
 function advanceTurnAfterEndChoice(state: SspState): void {
@@ -233,7 +256,12 @@ function applyDuoEffect(state: SspState, p: SspPlayer, family: 'crab' | 'boat' |
     return;
   }
   if (family === 'crab' || other === 'crab') {
-    state.subPhase = 'awaitingCrabPick';
+    // If both discard piles are empty, crab's effect can't be used.
+    if (state.discards[0].length === 0 && state.discards[1].length === 0) {
+      state.subPhase = 'awaitingPlayOrEnd';
+    } else {
+      state.subPhase = 'awaitingCrabPick';
+    }
     return;
   }
   // shark + swimmer
@@ -278,10 +306,19 @@ export function applyAction(state: SspState, action: SspAction): SspState {
       p.hand.push(keep);
       s.discards[action.discardToPile].push(discard);
       s.pendingDraw = [];
+      pushLog(s, {
+        kind: 'drawDeck',
+        playerId: p.id,
+        keptFamily: keep.family,
+        discardedFamily: discard.family,
+        toPile: action.discardToPile,
+      });
 
       const mm = checkMermaidWin(s);
       if (mm) {
         s.mermaidWinnerId = mm;
+        pushLog(s, { kind: 'mermaidWin', playerId: mm });
+        pushLog(s, { kind: 'matchEnd', winnerId: mm });
         s.phase = 'gameOver';
         s.subPhase = 'gameOver';
         s.finalScores = {};
@@ -302,9 +339,12 @@ export function applyAction(state: SspState, action: SspAction): SspState {
       const c = pile.pop()!;
       const p = requireActivePlayer(s);
       p.hand.push(c);
+      pushLog(s, { kind: 'drawDiscard', playerId: p.id, pile: action.pile, family: c.family });
       const mm = checkMermaidWin(s);
       if (mm) {
         s.mermaidWinnerId = mm;
+        pushLog(s, { kind: 'mermaidWin', playerId: mm });
+        pushLog(s, { kind: 'matchEnd', winnerId: mm });
         s.phase = 'gameOver';
         s.subPhase = 'gameOver';
         s.finalScores = {};
@@ -325,12 +365,18 @@ export function applyAction(state: SspState, action: SspAction): SspState {
       if (!isValidDuoPair(a, b)) throw new Error('playPair: not a valid pair');
       p.hand = p.hand.filter((c) => c.id !== idA && c.id !== idB);
       p.table.push(a, b);
+      pushLog(s, { kind: 'playPair', playerId: p.id, families: [a.family, b.family] });
       const partner = duoPartner(a.family)!;
+      const deckTopBefore = s.deck[s.deck.length - 1];
       applyDuoEffect(
         s, p,
         a.family as 'crab' | 'boat' | 'fish' | 'shark' | 'swimmer',
         partner as 'crab' | 'boat' | 'fish' | 'shark' | 'swimmer',
       );
+      // Fish drew one card from deck top into the active player's hand.
+      if ((a.family === 'fish' || partner === 'fish') && deckTopBefore && p.hand.some((c) => c.id === deckTopBefore.id)) {
+        pushLog(s, { kind: 'fishDraw', playerId: p.id, family: deckTopBefore.family });
+      }
       return s;
     }
 
@@ -342,6 +388,18 @@ export function applyAction(state: SspState, action: SspAction): SspState {
       const card = pile.splice(idx, 1)[0];
       const p = requireActivePlayer(s);
       p.hand.push(card);
+      pushLog(s, { kind: 'crabPick', playerId: p.id, pile: action.pile, family: card.family });
+      const mm = checkMermaidWin(s);
+      if (mm) {
+        s.mermaidWinnerId = mm;
+        pushLog(s, { kind: 'mermaidWin', playerId: mm });
+        pushLog(s, { kind: 'matchEnd', winnerId: mm });
+        s.phase = 'gameOver';
+        s.subPhase = 'gameOver';
+        s.finalScores = {};
+        for (const player of s.players) s.finalScores[player.id] = player.matchScore;
+        return s;
+      }
       s.subPhase = 'awaitingPlayOrEnd';
       return s;
     }
@@ -356,10 +414,13 @@ export function applyAction(state: SspState, action: SspAction): SspState {
       const stolen = target.hand.splice(idx, 1)[0];
       const p = requireActivePlayer(s);
       p.hand.push(stolen);
+      pushLog(s, { kind: 'sharkSteal', playerId: p.id, targetPlayerId: target.id, family: stolen.family });
 
       const mm = checkMermaidWin(s);
       if (mm) {
         s.mermaidWinnerId = mm;
+        pushLog(s, { kind: 'mermaidWin', playerId: mm });
+        pushLog(s, { kind: 'matchEnd', winnerId: mm });
         s.phase = 'gameOver';
         s.subPhase = 'gameOver';
         s.finalScores = {};
@@ -375,6 +436,7 @@ export function applyAction(state: SspState, action: SspAction): SspState {
       const p = requireActivePlayer(s);
       const score = tentativeScore(p.hand, p.table);
       if (score < STOP_THRESHOLD) throw new Error('stop: below 7-point threshold');
+      pushLog(s, { kind: 'stop', playerId: p.id, score });
       endRound(s, 'stop', p.id);
       return s;
     }
@@ -384,6 +446,7 @@ export function applyAction(state: SspState, action: SspAction): SspState {
       const p = requireActivePlayer(s);
       const score = tentativeScore(p.hand, p.table);
       if (score < STOP_THRESHOLD) throw new Error('lastChance: below 7-point threshold');
+      pushLog(s, { kind: 'lastChance', playerId: p.id, score });
       s.lastChanceFrom = p.id;
       // Build queue of remaining players (everyone else, in seat order starting next).
       const idx = s.players.findIndex((x) => x.id === p.id);
@@ -397,6 +460,8 @@ export function applyAction(state: SspState, action: SspAction): SspState {
 
     case 'pass': {
       if (s.subPhase !== 'awaitingPlayOrEnd') throw new Error('pass: wrong subPhase');
+      const p = requireActivePlayer(s);
+      pushLog(s, { kind: 'pass', playerId: p.id });
       // If the deck is empty after the player's turn, end the round (no scoring penalty).
       if (s.deck.length === 0 && s.pendingDraw.length === 0 && s.lastChanceFrom === null) {
         endRound(s, 'deckEmpty', s.activePlayerId);

@@ -4,6 +4,7 @@ import type { GameModule } from '@/core/module';
 import type { Seat } from '@/core/types';
 import { createRng } from '@/core/rng';
 import type { SwState, SwAction, SwConfig } from './types';
+import { SevenWondersThumbnail } from './Thumbnail';
 
 export const sevenWondersModule: GameModule<SwState, SwAction, SwConfig> = {
   id: 'seven-wonders',
@@ -44,6 +45,8 @@ export const sevenWondersModule: GameModule<SwState, SwAction, SwConfig> = {
     // TODO: implement reducer (pick collection, batch apply, military resolution, final scoring).
     return state;
   },
+
+  Thumbnail: SevenWondersThumbnail,
 
   ui: async () => {
     const mod = await import('./ui');

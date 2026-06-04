@@ -1,21 +1,18 @@
-// Sushi Go! Party module — STUB. Engine + UI to be filled in once base scaffolding
-// lands. Keeps the registry compiling and lets the lobby show the game card.
+// Sushi Go! Party module.
 
 import type { GameModule } from '@/core/module';
-import type { Seat } from '@/core/types';
+import type { Seat, PlayerId } from '@/core/types';
 import { createRng } from '@/core/rng';
-import type { SushiGoState, SushiGoAction, SushiGoConfig, SushiGoCardKind } from './types';
-
-const DEFAULT_MENU: SushiGoCardKind[] = [
-  'nigiri', 'maki',
-  'tempura', 'sashimi', 'dumpling',
-  'soySauce', 'wasabi', 'pudding',
-];
+import type { SushiGoState, SushiGoAction, SushiGoConfig, SushiGoPlayer } from './types';
+import { applyAction, setupNewMatch } from './reducer';
+import { chooseAIAction } from './ai';
+import { DEFAULT_MENU, validateMenu } from './cards';
+import { SushiGoThumbnail } from './Thumbnail';
 
 export const sushiGoModule: GameModule<SushiGoState, SushiGoAction, SushiGoConfig> = {
   id: 'sushi-go',
   name: 'Sushi Go! Party',
-  tagline: 'Pass-and-pick set collection. 3 rounds. Try to score the most.',
+  tagline: 'Pick a card, pass the rest. Build the best meal across 3 rounds.',
   minPlayers: 2,
   maxPlayers: 8,
 
@@ -25,13 +22,13 @@ export const sushiGoModule: GameModule<SushiGoState, SushiGoAction, SushiGoConfi
 
   validateConfig(config) {
     const errors: string[] = [];
-    if (config.menu.length !== 8) errors.push('Menu must be exactly 8 card kinds.');
+    errors.push(...validateMenu(config.menu));
     if (config.rounds < 1 || config.rounds > 5) errors.push('Rounds must be 1–5.');
     return errors;
   },
 
-  createInitialState(config, seed, _seats) {
-    return {
+  createInitialState(config, seed, seats) {
+    const state: SushiGoState = {
       phase: 'playing',
       seats: [],
       activePlayerId: null,
@@ -42,16 +39,41 @@ export const sushiGoModule: GameModule<SushiGoState, SushiGoAction, SushiGoConfi
       subPhase: 'selecting',
       deck: [],
       players: [],
+      lastRoundSummary: null,
+      passDirection: 'cw',
+      log: [],
+      logSeq: 0,
     };
+    return attachSeatsAndStart(state, seats ?? []);
   },
 
-  applyAction(state, _action) {
-    // TODO: implement reducer (submitPick / resolveSpecial / advanceTick).
-    return state;
+  applyAction(state, action) {
+    return applyAction(state, action);
   },
+
+  chooseAIAction(state, playerId: PlayerId) {
+    return chooseAIAction(state, playerId);
+  },
+
+  Thumbnail: SushiGoThumbnail,
 
   ui: async () => {
     const mod = await import('./ui');
     return mod.bundle;
   },
 };
+
+export function attachSeatsAndStart(state: SushiGoState, seats: Seat[]): SushiGoState {
+  state.seats = seats;
+  state.players = seats.map<SushiGoPlayer>((s) => ({
+    id: s.id,
+    hand: [],
+    table: [],
+    dessertPile: [],
+    pendingPick: null,
+    scoreByRound: [],
+    dessertScore: 0,
+  }));
+  setupNewMatch(state);
+  return state;
+}

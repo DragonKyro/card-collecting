@@ -20,23 +20,46 @@ export interface FamilyInfo {
   category: 'duo' | 'collector' | 'multiplier' | 'mermaid';
   /** Pretty display name. */
   label: string;
+  /** One-line scoring rule, shown on tooltip + cheatsheet. */
+  rule: string;
+  /** Optional duo-pair ability text (shark+swimmer share this on shark). */
+  ability?: string;
 }
 
 export const FAMILY: Record<SspCardFamily, FamilyInfo> = {
-  crab:           { count: 9, category: 'duo',        label: 'Crab' },
-  boat:           { count: 8, category: 'duo',        label: 'Boat' },
-  fish:           { count: 7, category: 'duo',        label: 'Fish' },
-  shark:          { count: 5, category: 'duo',        label: 'Shark' },
-  swimmer:        { count: 5, category: 'duo',        label: 'Swimmer' },
-  shell:          { count: 6, category: 'collector',  label: 'Shell' },
-  octopus:        { count: 5, category: 'collector',  label: 'Octopus' },
-  penguin:        { count: 3, category: 'collector',  label: 'Penguin' },
-  sailor:         { count: 2, category: 'collector',  label: 'Sailor' },
-  lighthouse:     { count: 1, category: 'multiplier', label: 'Lighthouse' },
-  shoal:          { count: 1, category: 'multiplier', label: 'Shoal of Fish' },
-  penguinColony:  { count: 1, category: 'multiplier', label: 'Penguin Colony' },
-  captain:        { count: 1, category: 'multiplier', label: 'Captain' },
-  mermaid:        { count: 4, category: 'mermaid',    label: 'Mermaid' },
+  crab:           { count: 9, category: 'duo',        label: 'Crab',
+                    rule: 'Pair (2 matching): 1 pt + ability.',
+                    ability: 'Take any card from either discard pile.' },
+  boat:           { count: 8, category: 'duo',        label: 'Boat',
+                    rule: 'Pair (2 matching): 1 pt + ability. Lighthouse adds +1 pt per boat held.',
+                    ability: 'Take another turn immediately after this one.' },
+  fish:           { count: 7, category: 'duo',        label: 'Fish',
+                    rule: 'Pair (2 matching): 1 pt + ability. Shoal adds +1 pt per fish held.',
+                    ability: 'Draw the top card of the deck for free.' },
+  shark:          { count: 5, category: 'duo',        label: 'Shark',
+                    rule: 'Pair (shark + swimmer): 1 pt + ability.',
+                    ability: 'Steal a random card from an opponent\'s hand.' },
+  swimmer:        { count: 5, category: 'duo',        label: 'Swimmer',
+                    rule: 'Pair (shark + swimmer): 1 pt + ability.',
+                    ability: 'Steal a random card from an opponent\'s hand.' },
+  shell:          { count: 6, category: 'collector',  label: 'Shell',
+                    rule: 'Set scoring 1→0, 2→2, 3→4, 4→6, 5→8, 6→10 pts.' },
+  octopus:        { count: 5, category: 'collector',  label: 'Octopus',
+                    rule: 'Set scoring 1→0, 2→3, 3→6, 4→9, 5→12 pts.' },
+  penguin:        { count: 3, category: 'collector',  label: 'Penguin',
+                    rule: 'Set scoring 1→1, 2→3, 3→5 pts. Doubled by Penguin Colony.' },
+  sailor:         { count: 2, category: 'collector',  label: 'Sailor',
+                    rule: 'Set scoring 1→0, 2→5 pts. Tripled by Captain.' },
+  lighthouse:     { count: 1, category: 'multiplier', label: 'Lighthouse',
+                    rule: '+1 pt for each Boat you hold (not counted as a boat itself).' },
+  shoal:          { count: 1, category: 'multiplier', label: 'Shoal of Fish',
+                    rule: '+1 pt for each Fish you hold (not counted as a fish itself).' },
+  penguinColony:  { count: 1, category: 'multiplier', label: 'Penguin Colony',
+                    rule: '+2 pts for each Penguin you hold (added on top of penguin set).' },
+  captain:        { count: 1, category: 'multiplier', label: 'Captain',
+                    rule: '+3 pts for each Sailor you hold (added on top of sailor set).' },
+  mermaid:        { count: 4, category: 'mermaid',    label: 'Mermaid',
+                    rule: 'Per mermaid held: claim the biggest unused color group as bonus. 4 mermaids = instant win.' },
 };
 
 /** Order is stable to keep tests deterministic. */

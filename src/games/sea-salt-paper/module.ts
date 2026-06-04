@@ -7,6 +7,7 @@ import type { SspState, SspAction, SspConfig, SspPlayer } from './types';
 import { applyAction, setupNewMatch } from './reducer';
 import { chooseAIAction } from './ai';
 import { defaultTargetScore } from './cards';
+import { SeaSaltPaperThumbnail } from './Thumbnail';
 
 export const seaSaltPaperModule: GameModule<SspState, SspAction, SspConfig> = {
   id: 'sea-salt-paper',
@@ -43,6 +44,8 @@ export const seaSaltPaperModule: GameModule<SspState, SspAction, SspConfig> = {
       lastChanceRemaining: [],
       lastRoundSummary: null,
       mermaidWinnerId: null,
+      log: [],
+      logSeq: 0,
     };
     return attachSeatsAndStart(state, seats ?? []);
   },
@@ -54,6 +57,8 @@ export const seaSaltPaperModule: GameModule<SspState, SspAction, SspConfig> = {
   chooseAIAction(state, playerId: PlayerId) {
     return chooseAIAction(state, playerId);
   },
+
+  Thumbnail: SeaSaltPaperThumbnail,
 
   ui: async () => {
     const mod = await import('./ui');

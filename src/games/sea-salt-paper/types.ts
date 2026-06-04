@@ -70,6 +70,22 @@ export interface SspRoundSummary {
   perPlayer: SspPlayerRoundScore[];
 }
 
+/** Structured game-log entry. Rendered as text in the history sidebar; kept as
+ *  a discriminated union so the renderer can show pretty names + icons. */
+export type SspLogEntry =
+  | { seq: number; round: number; kind: 'drawDeck';        playerId: PlayerId; keptFamily: SspCardFamily; discardedFamily: SspCardFamily; toPile: 0 | 1 }
+  | { seq: number; round: number; kind: 'drawDiscard';     playerId: PlayerId; pile: 0 | 1; family: SspCardFamily }
+  | { seq: number; round: number; kind: 'playPair';        playerId: PlayerId; families: [SspCardFamily, SspCardFamily] }
+  | { seq: number; round: number; kind: 'crabPick';        playerId: PlayerId; pile: 0 | 1; family: SspCardFamily }
+  | { seq: number; round: number; kind: 'sharkSteal';      playerId: PlayerId; targetPlayerId: PlayerId; family: SspCardFamily }
+  | { seq: number; round: number; kind: 'fishDraw';        playerId: PlayerId; family: SspCardFamily }
+  | { seq: number; round: number; kind: 'stop';            playerId: PlayerId; score: number }
+  | { seq: number; round: number; kind: 'lastChance';      playerId: PlayerId; score: number }
+  | { seq: number; round: number; kind: 'pass';            playerId: PlayerId }
+  | { seq: number; round: number; kind: 'roundEnd';        endedBy: SspRoundSummary['endedBy']; endedByPlayerId: PlayerId | null; lastChanceWon: boolean | null }
+  | { seq: number; round: number; kind: 'mermaidWin';      playerId: PlayerId }
+  | { seq: number; round: number; kind: 'matchEnd';        winnerId: PlayerId | null };
+
 export interface SspState {
   phase: GamePhase;
   seats: Seat[];
@@ -94,6 +110,10 @@ export interface SspState {
   lastRoundSummary: SspRoundSummary | null;
   /** Set when someone collected 4 mermaids — game ends instantly. */
   mermaidWinnerId: PlayerId | null;
+  /** Append-only game log shown in the history sidebar. */
+  log: SspLogEntry[];
+  /** Monotonic sequence used as the key for log entries. */
+  logSeq: number;
 }
 
 export type SspAction =

@@ -65,6 +65,10 @@ export interface GameModule<
   /** Optional AI hook — return next action for `playerId`, or null to pass/end. */
   chooseAIAction?(state: S, playerId: PlayerId): A | null;
 
+  /** Optional thumbnail rendered on the game picker. Game-agnostic shell never imports
+   *  game art directly — modules render their own SVG inline. */
+  Thumbnail?: React.ComponentType;
+
   /** Lazy-loaded UI bundle: lobby config form + in-game view. */
   ui: () => Promise<GameUiBundle<S, A, C>>;
 }

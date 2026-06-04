@@ -161,7 +161,11 @@
   user-select: none;
   transition: transform 100ms ease, box-shadow 100ms ease;
   box-shadow: 0 2px 0 var(--paper-edge);
-  overflow: hidden;
+  /* allow tooltip to escape; clip inner content via .card-inner color-bar specifics */
+}
+.ssp .card .color-bar {
+  border-top-left-radius: 6px;
+  border-top-right-radius: 6px;
 }
 
 .ssp .card.small {
@@ -309,4 +313,195 @@
   font-size: 13px;
   color: rgba(255,255,255,0.85);
   margin-bottom: 6px;
+}
+
+/* Card tooltip on hover */
+.ssp .card .card-tooltip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  background: #1c1a2e;
+  color: #fbf6ea;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  width: 220px;
+  text-align: left;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 120ms ease, transform 120ms ease;
+  z-index: 50;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  line-height: 1.35;
+}
+.ssp .card .card-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: #1c1a2e;
+}
+.ssp .card:hover .card-tooltip {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+.ssp .card .card-tooltip strong { display: block; margin-bottom: 4px; }
+.ssp .card .card-tooltip .rule { color: rgba(251,246,234,0.85); }
+.ssp .card .card-tooltip .ability { margin-top: 4px; color: #f4d268; }
+
+/* Two-column layout: board on the left, sidebar on the right */
+.ssp-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 1000px) {
+  .ssp-layout { grid-template-columns: 1fr; }
+}
+
+/* Right sidebar */
+.ssp-sidebar {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  max-height: 80vh;
+}
+.ssp-sidebar-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+}
+.ssp-sidebar-tabs button {
+  flex: 1;
+  background: transparent;
+  color: var(--fg-muted);
+  border: none;
+  border-radius: 0;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+.ssp-sidebar-tabs button:hover { background: var(--bg-hover); color: var(--fg); }
+.ssp-sidebar-tabs button.active { color: var(--fg); border-bottom-color: var(--accent); }
+.ssp-sidebar-body {
+  padding: 12px;
+  overflow-y: auto;
+  font-size: 12px;
+  color: var(--fg);
+  flex: 1;
+}
+.ssp-sidebar-body h4 {
+  margin: 8px 0 4px;
+  font-size: 12px;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.ssp-sidebar-body h4:first-child { margin-top: 0; }
+.ssp-cheat-row {
+  display: grid;
+  grid-template-columns: 60px 1fr;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  align-items: start;
+}
+.ssp-cheat-row:last-child { border-bottom: none; }
+.ssp-cheat-row .name { font-weight: 600; }
+.ssp-cheat-row .desc { color: var(--fg-muted); font-size: 11px; line-height: 1.4; }
+.ssp-cheat-row .ability { color: var(--warning); font-size: 11px; margin-top: 2px; }
+
+/* Game log */
+.ssp-log {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 4px;
+}
+.ssp-log-entry {
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--fg);
+}
+.ssp-log-entry.round-end { background: rgba(106, 160, 255, 0.15); font-weight: 600; }
+.ssp-log-entry.match-end { background: rgba(244, 210, 104, 0.2); font-weight: 700; }
+.ssp-log-entry .who {
+  font-weight: 600;
+  color: var(--accent);
+}
+.ssp-log-entry.system .who { color: var(--warning); }
+
+/* Chat */
+.ssp-chat-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 360px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+.ssp-chat-msg {
+  font-size: 12px;
+  line-height: 1.4;
+  word-wrap: break-word;
+}
+.ssp-chat-msg .who {
+  font-weight: 600;
+  color: var(--accent);
+  margin-right: 4px;
+}
+.ssp-chat-input {
+  display: flex;
+  gap: 6px;
+}
+.ssp-chat-input input { flex: 1; font-size: 12px; padding: 6px 8px; }
+.ssp-chat-input button { font-size: 12px; padding: 6px 12px; }
+
+/* Click-to-draw deck / discard piles */
+.ssp .center {
+  align-items: stretch;
+}
+.ssp .deck-stack, .ssp .pile {
+  cursor: default;
+  border-radius: 10px;
+  padding: 6px;
+  transition: background 100ms ease, transform 100ms ease;
+}
+.ssp .deck-stack.clickable, .ssp .pile.clickable {
+  cursor: pointer;
+}
+.ssp .deck-stack.clickable:hover, .ssp .pile.clickable:hover {
+  background: rgba(255,255,255,0.08);
+  transform: translateY(-2px);
+}
+.ssp .pile.target-discard {
+  outline: 2px dashed var(--yellow);
+  outline-offset: -2px;
+}
+.ssp .center .label {
+  font-size: 11px;
+  color: rgba(255,255,255,0.75);
+  text-align: center;
+  margin-top: 2px;
+}
+
+/* Keep-from-draw chooser inline near the deck */
+.ssp .keep-hint {
+  background: rgba(244, 210, 104, 0.12);
+  border: 1px dashed var(--yellow);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: rgba(255,255,255,0.9);
+  text-align: center;
+  margin-bottom: 8px;
 }

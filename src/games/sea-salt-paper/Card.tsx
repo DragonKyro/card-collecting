@@ -33,6 +33,11 @@ export function CardView({ card, size = 'normal', selectable, selected, onClick 
         </svg>
       </div>
       <div className="footer">{info.label}</div>
+      <div className="card-tooltip" role="tooltip">
+        <strong>{info.label}</strong>
+        <div className="rule">{info.rule}</div>
+        {info.ability ? <div className="ability"><em>Ability:</em> {info.ability}</div> : null}
+      </div>
     </div>
   );
 }

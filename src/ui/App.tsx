@@ -21,20 +21,25 @@ export default function App() {
         <strong onClick={() => setScreen({ kind: 'pick' })} style={{ cursor: 'pointer' }}>
           🃏 Card Collecting
         </strong>
-        <span style={{ color: 'var(--fg-muted)', fontSize: 13 }}>
-          Hot-seat & WebRTC multiplayer
-        </span>
       </header>
       <main>
         {screen.kind === 'pick' && (
           <div className="game-list">
-            {GAMES.map((g) => (
-              <div key={g.id} className="game-card" onClick={() => setScreen({ kind: 'lobby', gameId: g.id })}>
-                <h3>{g.name}</h3>
-                <p>{g.tagline}</p>
-                <div className="player-range">{g.minPlayers}–{g.maxPlayers} players</div>
-              </div>
-            ))}
+            {GAMES.map((g) => {
+              const Thumb = g.Thumbnail;
+              return (
+                <div key={g.id} className="game-card" onClick={() => setScreen({ kind: 'lobby', gameId: g.id })}>
+                  {Thumb && (
+                    <div className="game-card-art">
+                      <Thumb />
+                    </div>
+                  )}
+                  <h3>{g.name}</h3>
+                  <p>{g.tagline}</p>
+                  <div className="player-range">{g.minPlayers}–{g.maxPlayers} players</div>
+                </div>
+              );
+            })}
           </div>
         )}
         {screen.kind === 'lobby' && (() => {
