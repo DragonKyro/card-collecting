@@ -29,6 +29,11 @@ export function CardArt({ family, bodyColor }: Props) {
     case 'shoal':         return <Shoal />;
     case 'penguinColony': return <PenguinColony />;
     case 'captain':       return <Captain />;
+    case 'jellyfish':     return <Jellyfish />;
+    case 'lobster':       return <Lobster />;
+    case 'starfish':      return <Starfish />;
+    case 'seahorse':      return <Seahorse />;
+    case 'crabBasket':    return <CrabBasket />;
     default:
       void bodyColor; // unused fallback
       return null;
@@ -357,6 +362,136 @@ function Captain() {
       {/* pipe */}
       <polygon points="58,56 70,58 70,62 58,60" fill="#5a3a1f" stroke={STROKE} strokeWidth="0.6" />
       <circle cx="73" cy="60" r="2" fill="#1c1a2e" />
+    </g>
+  );
+}
+
+// ---------- Extra Salt expansion art ----------
+
+function Jellyfish() {
+  return (
+    <g>
+      {/* bell */}
+      <path d="M 26,56 Q 50,18 74,56 L 74,68 Q 50,62 26,68 Z" fill="#d99ad6" stroke={STROKE} strokeWidth="1" />
+      <path d="M 32,46 Q 50,30 68,46" fill="none" stroke={HIGHLIGHT} strokeWidth="1.2" />
+      <ellipse cx="42" cy="56" rx="3" ry="4" fill="#a86aa3" opacity="0.6" />
+      <ellipse cx="58" cy="56" rx="3" ry="4" fill="#a86aa3" opacity="0.6" />
+      {/* tentacles */}
+      <path d="M 32,66 Q 30,82 34,98 Q 36,82 32,66 Z" fill="#d99ad6" stroke={STROKE} strokeWidth="0.6" />
+      <path d="M 42,66 Q 40,86 46,104 Q 48,86 42,66 Z" fill="#d99ad6" stroke={STROKE} strokeWidth="0.6" />
+      <path d="M 50,66 Q 48,90 54,110 Q 56,90 50,66 Z" fill="#d99ad6" stroke={STROKE} strokeWidth="0.6" />
+      <path d="M 58,66 Q 56,86 62,104 Q 64,86 58,66 Z" fill="#d99ad6" stroke={STROKE} strokeWidth="0.6" />
+      <path d="M 68,66 Q 66,82 70,98 Q 72,82 68,66 Z" fill="#d99ad6" stroke={STROKE} strokeWidth="0.6" />
+    </g>
+  );
+}
+
+function Lobster() {
+  return (
+    <g>
+      {/* body segments */}
+      <polygon points="42,54 58,54 60,70 40,70" fill="#c43c2a" stroke={STROKE} strokeWidth="1" />
+      <polygon points="40,70 60,70 62,82 38,82" fill="#a8311f" stroke={STROKE} strokeWidth="1" />
+      <polygon points="38,82 62,82 60,94 40,94" fill="#8a2818" stroke={STROKE} strokeWidth="1" />
+      {/* tail */}
+      <polygon points="40,94 60,94 56,108 44,108" fill="#6a1f12" stroke={STROKE} strokeWidth="1" />
+      {/* claws */}
+      <polygon points="22,58 38,54 38,66 28,68" fill="#c43c2a" stroke={STROKE} strokeWidth="1" />
+      <polygon points="20,52 32,50 30,62 18,60" fill="#a8311f" stroke={STROKE} strokeWidth="0.7" />
+      <polygon points="78,58 62,54 62,66 72,68" fill="#c43c2a" stroke={STROKE} strokeWidth="1" />
+      <polygon points="80,52 68,50 70,62 82,60" fill="#a8311f" stroke={STROKE} strokeWidth="0.7" />
+      {/* antennae */}
+      <line x1="44" y1="52" x2="38" y2="32" stroke={STROKE} strokeWidth="0.8" />
+      <line x1="56" y1="52" x2="62" y2="32" stroke={STROKE} strokeWidth="0.8" />
+      {/* eyes */}
+      <circle cx="46" cy="58" r="1.2" fill={STROKE} />
+      <circle cx="54" cy="58" r="1.2" fill={STROKE} />
+    </g>
+  );
+}
+
+function Starfish() {
+  // 5-pointed origami star.
+  return (
+    <g>
+      <polygon
+        points="50,28 58,52 84,52 62,68 70,94 50,78 30,94 38,68 16,52 42,52"
+        fill="#f4a957"
+        stroke={STROKE}
+        strokeWidth="1"
+      />
+      {/* highlight */}
+      <polygon
+        points="50,36 55,52 70,55 58,64"
+        fill={HIGHLIGHT}
+        opacity="0.6"
+      />
+      {/* dots */}
+      <circle cx="50" cy="60" r="1.5" fill={STROKE} />
+      <circle cx="44" cy="68" r="1" fill={STROKE} />
+      <circle cx="56" cy="68" r="1" fill={STROKE} />
+      <circle cx="40" cy="74" r="1" fill={STROKE} />
+      <circle cx="60" cy="74" r="1" fill={STROKE} />
+    </g>
+  );
+}
+
+function Seahorse() {
+  return (
+    <g>
+      {/* curled body */}
+      <path
+        d="M 60,30 Q 76,38 70,56 Q 60,62 56,70 Q 50,80 56,92 Q 62,102 50,108"
+        fill="none"
+        stroke="#3a8a72"
+        strokeWidth="10"
+        strokeLinecap="round"
+      />
+      <path
+        d="M 60,30 Q 76,38 70,56 Q 60,62 56,70 Q 50,80 56,92 Q 62,102 50,108"
+        fill="none"
+        stroke={STROKE}
+        strokeWidth="1.2"
+        strokeLinecap="round"
+      />
+      {/* snout */}
+      <polygon points="56,28 70,22 70,32 60,36" fill="#3a8a72" stroke={STROKE} strokeWidth="0.8" />
+      {/* eye */}
+      <circle cx="64" cy="32" r="1.3" fill={STROKE} />
+      {/* dorsal fin */}
+      <path d="M 66,42 Q 80,46 70,56" fill="#56b698" stroke={STROKE} strokeWidth="0.6" />
+      {/* spines */}
+      <line x1="68" y1="50" x2="74" y2="48" stroke={STROKE} strokeWidth="0.5" />
+      <line x1="62" y1="62" x2="68" y2="62" stroke={STROKE} strokeWidth="0.5" />
+      <line x1="58" y1="74" x2="64" y2="76" stroke={STROKE} strokeWidth="0.5" />
+    </g>
+  );
+}
+
+function CrabBasket() {
+  return (
+    <g>
+      {/* basket */}
+      <polygon points="22,72 78,72 70,104 30,104" fill="#a86d3a" stroke={STROKE} strokeWidth="1" />
+      <polygon points="22,72 78,72 76,80 24,80" fill="#7c4f24" stroke={STROKE} strokeWidth="1" />
+      {/* basket weave */}
+      <line x1="34" y1="80" x2="32" y2="104" stroke={STROKE} strokeWidth="0.5" />
+      <line x1="50" y1="80" x2="50" y2="104" stroke={STROKE} strokeWidth="0.5" />
+      <line x1="66" y1="80" x2="68" y2="104" stroke={STROKE} strokeWidth="0.5" />
+      <line x1="26" y1="88" x2="74" y2="88" stroke={STROKE} strokeWidth="0.5" />
+      <line x1="28" y1="96" x2="72" y2="96" stroke={STROKE} strokeWidth="0.5" />
+      {/* crab popping out */}
+      <ellipse cx="50" cy="60" rx="16" ry="10" fill="#d24c3c" stroke={STROKE} strokeWidth="1" />
+      <circle cx="44" cy="58" r="1.5" fill={STROKE} />
+      <circle cx="56" cy="58" r="1.5" fill={STROKE} />
+      {/* mini claws */}
+      <polygon points="32,58 36,52 40,58" fill="#d24c3c" stroke={STROKE} strokeWidth="0.6" />
+      <polygon points="60,58 64,52 68,58" fill="#d24c3c" stroke={STROKE} strokeWidth="0.6" />
+      {/* second crab silhouette */}
+      <ellipse cx="38" cy="76" rx="6" ry="3" fill="#8a2818" opacity="0.7" />
+      <ellipse cx="62" cy="76" rx="6" ry="3" fill="#8a2818" opacity="0.7" />
+      <ellipse cx="50" cy="80" rx="5" ry="2.5" fill="#8a2818" opacity="0.5" />
+      <text x="50" y="116" textAnchor="middle" fontSize="6" fill={SHADOW}>×crab</text>
     </g>
   );
 }

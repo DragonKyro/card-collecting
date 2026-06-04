@@ -66,7 +66,11 @@ Each game's `types.ts` carries detailed notes on the eventual reducer. Short sum
 Simultaneous pick + pass-hands. Engine waits at `subPhase: 'selecting'` until all live players submit `submitPick`, then batch-applies and rotates hands. Specials (chopsticks/spoon/special-order/menu/takeout-box) enter a `specialResolution` sub-phase for the playing player. Multi-round (default 3); dessert pile persists across rounds, table resets. Menu builder picks 8 card kinds in the lobby; turn structure is identical across menus.
 
 ### Sea Salt & Paper (`src/games/sea-salt-paper/`)
-Each turn: draw 2 (keep 1 or both), optional play-pair-for-ability, then STOP / LAST CHANCE / pass. "LAST CHANCE" triggers a peer-relative final round — proposer wins bonus only if their score still leads. Multi-round; first to `targetScore` ends the match. Families: mermaid, collector, penguin, sailor, crab, boat, fish, shell, lighthouse, anchor, captain, shark, swimmer, siren.
+Each turn: draw 2 (keep 1 or both), optional play-pair-for-ability, then STOP / LAST CHANCE / pass. "LAST CHANCE" triggers a peer-relative final round — proposer wins bonus only if their score still leads. Multi-round; first to `targetScore` ends the match. Base families: mermaid, shark/swimmer/crab/boat/fish (duos), shell/octopus/penguin/sailor (collectors), lighthouse/shoal/penguinColony/captain (multipliers).
+
+**Expansions** (togglable per match via `config.expansions`):
+- *Extra Salt* — adds jellyfish/lobster/starfish/seahorse/crabBasket to the deck (8 cards). New duo pairings (jellyfish+swimmer, lobster+crab) handled in `isValidDuoPair`/`duoPartner`. Starfish trios are a new action type `playTrio` and stored as `player.trios` so scoring can flatly award 3 pts and skip the duo ability. Lobster reveal lives in `subPhase: 'awaitingLobsterPick'` with `pendingLobsterPick` buffer. Jellyfish lock uses `state.nextTurnLockedPlayerId`; the locked player's turn-handlers throw on anything but drawPair → pass.
+- *Extra Pepper* — separate event deck (`state.event`). One event revealed per round (`startNewRound`), applied via predicates in `events.ts` (`playerHasEvent`, `isRoundEvent`). At round end (`awardEventCard`), `+` events go to leader, `−` to laggard, `global` events are discarded. Six events implemented in `EVENT_BY_ID` — add more by extending that map + `ALL_EVENT_IDS`; the reducer wiring (threshold lookups, mermaid-count lookup, color-bonus doubling, score-modifier) is already in place.
 
 ### 7 Wonders (`src/games/seven-wonders/`)
 3 Ages × 6 picks per Age. Simultaneous: each player submits a `pendingPick` (build / wonder-stage / discard); reducer reveals + applies in batch, rotates hands (CW Ages I/III, CCW Age II), resolves military at Age end. Final scoring across 7 categories at Age III end. Expansions (Leaders, Cities, Babel, Armada, Edifice) will live under `src/games/seven-wonders/expansions/` and contribute extra decks + post-action hooks. No `if (expansion === ...)` conditionals — add a module hook instead.
@@ -103,11 +107,11 @@ Each turn: draw 2 (keep 1 or both), optional play-pair-for-ability, then STOP / 
 
 ## Roadmap
 
-See [README.md](README.md#project-plan--roadmap). Current status: **Phases 0–3 complete.** SSP + Sushi Go playable hot-seat and online; Trystero room, lobby sync, action broadcast, snapshot on join, lobby + in-game chat, host-only AI driver, spectator fallback all wired.
+See [README.md](README.md#project-plan--roadmap). Current status: **Phases 0–3 + 6 (partial) complete.** SSP + Sushi Go playable hot-seat and online; Trystero room, lobby sync, action broadcast, snapshot on join, lobby + in-game chat, host-only AI driver, spectator fallback all wired. SSP has both Extra Salt (full) and Extra Pepper (6/12 events) togglable in the lobby.
 
 ## Where to start next
 
 1. **7 Wonders base game** — fill out `src/games/seven-wonders/` reducer (3 ages × 6 picks, simultaneous `pendingPick`, hand rotation CW/CCW by age, military resolution at age end, final scoring across 7 categories).
-2. **Sea Salt & Paper expansions** — *Extra Salt* (8 cards shuffled into the deck) and *Extra Pepper* (12 round-event cards in a separate deck). Both drop into `src/games/sea-salt-paper/expansions/<id>/` and are gated by lobby config flags like 7W expansions; Extra Pepper needs an extra state slice for the event deck and per-round event card.
-3. **AI heuristics** — improve each game's `ai.ts` beyond "first legal move". Pure functions; no network awareness needed.
+2. **Finish Pepper** — add the remaining 6 event cards to `events.ts` once authoritative rule text is in hand. Each new event needs an id in `SspEventId`, an entry in `EVENT_BY_ID`/`ALL_EVENT_IDS`, and (if it has a per-player rule effect) a hook into the reducer.
+3. **AI heuristics** — improve each game's `ai.ts` beyond "first legal move". Should be Salt/Pepper-aware (jellyfish/lobster pair recognition is automatic via `isValidDuoPair`; smarter play of starfish trios and seahorse needs explicit heuristics).
 4. **7 Wonders expansions** — Leaders, Cities, Babel, Armada, Edifice. Each under `src/games/seven-wonders/expansions/` with module-level hooks; no `if (expansion === ...)` switches.

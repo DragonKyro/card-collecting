@@ -5,12 +5,16 @@ import type {
   SspState, SspAction, SspConfig, SspCard, SspCardFamily, SspPlayer,
 } from './types';
 import { CardView, FaceDownCard } from './Card';
-import { isValidDuoPair, tentativeScore, totalScore } from './scoring';
+import { isValidDuoPair, isValidStarfishTrio, tentativeScore, totalScore } from './scoring';
 import { FAMILY } from './cards';
+import { EVENT_BY_ID } from './events';
 import { Sidebar } from './Sidebar';
 import './ssp.css';
 
 function LobbyConfig({ config, seats, onChange }: { config: SspConfig; seats: Seat[]; onChange: (c: SspConfig) => void }) {
+  const exp = config.expansions ?? {};
+  const setExp = (patch: Partial<NonNullable<SspConfig['expansions']>>) =>
+    onChange({ ...config, expansions: { ...exp, ...patch } });
   return (
     <div className="game-config">
       <p style={{ fontSize: 13, color: 'var(--fg-muted)', marginTop: 0 }}>
@@ -28,7 +32,40 @@ function LobbyConfig({ config, seats, onChange }: { config: SspConfig; seats: Se
           style={{ width: 80 }}
         />
       </label>
-      <p style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
+
+      <h4 style={{ margin: '14px 0 6px', fontSize: 13, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--fg-muted)' }}>
+        Expansions
+      </h4>
+      <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '4px 0' }}>
+        <input
+          type="checkbox"
+          checked={!!exp.extraSalt}
+          onChange={(e) => setExp({ extraSalt: e.target.checked })}
+          style={{ marginTop: 3 }}
+        />
+        <span>
+          <strong>Extra Salt</strong>
+          <span style={{ display: 'block', fontSize: 12, color: 'var(--fg-muted)' }}>
+            Adds 8 cards: jellyfish ×2, lobster ×2, starfish ×2, seahorse, basket of crabs.
+          </span>
+        </span>
+      </label>
+      <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '4px 0' }}>
+        <input
+          type="checkbox"
+          checked={!!exp.extraPepper}
+          onChange={(e) => setExp({ extraPepper: e.target.checked })}
+          style={{ marginTop: 3 }}
+        />
+        <span>
+          <strong>Extra Pepper</strong>
+          <span style={{ display: 'block', fontSize: 12, color: 'var(--fg-muted)' }}>
+            Adds an event deck — one event applies each round, awarded at round end.
+          </span>
+        </span>
+      </label>
+
+      <p style={{ fontSize: 12, color: 'var(--fg-muted)', marginTop: 12 }}>
         {seats.length} {seats.length === 1 ? 'seat' : 'seats'}.
       </p>
     </div>
@@ -68,14 +105,20 @@ function GameView({
     if (state.subPhase !== 'awaitingPlayOrEnd') return;
     if (!me) return;
     const pairs = findHandPairs(me.hand);
-    const score = tentativeScore(me.hand, me.table);
+    const opts = {
+      trioCancelledIds: new Set<number>((me.trios ?? []).flat()),
+      trios: me.trios?.length ?? 0,
+      doubleColorBonus: state.event?.current === 'calmWaters',
+    };
+    const score = tentativeScore(me.hand, me.table, opts);
     const noPair = pairs.length === 0;
-    const cannotEnd = score < 7;
+    const stopThreshold = (me.heldEvents ?? []).includes('stopAtFive') ? 5 : 7;
+    const cannotEnd = score < stopThreshold;
     if (noPair && cannotEnd) {
       const t = setTimeout(() => dispatch({ type: 'pass' }), 400);
       return () => clearTimeout(t);
     }
-  }, [isLocalActive, state.subPhase, me?.hand.length, me?.table.length]);
+  }, [isLocalActive, state.subPhase, me?.hand.length, me?.table.length, state.event?.current]);
 
   if (state.phase === 'gameOver') {
     return (
@@ -108,15 +151,31 @@ function GameView({
       return a && b && isValidDuoPair(a, b);
     })();
 
-  const myTentative = me ? tentativeScore(me.hand, me.table) : 0;
-  const canStop = isLocalActive && state.subPhase === 'awaitingPlayOrEnd' && myTentative >= 7 && state.lastChanceFrom === null;
-  const canLastChance = canStop && state.players.length > 1;
+  const canPlaySelectedTrio =
+    selected.length === 3 && me &&
+    (() => {
+      const cards = selected.map((id) => me.hand.find((c) => c.id === id));
+      if (cards.some((c) => !c)) return false;
+      return isValidStarfishTrio(cards[0]!, cards[1]!, cards[2]!);
+    })();
+
+  const myScoringOpts = me ? {
+    trioCancelledIds: new Set<number>((me.trios ?? []).flat()),
+    trios: me.trios?.length ?? 0,
+    doubleColorBonus: state.event?.current === 'calmWaters',
+  } : {};
+  const myTentative = me ? tentativeScore(me.hand, me.table, myScoringOpts) : 0;
+  const myStopThreshold = me && (me.heldEvents ?? []).includes('stopAtFive') ? 5 : 7;
+  const isLocked = state.nextTurnLockedPlayerId != null && state.activePlayerId === state.nextTurnLockedPlayerId;
+  const canStop = isLocalActive && state.subPhase === 'awaitingPlayOrEnd' && myTentative >= myStopThreshold && state.lastChanceFrom === null && !isLocked;
+  const canLastChance = canStop && state.players.length > 1 && !(me && (me.heldEvents ?? []).includes('stormySeas'));
   const canPass = isLocalActive && state.subPhase === 'awaitingPlayOrEnd';
 
   const toggleSelect = (cardId: number) => {
     setSelected((prev) => {
       if (prev.includes(cardId)) return prev.filter((x) => x !== cardId);
-      if (prev.length >= 2) return [prev[1], cardId];
+      // Allow up to 3 to support starfish trios (2 duo + 1 starfish).
+      if (prev.length >= 3) return [prev[1], prev[2], cardId];
       return [...prev, cardId];
     });
   };
@@ -158,6 +217,14 @@ function GameView({
             <span>Target: {state.config.targetScore} pts to win the match</span>
             <span>{state.deck.length} cards left in deck</span>
           </div>
+
+          {state.event?.current && (
+            <div className="ssp-event-banner" title={EVENT_BY_ID[state.event.current].rule}>
+              <span className="ssp-event-tag">Event</span>
+              <strong>{EVENT_BY_ID[state.event.current].name}</strong>
+              <span className="ssp-event-rule">{EVENT_BY_ID[state.event.current].rule}</span>
+            </div>
+          )}
 
           <div className="opponents">
             {opponents.map((p) => (
@@ -223,8 +290,13 @@ function GameView({
               <div className="actions">
                 {state.subPhase === 'awaitingPlayOrEnd' && (
                   <>
+                    {isLocked && (
+                      <div className="locked-banner">
+                        Locked by Jellyfish — you can only draw two cards and pass this turn.
+                      </div>
+                    )}
                     <button
-                      disabled={!canPlaySelectedPair}
+                      disabled={!canPlaySelectedPair || isLocked}
                       onClick={() => {
                         if (!canPlaySelectedPair) return;
                         dispatch({ type: 'playPair', cardIds: [selected[0], selected[1]] });
@@ -233,6 +305,18 @@ function GameView({
                     >
                       Play pair {selected.length === 2 ? `(${describeSelection(me, selected)})` : ''}
                     </button>
+                    {selected.length === 3 && (
+                      <button
+                        disabled={!canPlaySelectedTrio || isLocked}
+                        onClick={() => {
+                          if (!canPlaySelectedTrio) return;
+                          dispatch({ type: 'playTrio', cardIds: [selected[0], selected[1], selected[2]] });
+                          setSelected([]);
+                        }}
+                      >
+                        Play trio (starfish + duo)
+                      </button>
+                    )}
                     <button className="stop" disabled={!canStop} onClick={() => dispatch({ type: 'stop' })}>
                       STOP {canStop ? `(${myTentative})` : ''}
                     </button>
@@ -249,6 +333,9 @@ function GameView({
                 )}
                 {state.subPhase === 'awaitingCrabPick' && isLocalActive && (
                   <CrabPicker state={state} dispatch={dispatch} />
+                )}
+                {state.subPhase === 'awaitingLobsterPick' && isLocalActive && (
+                  <LobsterPicker state={state} dispatch={dispatch} />
                 )}
               </div>
             </div>
@@ -389,10 +476,35 @@ function CrabPicker({ state, dispatch }: { state: SspState; dispatch: (a: SspAct
   );
 }
 
+function LobsterPicker({ state, dispatch }: { state: SspState; dispatch: (a: SspAction) => void }) {
+  const pool = state.pendingLobsterPick ?? [];
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%' }}>
+      <p className="help" style={{ marginBottom: 4 }}>
+        Lobster reveal — keep one card from the top of the deck. The rest will be shuffled back in.
+      </p>
+      <div className="cards" style={{ marginTop: 4 }}>
+        {pool.map((c) => (
+          <CardView
+            key={c.id}
+            card={c}
+            size="small"
+            selectable
+            onClick={() => dispatch({ type: 'lobsterPick', cardId: c.id })}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function PlayerStrip({ player, seat, isActive, reveal }: {
   player: SspPlayer; seat: Seat | undefined; isActive: boolean; reveal: boolean;
 }) {
-  const total = totalScore([...player.hand, ...player.table]);
+  const total = totalScore([...player.hand, ...player.table], {
+    trioCancelledIds: new Set<number>((player.trios ?? []).flat()),
+    trios: player.trios?.length ?? 0,
+  });
   return (
     <div className={`player-strip ${isActive ? 'active' : ''}`}>
       <header>

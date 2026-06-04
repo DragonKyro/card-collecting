@@ -315,6 +315,49 @@
   margin-bottom: 6px;
 }
 
+.ssp-event-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  background: linear-gradient(90deg, #5a2628, #2a1a3a);
+  border: 1px solid #c54a4a;
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin: 4px 0 10px;
+  font-size: 13px;
+  color: #fbf6ea;
+}
+
+.ssp-event-banner .ssp-event-tag {
+  background: #c54a4a;
+  color: #fbf6ea;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+.ssp-event-banner .ssp-event-rule {
+  color: rgba(255,255,255,0.7);
+  font-size: 12px;
+  flex: 1 1 200px;
+}
+
+.locked-banner {
+  background: #2a1a3a;
+  border: 1px dashed #c98aff;
+  color: #c98aff;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  width: 100%;
+  text-align: center;
+  margin-bottom: 6px;
+}
+
 /* Card tooltip on hover */
 .ssp .card .card-tooltip {
   position: absolute;

@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { buildDeck, FAMILY, FAMILY_ORDER, duoPartner, defaultTargetScore } from './cards';
 
-describe('deck composition', () => {
-  it('totals exactly 58 cards', () => {
+describe('base deck composition', () => {
+  it('totals exactly 58 cards by default', () => {
     const deck = buildDeck();
     expect(deck.length).toBe(58);
   });
@@ -21,9 +21,12 @@ describe('deck composition', () => {
     expect(counts).toEqual(expected);
   });
 
-  it('FAMILY counts also sum to 58', () => {
+  it('FAMILY base-game counts sum to 58', () => {
     let sum = 0;
-    for (const f of FAMILY_ORDER) sum += FAMILY[f].count;
+    for (const f of FAMILY_ORDER) {
+      if (FAMILY[f].expansion) continue;
+      sum += FAMILY[f].count;
+    }
     expect(sum).toBe(58);
   });
 
@@ -46,6 +49,35 @@ describe('deck composition', () => {
   });
 });
 
+describe('Extra Salt deck composition', () => {
+  it('opting in adds exactly 8 cards (66 total)', () => {
+    expect(buildDeck({ extraSalt: true }).length).toBe(66);
+  });
+
+  it('Salt families only appear when toggled', () => {
+    const baseFamilies = new Set(buildDeck().map((c) => c.family));
+    for (const f of ['jellyfish', 'lobster', 'starfish', 'seahorse', 'crabBasket'] as const) {
+      expect(baseFamilies.has(f)).toBe(false);
+    }
+    const saltyFamilies = new Set(buildDeck({ extraSalt: true }).map((c) => c.family));
+    for (const f of ['jellyfish', 'lobster', 'starfish', 'seahorse', 'crabBasket'] as const) {
+      expect(saltyFamilies.has(f)).toBe(true);
+    }
+  });
+
+  it('Salt card counts match the rulebook (2/2/2/1/1)', () => {
+    const counts: Record<string, number> = {};
+    for (const c of buildDeck({ extraSalt: true })) {
+      counts[c.family] = (counts[c.family] ?? 0) + 1;
+    }
+    expect(counts.jellyfish).toBe(2);
+    expect(counts.lobster).toBe(2);
+    expect(counts.starfish).toBe(2);
+    expect(counts.seahorse).toBe(1);
+    expect(counts.crabBasket).toBe(1);
+  });
+});
+
 describe('duoPartner', () => {
   it('crab/boat/fish partner with themselves', () => {
     expect(duoPartner('crab')).toBe('crab');
@@ -58,10 +90,18 @@ describe('duoPartner', () => {
     expect(duoPartner('swimmer')).toBe('shark');
   });
 
+  it('Salt: jellyfish pairs with swimmer; lobster pairs with crab', () => {
+    expect(duoPartner('jellyfish')).toBe('swimmer');
+    expect(duoPartner('lobster')).toBe('crab');
+  });
+
   it('non-duos have no partner', () => {
     expect(duoPartner('shell')).toBeNull();
     expect(duoPartner('mermaid')).toBeNull();
     expect(duoPartner('lighthouse')).toBeNull();
+    expect(duoPartner('starfish')).toBeNull();
+    expect(duoPartner('seahorse')).toBeNull();
+    expect(duoPartner('crabBasket')).toBeNull();
   });
 });
 

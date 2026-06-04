@@ -17,13 +17,15 @@ import type { SspCard, SspCardFamily, SspColor } from './types';
 
 export interface FamilyInfo {
   count: number;
-  category: 'duo' | 'collector' | 'multiplier' | 'mermaid';
+  category: 'duo' | 'collector' | 'multiplier' | 'mermaid' | 'special';
   /** Pretty display name. */
   label: string;
   /** One-line scoring rule, shown on tooltip + cheatsheet. */
   rule: string;
   /** Optional duo-pair ability text (shark+swimmer share this on shark). */
   ability?: string;
+  /** Only added to the deck when this expansion flag is on (omitted = base game). */
+  expansion?: 'extraSalt';
 }
 
 export const FAMILY: Record<SspCardFamily, FamilyInfo> = {
@@ -60,14 +62,34 @@ export const FAMILY: Record<SspCardFamily, FamilyInfo> = {
                     rule: '+3 pts for each Sailor you hold (added on top of sailor set).' },
   mermaid:        { count: 4, category: 'mermaid',    label: 'Mermaid',
                     rule: 'Per mermaid held: claim the biggest unused color group as bonus. 4 mermaids = instant win.' },
+
+  // ---------- Extra Salt expansion (only mixed into deck when extraSalt is on) ----------
+  jellyfish:      { count: 2, category: 'duo',        label: 'Jellyfish',
+                    rule: 'Pair (jellyfish + swimmer): 1 pt + ability.',
+                    ability: "Opponent's next turn is locked: they can only draw from the deck (no discard, no pair plays, can't end the round).",
+                    expansion: 'extraSalt' },
+  lobster:        { count: 2, category: 'duo',        label: 'Lobster',
+                    rule: 'Pair (lobster + crab): 1 pt + ability.',
+                    ability: 'Reveal the top 5 of the deck, keep 1, shuffle the rest back in.',
+                    expansion: 'extraSalt' },
+  starfish:       { count: 2, category: 'special',    label: 'Starfish',
+                    rule: 'Played as a trio with any duo: 3 pts for the trio. Cancels the duo\'s ability.',
+                    expansion: 'extraSalt' },
+  seahorse:       { count: 1, category: 'collector',  label: 'Seahorse',
+                    rule: 'Wildcard collector — counts as one extra card in your highest collector set (capped at that set\'s max payout).',
+                    expansion: 'extraSalt' },
+  crabBasket:     { count: 1, category: 'multiplier', label: 'Cast of Crabs',
+                    rule: '+1 pt for each Crab you hold (not counted as a crab itself).',
+                    expansion: 'extraSalt' },
 };
 
-/** Order is stable to keep tests deterministic. */
+/** Order is stable to keep tests deterministic. Base families first, then Salt. */
 export const FAMILY_ORDER: SspCardFamily[] = [
   'crab', 'boat', 'fish', 'shark', 'swimmer',
   'shell', 'octopus', 'penguin', 'sailor',
   'lighthouse', 'shoal', 'penguinColony', 'captain',
   'mermaid',
+  'jellyfish', 'lobster', 'starfish', 'seahorse', 'crabBasket',
 ];
 
 /** A duo pair is one of these unordered family combinations. */
@@ -76,6 +98,10 @@ export const DUO_PAIRS: ReadonlyArray<[SspCardFamily, SspCardFamily]> = [
   ['boat', 'boat'],
   ['fish', 'fish'],
   ['shark', 'swimmer'],
+  // Extra Salt: jellyfish swaps in for the swimmer-side of a pair (alternative
+  // to the shark+swimmer pair). Lobster swaps in for one crab in a crab pair.
+  ['jellyfish', 'swimmer'],
+  ['lobster', 'crab'],
 ];
 
 export function isDuoFamily(f: SspCardFamily): boolean {
@@ -94,10 +120,16 @@ export function isMermaid(f: SspCardFamily): boolean {
   return f === 'mermaid';
 }
 
-/** Returns the duo-pair counterpart (or self for matched families). */
+/** Returns the duo-pair counterpart (or self for matched families).
+ *  Swimmer can pair with EITHER shark or jellyfish; we return shark as the
+ *  canonical answer — `isValidDuoPair` is the authoritative check for
+ *  swimmer-side ambiguity. Same idea for crab + lobster: crab returns 'crab'
+ *  (self), but a crab + lobster is also valid via `isValidDuoPair`. */
 export function duoPartner(family: SspCardFamily): SspCardFamily | null {
   if (family === 'shark') return 'swimmer';
   if (family === 'swimmer') return 'shark';
+  if (family === 'jellyfish') return 'swimmer';
+  if (family === 'lobster') return 'crab';
   if (family === 'crab' || family === 'boat' || family === 'fish') return family;
   return null;
 }
@@ -107,13 +139,20 @@ const COLORS_NON_WHITE: SspColor[] = [
   'lightblue', 'darkblue', 'black', 'gray',
 ];
 
-/** Build the canonical 58-card deck with deterministic colors and ids. */
-export function buildDeck(): SspCard[] {
+export interface DeckOpts {
+  extraSalt?: boolean;
+}
+
+/** Build the deck with deterministic colors and ids. Base game = 58 cards;
+ *  with Extra Salt = 66 cards (adds jellyfish×2, lobster×2, starfish×2,
+ *  seahorse×1, crabBasket×1). */
+export function buildDeck(opts: DeckOpts = {}): SspCard[] {
   const out: SspCard[] = [];
   let id = 0;
   for (const family of FAMILY_ORDER) {
-    const { count } = FAMILY[family];
-    for (let i = 0; i < count; i++) {
+    const info = FAMILY[family];
+    if (info.expansion === 'extraSalt' && !opts.extraSalt) continue;
+    for (let i = 0; i < info.count; i++) {
       let color: SspColor;
       if (family === 'mermaid') {
         color = 'white';
@@ -126,8 +165,8 @@ export function buildDeck(): SspCard[] {
   return out;
 }
 
-export function buildShuffledDeck(rng: RngState): SspCard[] {
-  return shuffle(rng, buildDeck());
+export function buildShuffledDeck(rng: RngState, opts: DeckOpts = {}): SspCard[] {
+  return shuffle(rng, buildDeck(opts));
 }
 
 /** Default match target depends on seat count. */

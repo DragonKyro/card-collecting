@@ -7,6 +7,7 @@ import type { SspState, SspAction, SspConfig, SspPlayer } from './types';
 import { applyAction, setupNewMatch } from './reducer';
 import { chooseAIAction } from './ai';
 import { defaultTargetScore } from './cards';
+import { buildEventDeck } from './events';
 import { SeaSaltPaperThumbnail } from './Thumbnail';
 
 export const seaSaltPaperModule: GameModule<SspState, SspAction, SspConfig> = {
@@ -17,7 +18,10 @@ export const seaSaltPaperModule: GameModule<SspState, SspAction, SspConfig> = {
   maxPlayers: 4,
 
   defaultConfig(seats: Seat[]): SspConfig {
-    return { targetScore: defaultTargetScore(seats.length || 2) };
+    return {
+      targetScore: defaultTargetScore(seats.length || 2),
+      expansions: { extraSalt: false, extraPepper: false },
+    };
   },
 
   validateConfig(config) {
@@ -27,12 +31,14 @@ export const seaSaltPaperModule: GameModule<SspState, SspAction, SspConfig> = {
   },
 
   createInitialState(config, seed, seats) {
+    const rngState = createRng(seed);
+    const usingPepper = !!config.expansions?.extraPepper;
     const state: SspState = {
       phase: 'playing',
       seats: [],
       activePlayerId: null,
       finalScores: null,
-      rngState: createRng(seed),
+      rngState,
       config,
       round: 1,
       deck: [],
@@ -44,6 +50,11 @@ export const seaSaltPaperModule: GameModule<SspState, SspAction, SspConfig> = {
       lastChanceRemaining: [],
       lastRoundSummary: null,
       mermaidWinnerId: null,
+      pendingLobsterPick: [],
+      nextTurnLockedPlayerId: null,
+      event: usingPepper
+        ? { deck: buildEventDeck(rngState), current: null }
+        : null,
       log: [],
       logSeq: 0,
     };

@@ -28,17 +28,45 @@
 // when any player's matchScore ≥ targetScore at the moment scoring finishes.
 
 import type { PlayerId } from '@/core/types';
-import { rngInt } from '@/core/rng';
+import { rngInt, shuffle } from '@/core/rng';
 import type {
-  SspState, SspAction, SspCard, SspPlayer,
+  SspState, SspAction, SspCard, SspPlayer, SspEventId,
   SspRoundSummary, SspPlayerRoundScore, SspLogEntry,
 } from './types';
-import { buildShuffledDeck, duoPartner, isMultiplierFamily } from './cards';
+import { buildShuffledDeck, isMultiplierFamily } from './cards';
 import {
-  allCards, cardPoints, isValidDuoPair, mermaidColorBonus, tentativeScore,
+  allCards, cardPoints, isValidDuoPair, isValidStarfishTrio,
+  mermaidColorBonus, tentativeScore,
 } from './scoring';
+import {
+  currentEvent, isRoundEvent, playerHasEvent,
+} from './events';
 
 const STOP_THRESHOLD = 7;
+const STOP_THRESHOLD_EARLY = 5;  // when player holds stopAtFive event
+
+/** Per-player STOP/LAST-CHANCE threshold, reduced by `stopAtFive` if held. */
+function stopThresholdFor(state: SspState, p: SspPlayer): number {
+  if (playerHasEvent(p, 'stopAtFive')) return STOP_THRESHOLD_EARLY;
+  void state;
+  return STOP_THRESHOLD;
+}
+
+/** Mermaid-win threshold for a player, reduced to 3 if they hold `threeMermaids`. */
+function mermaidWinCountFor(p: SspPlayer): number {
+  return playerHasEvent(p, 'threeMermaids') ? 3 : 4;
+}
+
+/** Build the per-player scoring opts (trios, pepper-burn) used by total/card points. */
+function scoringOptsFor(state: SspState, p: SspPlayer) {
+  const trioCancelledIds = new Set<number>();
+  for (const trio of p.trios ?? []) for (const id of trio) trioCancelledIds.add(id);
+  return {
+    trioCancelledIds,
+    trios: p.trios?.length ?? 0,
+    doubleColorBonus: isRoundEvent(state, 'calmWaters'),
+  };
+}
 
 function clone<T>(x: T): T {
   return JSON.parse(JSON.stringify(x));
@@ -74,25 +102,33 @@ function pushLog(state: SspState, partial: LogPartial): void {
   state.log.push({ seq: state.logSeq, round: state.round, ...partial } as SspLogEntry);
 }
 
-/** Count mermaids on a player's table; if 4 → instant win. */
+/** Count mermaids on a player's table; if their threshold is met → instant win.
+ *  Default threshold is 4 — reduced to 3 if the player holds Three Mermaids (Pepper). */
 function checkMermaidWin(state: SspState): PlayerId | null {
   for (const p of state.players) {
     const mermaids = p.table.filter((c) => c.family === 'mermaid').length
       + p.hand.filter((c) => c.family === 'mermaid').length;
-    if (mermaids >= 4) return p.id;
+    if (mermaids >= mermaidWinCountFor(p)) return p.id;
   }
   return null;
 }
 
 function scoreRound(state: SspState, summaryKind: SspRoundSummary['endedBy'], endedBy: PlayerId | null): SspRoundSummary {
   let lastChanceWon: boolean | null = null;
+  const calm = isRoundEvent(state, 'calmWaters');
 
-  // Compute baseline scores
+  // Compute baseline scores. Per-player scoring opts pull in starfish trios
+  // and the Calm Waters event modifier.
   const baseScores = state.players.map((p) => {
     const cards = allCards(p.hand, p.table);
-    const cp = cardPoints(cards);
-    const cb = mermaidColorBonus(cards);
-    return { p, cardPoints: cp, colorBonus: cb };
+    const opts = scoringOptsFor(state, p);
+    const cp = cardPoints(cards, opts);
+    let cb = mermaidColorBonus(cards);
+    if (calm) cb *= 2;
+    // Pepper Burn: -2 pts if held.
+    let pepperBurn = 0;
+    if (playerHasEvent(p, 'pepperBurn')) pepperBurn = -2;
+    return { p, cardPoints: cp + pepperBurn, colorBonus: cb };
   });
 
   let forfeitCallerId: PlayerId | null = null;
@@ -176,11 +212,48 @@ function endRound(state: SspState, endedBy: SspRoundSummary['endedBy'], endedByP
     endedByPlayerId,
     lastChanceWon: summary.lastChanceWon,
   });
+  // Pepper: award/discard the round's event based on its sign.
+  awardEventCard(state);
+}
+
+/** At round end (after scoring), award the current event card:
+ *   - '+'      → goes to the leader (highest matchScore; ties → seat order)
+ *   - '-'      → goes to the laggard (lowest matchScore; ties → seat order)
+ *   - 'global' → discarded (already applied to all this round)
+ *  A player can only hold one event at a time — older one is dropped if so. */
+function awardEventCard(state: SspState): void {
+  const event = currentEvent(state);
+  if (!state.event || !event) return;
+  if (event.sign === 'global') {
+    // Global events apply only for their reveal round, then are discarded.
+    pushLog(state, { kind: 'eventAwarded', eventId: event.id, playerId: null });
+    state.event.current = null;
+    return;
+  }
+  // Find leader / laggard. With ties, take the first in seat order.
+  const sortedDesc = [...state.players].sort((a, b) => b.matchScore - a.matchScore);
+  const sortedAsc = [...state.players].sort((a, b) => a.matchScore - b.matchScore);
+  const target = event.sign === '+' ? sortedDesc[0] : sortedAsc[0];
+  if (!target) {
+    state.event.current = null;
+    return;
+  }
+  // Remove this event from any prior holder; then assign.
+  for (const p of state.players) {
+    if (p.heldEvents) p.heldEvents = p.heldEvents.filter((id) => id !== event.id);
+  }
+  if (!target.heldEvents) target.heldEvents = [];
+  // One-event-per-player rule: drop the older one if needed.
+  if (target.heldEvents.length >= 1) target.heldEvents = [];
+  target.heldEvents.push(event.id);
+  pushLog(state, { kind: 'eventAwarded', eventId: event.id, playerId: target.id });
+  state.event.current = null;
 }
 
 function startNewRound(state: SspState): void {
   state.round += 1;
-  state.deck = buildShuffledDeck(state.rngState);
+  const extraSalt = !!state.config.expansions?.extraSalt;
+  state.deck = buildShuffledDeck(state.rngState, { extraSalt });
   // Flip 2 to make new discard piles, hands cleared.
   state.discards = [[], []];
   const top1 = state.deck.pop();
@@ -191,15 +264,60 @@ function startNewRound(state: SspState): void {
   state.lastRoundSummary = null;
   state.lastChanceFrom = null;
   state.lastChanceRemaining = [];
+  state.pendingLobsterPick = [];
+  state.nextTurnLockedPlayerId = null;
   state.subPhase = 'awaitingAction';
   for (const p of state.players) {
     p.hand = [];
     p.table = [];
+    p.trios = [];
     p.roundScore = 0;
   }
   // First player rotates round to round.
   const lastStarter = state.activePlayerId ?? state.players[0].id;
   state.activePlayerId = nextSeatId(state, lastStarter);
+
+  // Pepper: reveal the next event card. If the deck is empty (12 rounds used —
+  // unlikely in a match), the round simply has no event.
+  if (state.event) {
+    const nextId = state.event.deck.pop();
+    state.event.current = nextId ?? null;
+    if (nextId) pushLog(state, { kind: 'eventReveal', eventId: nextId });
+    // Drop any held event no longer applicable (player must still be leader/
+    // laggard). Since we just rotated, recompute who qualifies.
+    reconcileHeldEvents(state);
+  }
+}
+
+/** Walk every player's held events; discard those whose holder no longer
+ *  meets the position requirement (leader for '+', laggard for '-'). */
+function reconcileHeldEvents(state: SspState): void {
+  if (!state.event) return;
+  const sortedDesc = [...state.players].sort((a, b) => b.matchScore - a.matchScore);
+  const sortedAsc = [...state.players].sort((a, b) => a.matchScore - b.matchScore);
+  const leaderId = sortedDesc[0]?.id;
+  const laggardId = sortedAsc[0]?.id;
+  for (const p of state.players) {
+    if (!p.heldEvents) continue;
+    p.heldEvents = p.heldEvents.filter((id) => {
+      const card = (state.event && id) ? id : null;
+      void card;
+      const sign = lookupEventSign(id);
+      if (sign === '+') return p.id === leaderId;
+      if (sign === '-') return p.id === laggardId;
+      return true;
+    });
+  }
+}
+
+function lookupEventSign(id: SspEventId): '+' | '-' | 'global' {
+  // Avoid importing EVENT_BY_ID twice across files; we already imported
+  // currentEvent which doesn't expose by-id. Pull via dynamic require avoided.
+  const map: Record<SspEventId, '+' | '-' | 'global'> = {
+    threeMermaids: '+', stopAtFive: '+', angelfish: 'global',
+    stormySeas: '-', calmWaters: 'global', pepperBurn: '-',
+  };
+  return map[id];
 }
 
 function gameOverIfReached(state: SspState): void {
@@ -220,6 +338,12 @@ function gameOverIfReached(state: SspState): void {
 }
 
 function advanceTurnAfterEndChoice(state: SspState): void {
+  // Clear the jellyfish lock now that the locked player's turn is ending
+  // (we only lock for a single turn).
+  if (state.activePlayerId && state.activePlayerId === state.nextTurnLockedPlayerId) {
+    state.nextTurnLockedPlayerId = null;
+  }
+
   // Either continue rotation, or progress the lastChance counter.
   if (state.lastChanceFrom) {
     // Pop the next remaining player; if empty, score the round.
@@ -242,7 +366,15 @@ function advanceTurnAfterEndChoice(state: SspState): void {
   state.subPhase = 'awaitingAction';
 }
 
-function applyDuoEffect(state: SspState, p: SspPlayer, family: 'crab' | 'boat' | 'fish' | 'shark' | 'swimmer', other: 'crab' | 'boat' | 'fish' | 'shark' | 'swimmer'): void {
+/** True if the active player is currently locked by a jellyfish ability. */
+function isActiveLocked(state: SspState): boolean {
+  return state.nextTurnLockedPlayerId != null
+    && state.activePlayerId === state.nextTurnLockedPlayerId;
+}
+
+type DuoFamily = 'crab' | 'boat' | 'fish' | 'shark' | 'swimmer' | 'jellyfish' | 'lobster';
+
+function applyDuoEffect(state: SspState, p: SspPlayer, family: DuoFamily, other: DuoFamily): void {
   // Family is one of the two in the played pair; we react to the pair as a unit.
   if (family === 'boat' || other === 'boat') {
     // Take another turn after the pair sequence resolves: jump back to awaitingAction.
@@ -255,6 +387,21 @@ function applyDuoEffect(state: SspState, p: SspPlayer, family: 'crab' | 'boat' |
     state.subPhase = 'awaitingPlayOrEnd';
     return;
   }
+  if (family === 'lobster' || other === 'lobster') {
+    // Salt: reveal top 5 of deck, player picks 1, rest go back and reshuffle.
+    const reveal: SspCard[] = [];
+    for (let i = 0; i < 5; i++) {
+      const c = popDeck(state);
+      if (c) reveal.push(c);
+    }
+    if (reveal.length === 0) {
+      state.subPhase = 'awaitingPlayOrEnd';
+      return;
+    }
+    state.pendingLobsterPick = reveal;
+    state.subPhase = 'awaitingLobsterPick';
+    return;
+  }
   if (family === 'crab' || other === 'crab') {
     // If both discard piles are empty, crab's effect can't be used.
     if (state.discards[0].length === 0 && state.discards[1].length === 0) {
@@ -262,6 +409,18 @@ function applyDuoEffect(state: SspState, p: SspPlayer, family: 'crab' | 'boat' |
     } else {
       state.subPhase = 'awaitingCrabPick';
     }
+    return;
+  }
+  if (family === 'jellyfish' || other === 'jellyfish') {
+    // Salt: lock the next player. Stealing logic identical: nobody is stolen
+    // from, just record the lock and move on.
+    const idx = state.players.findIndex((q) => q.id === p.id);
+    const nextId = state.players[(idx + 1) % state.players.length]?.id ?? null;
+    if (nextId && nextId !== p.id) {
+      state.nextTurnLockedPlayerId = nextId;
+      pushLog(state, { kind: 'jellyfishLock', playerId: p.id, targetPlayerId: nextId });
+    }
+    state.subPhase = 'awaitingPlayOrEnd';
     return;
   }
   // shark + swimmer
@@ -274,6 +433,19 @@ function applyDuoEffect(state: SspState, p: SspPlayer, family: 'crab' | 'boat' |
 
 function otherPlayersHaveCards(state: SspState, exceptId: PlayerId): boolean {
   return state.players.some((q) => q.id !== exceptId && q.hand.length > 0);
+}
+
+/** If the Angelfish (Pepper) event is in force and both discard tops share a
+ *  color, draw one card from the deck for free into `p`'s hand. */
+function maybeAngelfishDraw(state: SspState, p: SspPlayer): void {
+  if (!isRoundEvent(state, 'angelfish')) return;
+  const top0 = state.discards[0][state.discards[0].length - 1];
+  const top1 = state.discards[1][state.discards[1].length - 1];
+  if (!top0 || !top1 || top0.color !== top1.color) return;
+  const c = popDeck(state);
+  if (!c) return;
+  p.hand.push(c);
+  pushLog(state, { kind: 'angelfishDraw', playerId: p.id, family: c.family });
 }
 
 export function applyAction(state: SspState, action: SspAction): SspState {
@@ -334,6 +506,7 @@ export function applyAction(state: SspState, action: SspAction): SspState {
 
     case 'drawFromDiscard': {
       if (s.subPhase !== 'awaitingAction') throw new Error('drawFromDiscard: wrong subPhase');
+      if (isActiveLocked(s)) throw new Error('drawFromDiscard: locked by jellyfish');
       const pile = s.discards[action.pile];
       if (pile.length === 0) throw new Error('drawFromDiscard: pile empty');
       const c = pile.pop()!;
@@ -357,6 +530,7 @@ export function applyAction(state: SspState, action: SspAction): SspState {
 
     case 'playPair': {
       if (s.subPhase !== 'awaitingPlayOrEnd') throw new Error('playPair: wrong subPhase');
+      if (isActiveLocked(s)) throw new Error('playPair: locked by jellyfish');
       const p = requireActivePlayer(s);
       const [idA, idB] = action.cardIds;
       const a = p.hand.find((c) => c.id === idA);
@@ -366,17 +540,66 @@ export function applyAction(state: SspState, action: SspAction): SspState {
       p.hand = p.hand.filter((c) => c.id !== idA && c.id !== idB);
       p.table.push(a, b);
       pushLog(s, { kind: 'playPair', playerId: p.id, families: [a.family, b.family] });
-      const partner = duoPartner(a.family)!;
       const deckTopBefore = s.deck[s.deck.length - 1];
-      applyDuoEffect(
-        s, p,
-        a.family as 'crab' | 'boat' | 'fish' | 'shark' | 'swimmer',
-        partner as 'crab' | 'boat' | 'fish' | 'shark' | 'swimmer',
-      );
+      // For ambiguous-partner cases (swimmer can pair with shark OR jellyfish),
+      // pass both actual families to applyDuoEffect — it dispatches on either.
+      applyDuoEffect(s, p, a.family as DuoFamily, b.family as DuoFamily);
       // Fish drew one card from deck top into the active player's hand.
-      if ((a.family === 'fish' || partner === 'fish') && deckTopBefore && p.hand.some((c) => c.id === deckTopBefore.id)) {
+      if ((a.family === 'fish' || b.family === 'fish') && deckTopBefore && p.hand.some((c) => c.id === deckTopBefore.id)) {
         pushLog(s, { kind: 'fishDraw', playerId: p.id, family: deckTopBefore.family });
       }
+      return s;
+    }
+
+    case 'playTrio': {
+      if (s.subPhase !== 'awaitingPlayOrEnd') throw new Error('playTrio: wrong subPhase');
+      if (isActiveLocked(s)) throw new Error('playTrio: locked by jellyfish');
+      const p = requireActivePlayer(s);
+      const [idA, idB, idC] = action.cardIds;
+      const a = p.hand.find((c) => c.id === idA);
+      const b = p.hand.find((c) => c.id === idB);
+      const c = p.hand.find((c2) => c2.id === idC);
+      if (!a || !b || !c) throw new Error('playTrio: card not in hand');
+      if (!isValidStarfishTrio(a, b, c)) throw new Error('playTrio: not a valid starfish trio');
+      p.hand = p.hand.filter((x) => x.id !== idA && x.id !== idB && x.id !== idC);
+      p.table.push(a, b, c);
+      if (!p.trios) p.trios = [];
+      p.trios.push([idA, idB, idC]);
+      pushLog(s, {
+        kind: 'playTrio',
+        playerId: p.id,
+        families: [a.family, b.family, c.family],
+      });
+      // Trio skips the duo ability — go straight to play-or-end.
+      s.subPhase = 'awaitingPlayOrEnd';
+      return s;
+    }
+
+    case 'lobsterPick': {
+      if (s.subPhase !== 'awaitingLobsterPick') throw new Error('lobsterPick: wrong subPhase');
+      const pool = s.pendingLobsterPick ?? [];
+      const idx = pool.findIndex((c) => c.id === action.cardId);
+      if (idx === -1) throw new Error('lobsterPick: card not in reveal');
+      const picked = pool.splice(idx, 1)[0];
+      const p = requireActivePlayer(s);
+      p.hand.push(picked);
+      // Return the rest to the deck and reshuffle.
+      s.deck.push(...pool);
+      s.pendingLobsterPick = [];
+      s.deck = shuffle(s.rngState, s.deck);
+      pushLog(s, { kind: 'lobsterPick', playerId: p.id, family: picked.family });
+      const mm = checkMermaidWin(s);
+      if (mm) {
+        s.mermaidWinnerId = mm;
+        pushLog(s, { kind: 'mermaidWin', playerId: mm });
+        pushLog(s, { kind: 'matchEnd', winnerId: mm });
+        s.phase = 'gameOver';
+        s.subPhase = 'gameOver';
+        s.finalScores = {};
+        for (const player of s.players) s.finalScores[player.id] = player.matchScore;
+        return s;
+      }
+      s.subPhase = 'awaitingPlayOrEnd';
       return s;
     }
 
@@ -433,9 +656,11 @@ export function applyAction(state: SspState, action: SspAction): SspState {
 
     case 'stop': {
       if (s.subPhase !== 'awaitingPlayOrEnd') throw new Error('stop: wrong subPhase');
+      if (isActiveLocked(s)) throw new Error('stop: locked by jellyfish');
       const p = requireActivePlayer(s);
-      const score = tentativeScore(p.hand, p.table);
-      if (score < STOP_THRESHOLD) throw new Error('stop: below 7-point threshold');
+      const opts = scoringOptsFor(s, p);
+      const score = tentativeScore(p.hand, p.table, opts);
+      if (score < stopThresholdFor(s, p)) throw new Error('stop: below threshold');
       pushLog(s, { kind: 'stop', playerId: p.id, score });
       endRound(s, 'stop', p.id);
       return s;
@@ -443,9 +668,12 @@ export function applyAction(state: SspState, action: SspAction): SspState {
 
     case 'lastChance': {
       if (s.subPhase !== 'awaitingPlayOrEnd') throw new Error('lastChance: wrong subPhase');
+      if (isActiveLocked(s)) throw new Error('lastChance: locked by jellyfish');
       const p = requireActivePlayer(s);
-      const score = tentativeScore(p.hand, p.table);
-      if (score < STOP_THRESHOLD) throw new Error('lastChance: below 7-point threshold');
+      if (playerHasEvent(p, 'stormySeas')) throw new Error('lastChance: blocked by Stormy Seas');
+      const opts = scoringOptsFor(s, p);
+      const score = tentativeScore(p.hand, p.table, opts);
+      if (score < stopThresholdFor(s, p)) throw new Error('lastChance: below threshold');
       pushLog(s, { kind: 'lastChance', playerId: p.id, score });
       s.lastChanceFrom = p.id;
       // Build queue of remaining players (everyone else, in seat order starting next).
@@ -461,6 +689,9 @@ export function applyAction(state: SspState, action: SspAction): SspState {
     case 'pass': {
       if (s.subPhase !== 'awaitingPlayOrEnd') throw new Error('pass: wrong subPhase');
       const p = requireActivePlayer(s);
+      // Angelfish (Pepper, global): if both discard tops share a color at end
+      // of turn, current player gets a free draw from the deck.
+      maybeAngelfishDraw(s, p);
       pushLog(s, { kind: 'pass', playerId: p.id });
       // If the deck is empty after the player's turn, end the round (no scoring penalty).
       if (s.deck.length === 0 && s.pendingDraw.length === 0 && s.lastChanceFrom === null) {
@@ -493,13 +724,15 @@ export function setupNewMatch(state: SspState): void {
   state.activePlayerId = state.players[0]?.id ?? null;
 }
 
-/** Returns true if the active player has reached the 7+ stop threshold. */
+/** Returns true if the active player can call STOP / LAST CHANCE. */
 export function canEndRound(state: SspState): boolean {
   if (!state.activePlayerId) return false;
   if (state.subPhase !== 'awaitingPlayOrEnd') return false;
   if (state.lastChanceFrom) return false; // lastChance window — opponents can't re-trigger
+  if (isActiveLocked(state)) return false;
   const p = playerById(state, state.activePlayerId);
-  return tentativeScore(p.hand, p.table) >= STOP_THRESHOLD;
+  const opts = scoringOptsFor(state, p);
+  return tentativeScore(p.hand, p.table, opts) >= stopThresholdFor(state, p);
 }
 
 /** Exposed for tests + AI heuristics. */

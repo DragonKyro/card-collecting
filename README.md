@@ -75,9 +75,9 @@ npm run test:run    # vitest single run
 - [x] **Phase 3** — Online multiplayer wired up for SSP + Sushi Go (Trystero `/torrent` room, lobby sync, action broadcast, snapshot on join, lobby + in-game chat, host-only AI driver, spectator fallback).
 - [ ] **Phase 4** — 7 Wonders base game (3-age draft, military resolution, final scoring).
 - [ ] **Phase 5** — AI heuristics per game (pure functions in each game's `ai.ts`, optional `chooseAIAction` on the module).
-- [ ] **Phase 6** — Sea Salt & Paper expansions:
-  - *Extra Salt* — 8 new cards / 5 new effects shuffled into the main deck (jellyfish + swimmer immobilize, lobster + crab top-5 peek, basket of crabs, starfish, seahorse wildcard). Drop-in under `src/games/sea-salt-paper/expansions/extra-salt/`; gated by a lobby config flag.
-  - *Extra Pepper* — 12 event cards as a separate deck. Reveal one at round start (rules twist for the round); awarded at round end to the player with the most/fewest points depending on the event. Same expansion-folder pattern; event deck is its own state slice in `SspState`.
+- [x] **Phase 6** — Sea Salt & Paper expansions, togglable per match in the lobby:
+  - *Extra Salt* — 8 new cards / 5 new effects shuffled into the main deck (jellyfish + swimmer next-turn lock, lobster + crab top-5 peek, basket of crabs multiplier, starfish trio, seahorse collector wildcard).
+  - *Extra Pepper* — separate event deck. One event flipped at round start applies to all (or the current holder); awarded at round end to the leader (`+`) or laggard (`−`). Six event cards implemented (Three Mermaids, Stop at Five, Angelfish, Stormy Seas, Calm Waters, Pepper Burn) — the framework supports the remaining six pending authoritative text.
 - [ ] **Phase 7** — 7 Wonders expansions (Leaders, Cities, Babel, Armada, Edifice — each as a sub-module under `src/games/seven-wonders/expansions/`).
 - [ ] **Phase 8** — Additional games as desired.
 

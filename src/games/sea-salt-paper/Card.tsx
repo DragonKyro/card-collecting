@@ -58,6 +58,11 @@ function shortName(family: SspCardFamily): string {
     case 'penguin': return 'PNGN';
     case 'sailor': return 'SAIL';
     case 'shark': return 'SHRK';
+    case 'jellyfish': return 'JELLY';
+    case 'lobster': return 'LOBST';
+    case 'starfish': return 'STAR';
+    case 'seahorse': return 'SHRSE';
+    case 'crabBasket': return 'CRABS';
     default: return family.slice(0, 4).toUpperCase();
   }
 }
@@ -73,6 +78,9 @@ function ribbonValue(family: SspCardFamily): string {
     case 'penguinColony': return 'x2P';
     case 'captain': return 'x3S';
     case 'mermaid': return '★';
+    case 'starfish': return 'TRIO';
+    case 'seahorse': return 'WILD';
+    case 'crabBasket': return '+C';
     default: return 'DUO';
   }
 }

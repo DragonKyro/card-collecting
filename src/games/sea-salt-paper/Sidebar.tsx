@@ -42,7 +42,7 @@ export function Sidebar({ state, mySeatName }: { state: SspState; mySeatName: st
 }
 
 function Cheatsheet() {
-  const dueByCat: Record<string, SspCardFamily[]> = { duo: [], collector: [], multiplier: [], mermaid: [] };
+  const dueByCat: Record<string, SspCardFamily[]> = { duo: [], collector: [], multiplier: [], mermaid: [], special: [] };
   for (const f of FAMILY_ORDER) dueByCat[FAMILY[f].category].push(f);
   return (
     <div>
@@ -77,6 +77,17 @@ function Cheatsheet() {
           <div className="desc">{FAMILY[f].rule}</div>
         </div>
       ))}
+      {dueByCat.special.length > 0 && (
+        <>
+          <h4>Special (Extra Salt)</h4>
+          {dueByCat.special.map((f) => (
+            <div key={f} className="ssp-cheat-row">
+              <div className="name">{FAMILY[f].label}<br /><span style={{ fontSize: 10, opacity: 0.6 }}>×{FAMILY[f].count}</span></div>
+              <div className="desc">{FAMILY[f].rule}</div>
+            </div>
+          ))}
+        </>
+      )}
       <h4>End of round</h4>
       <div className="ssp-cheat-row">
         <div className="name">STOP</div>
@@ -149,6 +160,30 @@ function LogLine({ entry, state }: { entry: SspLogEntry; state: SspState }) {
     case 'matchEnd':
       cls += ' match-end system';
       body = (<><span className="who">Match over</span> — {name(entry.winnerId)} wins!</>);
+      break;
+    case 'playTrio': {
+      const [a, b, c] = entry.families;
+      body = (<><span className="who">{name(entry.playerId)}</span> played a <strong>{fam(a)}+{fam(b)}+{fam(c)}</strong> trio (3 pts, ability cancelled).</>);
+      break;
+    }
+    case 'lobsterPick':
+      body = (<><span className="who">{name(entry.playerId)}</span> (lobster) revealed 5 cards and kept <strong>{fam(entry.family)}</strong>.</>);
+      break;
+    case 'jellyfishLock':
+      body = (<><span className="who">{name(entry.playerId)}</span> (jellyfish) locked {name(entry.targetPlayerId)}'s next turn.</>);
+      break;
+    case 'angelfishDraw':
+      body = (<><span className="who">{name(entry.playerId)}</span> (Angelfish event) drew <strong>{fam(entry.family)}</strong> for free.</>);
+      break;
+    case 'eventReveal':
+      cls += ' system';
+      body = (<><span className="who">Round {entry.round}</span> — Event revealed: <strong>{entry.eventId}</strong>.</>);
+      break;
+    case 'eventAwarded':
+      cls += ' system';
+      body = entry.playerId
+        ? (<><span className="who">Event awarded</span> — <strong>{entry.eventId}</strong> goes to {name(entry.playerId)}.</>)
+        : (<><span className="who">Event discarded</span> — <strong>{entry.eventId}</strong> applied this round only.</>);
       break;
   }
   return <div className={cls}>{body}</div>;

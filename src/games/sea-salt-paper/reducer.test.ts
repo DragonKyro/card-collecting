@@ -269,6 +269,179 @@ describe('canEndRound', () => {
   });
 });
 
+// ============================================================
+// Extra Salt — expansion mechanics
+// ============================================================
+
+function freshStateWithSalt(): SspState {
+  const seats: Seat[] = [makeSeat('a', 'Alice'), makeSeat('b', 'Bob')];
+  const s = seaSaltPaperModule.createInitialState(
+    { targetScore: 40, expansions: { extraSalt: true } },
+    12345, seats,
+  );
+  if (s.players.length === 0) attachSeatsAndStart(s, seats);
+  return s;
+}
+
+describe('Extra Salt: lobster + crab ability', () => {
+  it('reveals 5 cards on play; subPhase becomes awaitingLobsterPick', () => {
+    let s = freshStateWithSalt();
+    const a = s.players.find((q) => q.id === 'a')!;
+    a.hand = [card(700, 'lobster'), card(701, 'crab')];
+    s = applyAction(s, { type: 'drawFromDiscard', pile: 0 });
+    s = applyAction(s, { type: 'playPair', cardIds: [700, 701] });
+    expect(s.subPhase).toBe('awaitingLobsterPick');
+    expect(s.pendingLobsterPick?.length).toBe(5);
+  });
+
+  it('lobsterPick: keeps one, reshuffles the others back into the deck', () => {
+    let s = freshStateWithSalt();
+    const a = s.players.find((q) => q.id === 'a')!;
+    a.hand = [card(700, 'lobster'), card(701, 'crab')];
+    s = applyAction(s, { type: 'drawFromDiscard', pile: 0 });
+    s = applyAction(s, { type: 'playPair', cardIds: [700, 701] });
+    const beforeDeck = s.deck.length;
+    const pickId = s.pendingLobsterPick![2].id;
+    s = applyAction(s, { type: 'lobsterPick', cardId: pickId });
+    expect(s.subPhase).toBe('awaitingPlayOrEnd');
+    expect(s.pendingLobsterPick?.length).toBe(0);
+    expect(s.players.find((q) => q.id === 'a')!.hand.some((c) => c.id === pickId)).toBe(true);
+    // 5 revealed - 1 kept = 4 returned to deck.
+    expect(s.deck.length).toBe(beforeDeck + 4);
+  });
+});
+
+describe('Extra Salt: jellyfish + swimmer ability', () => {
+  it('locks the next player so they can only drawPair and pass', () => {
+    let s = freshStateWithSalt();
+    const a = s.players.find((q) => q.id === 'a')!;
+    a.hand = [card(800, 'jellyfish'), card(801, 'swimmer')];
+    // a plays jellyfish+swimmer, then passes.
+    s = applyAction(s, { type: 'drawFromDiscard', pile: 0 });
+    s = applyAction(s, { type: 'playPair', cardIds: [800, 801] });
+    expect(s.subPhase).toBe('awaitingPlayOrEnd');
+    expect(s.nextTurnLockedPlayerId).toBe('b');
+    s = applyAction(s, { type: 'pass' });
+    expect(s.activePlayerId).toBe('b');
+    // b is locked: drawFromDiscard, playPair, playTrio, stop, lastChance all throw.
+    expect(() => applyAction(s, { type: 'drawFromDiscard', pile: 0 })).toThrow();
+    // b's only legal action is drawPair → keep → pass.
+    s = applyAction(s, { type: 'drawPair' });
+    s = applyAction(s, { type: 'keepFromDraw', keepIndex: 0, discardToPile: 0 });
+    // Lock should clear when b's turn ends (advanceTurnAfterEndChoice).
+    s = applyAction(s, { type: 'pass' });
+    expect(s.nextTurnLockedPlayerId).toBeNull();
+  });
+});
+
+describe('Extra Salt: starfish trio', () => {
+  it('playTrio with 2 duo + starfish: trio recorded, ability skipped', () => {
+    let s = freshStateWithSalt();
+    const a = s.players.find((q) => q.id === 'a')!;
+    // crab+crab+starfish — base ability would be crabPick (awaitingCrabPick); trio cancels it.
+    a.hand = [card(600, 'crab'), card(601, 'crab'), card(602, 'starfish')];
+    s = applyAction(s, { type: 'drawFromDiscard', pile: 0 });
+    s = applyAction(s, { type: 'playTrio', cardIds: [600, 601, 602] });
+    expect(s.subPhase).toBe('awaitingPlayOrEnd');
+    expect(s.players.find((q) => q.id === 'a')!.trios?.length).toBe(1);
+    expect(s.players.find((q) => q.id === 'a')!.table).toHaveLength(3);
+  });
+});
+
+// ============================================================
+// Extra Pepper — event-deck mechanics
+// ============================================================
+
+function freshStateWithPepper(): SspState {
+  const seats: Seat[] = [makeSeat('a', 'Alice'), makeSeat('b', 'Bob')];
+  const s = seaSaltPaperModule.createInitialState(
+    { targetScore: 40, expansions: { extraPepper: true } },
+    12345, seats,
+  );
+  if (s.players.length === 0) attachSeatsAndStart(s, seats);
+  return s;
+}
+
+describe('Extra Pepper: event deck', () => {
+  it('initial state has an event deck and a current event after setup', () => {
+    const s = freshStateWithPepper();
+    expect(s.event).not.toBeNull();
+    expect(s.event!.deck.length).toBeGreaterThan(0);
+    expect(s.event!.current).not.toBeNull();
+  });
+
+  it('Three Mermaids reduces the holder\'s mermaid-win threshold to 3', () => {
+    let s = freshStateWithPepper();
+    const a = s.players.find((q) => q.id === 'a')!;
+    a.heldEvents = ['threeMermaids'];
+    a.hand = [
+      card(900, 'mermaid', 'white'),
+      card(901, 'mermaid', 'white'),
+    ];
+    // Pick up the third from discard.
+    s.discards[0].push(card(902, 'mermaid', 'white'));
+    s = applyAction(s, { type: 'drawFromDiscard', pile: 0 });
+    expect(s.phase).toBe('gameOver');
+    expect(s.mermaidWinnerId).toBe('a');
+  });
+
+  it('Stop at Five lets the holder STOP at 5 pts', () => {
+    let s = freshStateWithPepper();
+    const a = s.players.find((q) => q.id === 'a')!;
+    a.heldEvents = ['stopAtFive'];
+    // 2 sailors = 5 pts (enough with the event, but not without).
+    a.hand = [card(100, 'sailor'), card(101, 'sailor')];
+    s = applyAction(s, { type: 'drawFromDiscard', pile: 0 });
+    // Without the event this stop would throw; with it, it should succeed.
+    s = applyAction(s, { type: 'stop' });
+    expect(s.subPhase).toBe('roundEnd');
+  });
+
+  it('Stormy Seas blocks LAST CHANCE for the holder', () => {
+    let s = freshStateWithPepper();
+    const a = s.players.find((q) => q.id === 'a')!;
+    a.heldEvents = ['stormySeas'];
+    a.hand = [
+      card(100, 'octopus'), card(101, 'octopus'), card(102, 'octopus'),
+      card(103, 'sailor'), card(104, 'sailor'),
+    ];
+    s = applyAction(s, { type: 'drawFromDiscard', pile: 0 });
+    expect(() => applyAction(s, { type: 'lastChance' })).toThrow();
+  });
+
+  it('Pepper Burn deducts 2 pts at round end', () => {
+    let s = freshStateWithPepper();
+    const a = s.players.find((q) => q.id === 'a')!;
+    a.heldEvents = ['pepperBurn'];
+    a.hand = [
+      card(100, 'shell'), card(101, 'shell'), card(102, 'shell'), card(103, 'shell'),
+      card(104, 'sailor'), card(105, 'sailor'),
+    ];
+    s = applyAction(s, { type: 'drawFromDiscard', pile: 0 });
+    s = applyAction(s, { type: 'stop' });
+    const aRow = s.lastRoundSummary!.perPlayer.find((r) => r.playerId === 'a')!;
+    // 4 shells (6) + 2 sailors (5) = 11 — Pepper Burn → 9.
+    expect(aRow.cardPoints).toBe(9);
+  });
+
+  it('Calm Waters event doubles the mermaid color bonus at round end', () => {
+    let s = freshStateWithPepper();
+    if (s.event) s.event.current = 'calmWaters';
+    const a = s.players.find((q) => q.id === 'a')!;
+    a.hand = [
+      card(100, 'shell', 'yellow'), card(101, 'shell', 'yellow'),
+      card(102, 'shell', 'yellow'), card(103, 'shell', 'yellow'),
+      card(104, 'mermaid', 'white'), card(105, 'sailor'), card(106, 'sailor'),
+    ];
+    s = applyAction(s, { type: 'drawFromDiscard', pile: 0 });
+    s = applyAction(s, { type: 'stop' });
+    const aRow = s.lastRoundSummary!.perPlayer.find((r) => r.playerId === 'a')!;
+    // 6 yellow cards (4 shells + 2 sailors, both default-yellow in card()) — top
+    // group for 1 mermaid = 6; Calm Waters doubles to 12.
+    expect(aRow.colorBonus).toBe(12);
+  });
+});
+
 describe('match end', () => {
   it('declares gameOver when target reached', () => {
     let s = freshState();

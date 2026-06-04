@@ -17,7 +17,10 @@ export type SspCardFamily =
   | 'crab' | 'boat' | 'fish'
   | 'shark' | 'swimmer'
   | 'shell' | 'octopus' | 'penguin' | 'sailor'
-  | 'lighthouse' | 'shoal' | 'penguinColony' | 'captain';
+  | 'lighthouse' | 'shoal' | 'penguinColony' | 'captain'
+  // Extra Salt expansion families. Only present in the deck when
+  // config.expansions.extraSalt is true.
+  | 'jellyfish' | 'lobster' | 'starfish' | 'seahorse' | 'crabBasket';
 
 export type SspColor =
   | 'white' | 'yellow' | 'green' | 'pink' | 'purple'
@@ -32,15 +35,31 @@ export interface SspCard {
 export interface SspPlayer {
   id: PlayerId;
   hand: SspCard[];
-  /** Duo pairs played face-up. Every two consecutive cards form one scored pair. */
+  /** Duo pairs played face-up. Every two consecutive cards form one scored pair,
+   *  EXCEPT cards listed in `trios` below — those are scored as a 3-pt group
+   *  and skip the duo ability. */
   table: SspCard[];
+  /** Each trio is exactly three card ids: 2 duo cards + 1 starfish (Extra Salt).
+   *  Scored as 3 pts for the whole trio; the duo's ability does NOT fire. */
+  trios?: Array<[number, number, number]>;
+  /** Pepper event cards currently held by this player (Extra Pepper). */
+  heldEvents?: SspEventId[];
   roundScore: number;
   matchScore: number;
+}
+
+export interface SspExpansionConfig {
+  /** Mix Extra Salt's 8 cards (jellyfish×2, lobster×2, starfish×2, seahorse, crabBasket) into the main deck. */
+  extraSalt: boolean;
+  /** Add the Extra Pepper event deck (12 events, one revealed per round, awarded to leader/laggard at round end). */
+  extraPepper: boolean;
 }
 
 export interface SspConfig {
   /** Match-ending threshold. Default scales with player count. */
   targetScore: number;
+  /** Optional expansions; omitted = base game only. */
+  expansions?: Partial<SspExpansionConfig>;
 }
 
 export type SspSubPhase =
@@ -49,6 +68,7 @@ export type SspSubPhase =
   | 'awaitingPlayOrEnd'   // optional pair plays, then end turn
   | 'awaitingCrabPick'    // crab ability: pick any card from a discard pile
   | 'awaitingSharkSteal'  // shark+swimmer ability: choose target to steal from
+  | 'awaitingLobsterPick' // lobster+crab ability (Salt): keep 1 of top-5 reveal
   | 'roundEnd'            // round over, scores displayed; awaiting nextRound
   | 'gameOver';
 
@@ -70,15 +90,48 @@ export interface SspRoundSummary {
   perPlayer: SspPlayerRoundScore[];
 }
 
+/** Stable identifiers for Extra Pepper event cards. Each id maps to a card with
+ *  a discrete rule effect handled in scoring + reducer. */
+export type SspEventId =
+  | 'threeMermaids'   // +, single-player: holder wins instantly at 3 mermaids
+  | 'stopAtFive'      // +, single-player: holder can STOP / LAST CHANCE at 5+ (instead of 7+)
+  | 'angelfish'       // global: if both discard tops share color, current player draws 1 for free at turn end
+  | 'stormySeas'      // -, single-player: holder may not call LAST CHANCE
+  | 'calmWaters'      // global: mermaid color bonus doubled this round
+  | 'pepperBurn';     // -, single-player: holder loses 2 pts at round end
+
+/** Display-friendly metadata; see events.ts for the canonical table. */
+export interface SspEventCard {
+  id: SspEventId;
+  name: string;
+  /** '+' goes to the round leader; '−' goes to the laggard; 'global' applies to all. */
+  sign: '+' | '-' | 'global';
+  rule: string;
+}
+
+export interface SspEventDeckState {
+  /** Remaining event deck. Each entry is an event id (not a full card — full
+   *  card metadata is static, looked up from EVENT_BY_ID). */
+  deck: SspEventId[];
+  /** The event in force this round, or null if none drawn yet (round 1 setup). */
+  current: SspEventId | null;
+}
+
 /** Structured game-log entry. Rendered as text in the history sidebar; kept as
  *  a discriminated union so the renderer can show pretty names + icons. */
 export type SspLogEntry =
   | { seq: number; round: number; kind: 'drawDeck';        playerId: PlayerId; keptFamily: SspCardFamily; discardedFamily: SspCardFamily; toPile: 0 | 1 }
   | { seq: number; round: number; kind: 'drawDiscard';     playerId: PlayerId; pile: 0 | 1; family: SspCardFamily }
   | { seq: number; round: number; kind: 'playPair';        playerId: PlayerId; families: [SspCardFamily, SspCardFamily] }
+  | { seq: number; round: number; kind: 'playTrio';        playerId: PlayerId; families: [SspCardFamily, SspCardFamily, SspCardFamily] }
   | { seq: number; round: number; kind: 'crabPick';        playerId: PlayerId; pile: 0 | 1; family: SspCardFamily }
   | { seq: number; round: number; kind: 'sharkSteal';      playerId: PlayerId; targetPlayerId: PlayerId; family: SspCardFamily }
   | { seq: number; round: number; kind: 'fishDraw';        playerId: PlayerId; family: SspCardFamily }
+  | { seq: number; round: number; kind: 'lobsterPick';     playerId: PlayerId; family: SspCardFamily }
+  | { seq: number; round: number; kind: 'jellyfishLock';   playerId: PlayerId; targetPlayerId: PlayerId }
+  | { seq: number; round: number; kind: 'angelfishDraw';   playerId: PlayerId; family: SspCardFamily }
+  | { seq: number; round: number; kind: 'eventReveal';     eventId: SspEventId }
+  | { seq: number; round: number; kind: 'eventAwarded';    eventId: SspEventId; playerId: PlayerId | null }
   | { seq: number; round: number; kind: 'stop';            playerId: PlayerId; score: number }
   | { seq: number; round: number; kind: 'lastChance';      playerId: PlayerId; score: number }
   | { seq: number; round: number; kind: 'pass';            playerId: PlayerId }
@@ -108,8 +161,16 @@ export interface SspState {
   lastChanceRemaining: PlayerId[];
   /** Last round's score breakdown, shown on the round-end screen. */
   lastRoundSummary: SspRoundSummary | null;
-  /** Set when someone collected 4 mermaids — game ends instantly. */
+  /** Set when someone collected 4 mermaids (or 3 with Three Mermaids event) — game ends instantly. */
   mermaidWinnerId: PlayerId | null;
+  /** Buffer of 5 cards while the lobster+crab ability is being resolved (Salt). */
+  pendingLobsterPick?: SspCard[];
+  /** Set when jellyfish+swimmer was just played; the named player is locked
+   *  on their next turn (drawPair only, no playPair, must pass). Cleared after
+   *  that player takes their next turn. */
+  nextTurnLockedPlayerId?: PlayerId | null;
+  /** Extra Pepper event-deck state, null when expansion disabled. */
+  event?: SspEventDeckState | null;
   /** Append-only game log shown in the history sidebar. */
   log: SspLogEntry[];
   /** Monotonic sequence used as the key for log entries. */
@@ -123,8 +184,13 @@ export type SspAction =
   | { type: 'drawFromDiscard'; pile: 0 | 1 }
   // optional pair plays
   | { type: 'playPair'; cardIds: [number, number] }
+  /** Extra Salt: trio play — two duo cards + one starfish, scored as a 3-pt trio,
+   *  duo ability skipped. */
+  | { type: 'playTrio'; cardIds: [number, number, number] }
   | { type: 'crabPick'; pile: 0 | 1; cardId: number }
   | { type: 'sharkSteal'; targetPlayerId: PlayerId }
+  /** Extra Salt: pick one card from the 5-card lobster reveal. */
+  | { type: 'lobsterPick'; cardId: number }
   // end-of-turn
   | { type: 'stop' }
   | { type: 'lastChance' }

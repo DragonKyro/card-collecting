@@ -6,7 +6,7 @@
 // color counting (mermaids are white).
 
 import type { SspCard, SspCardFamily, SspColor } from './types';
-import { duoPartner, FAMILY } from './cards';
+import { FAMILY } from './cards';
 
 // Each table is indexed by the number of cards held (so PTS[0] = 0 cards, PTS[1] = 1 card, …).
 // Rulebook: a single collector card scores 0 — only sets pay out.
@@ -62,50 +62,117 @@ export function mermaidColorBonus(cards: SspCard[]): number {
   return bonus;
 }
 
+/** Opts for cards-with-trio-cancel + per-player event holdings. */
+export interface CardPointsOpts {
+  /** Card ids of cards whose duo-pair scoring should be SKIPPED because they
+   *  were played as part of a starfish trio. The trio itself scores 3 pts via
+   *  `trios` instead. */
+  trioCancelledIds?: Set<number>;
+  /** Trio groups owned by this player; each scores a flat 3 pts. */
+  trios?: number;
+}
+
 /** Sum of point values from the cards themselves (no color bonus). */
-export function cardPoints(cards: SspCard[]): number {
+export function cardPoints(cards: SspCard[], opts: CardPointsOpts = {}): number {
+  // Optionally drop trio-bound cards from duo-pair counting so they don't
+  // double-score (the trio bonus is added separately below).
+  const effective = opts.trioCancelledIds
+    ? cards.filter((c) => !opts.trioCancelledIds!.has(c.id))
+    : cards;
+
   const familyCounts: Partial<Record<SspCardFamily, number>> = {};
-  for (const c of cards) {
+  for (const c of effective) {
     familyCounts[c.family] = (familyCounts[c.family] ?? 0) + 1;
   }
 
   let total = 0;
 
-  // Duo pairs: hand cards do NOT count as pairs. The rulebook's "duo pair"
-  // scoring is for cards on the table (played). Caller decides which subset
-  // to pass for duo pair calculation. Here we conservatively count UNORDERED
-  // pairs within the input set, since callers pass either (hand+table) or
-  // just table — and the hand can never have completed pairs to score (they'd
-  // be played). Practically: number of completed pairs we can form.
-  let crab = familyCounts.crab ?? 0;
-  let boat = familyCounts.boat ?? 0;
-  let fish = familyCounts.fish ?? 0;
-  let shark = familyCounts.shark ?? 0;
-  let swimmer = familyCounts.swimmer ?? 0;
-  total += Math.floor(crab / 2);
+  // Duo pairs: number of completed pairs we can form from the input set.
+  // Salt: lobster pairs with crab, jellyfish pairs with swimmer. Greedy
+  // pairing: dedicated Salt pairings first so we don't double-spend a crab/
+  // swimmer that could match its base partner.
+  const crab = familyCounts.crab ?? 0;
+  const boat = familyCounts.boat ?? 0;
+  const fish = familyCounts.fish ?? 0;
+  const shark = familyCounts.shark ?? 0;
+  const swimmer = familyCounts.swimmer ?? 0;
+  const jellyfish = familyCounts.jellyfish ?? 0;
+  const lobster = familyCounts.lobster ?? 0;
+
+  const lobsterPairs = Math.min(lobster, crab);
+  const crabAfterLobster = crab - lobsterPairs;
+  total += lobsterPairs;
+  total += Math.floor(crabAfterLobster / 2);
+
+  const jellyfishPairs = Math.min(jellyfish, swimmer);
+  const swimmerAfterJelly = swimmer - jellyfishPairs;
+  total += jellyfishPairs;
+  total += Math.min(shark, swimmerAfterJelly);
+
   total += Math.floor(boat / 2);
   total += Math.floor(fish / 2);
-  total += Math.min(shark, swimmer);
 
-  // Collectors
-  total += collectorPoints('shell', familyCounts.shell ?? 0);
-  total += collectorPoints('octopus', familyCounts.octopus ?? 0);
-  total += collectorPoints('penguin', familyCounts.penguin ?? 0);
-  total += collectorPoints('sailor', familyCounts.sailor ?? 0);
+  // Starfish trios — each is worth a flat 3 pts.
+  total += 3 * (opts.trios ?? 0);
+
+  // Collectors. Seahorse is a wildcard collector — figure out which collector
+  // gains the most from one additional card and apply it (rulebook: must have
+  // at least one card of that collector; capped at that set's max payout).
+  const collectorCounts = {
+    shell: familyCounts.shell ?? 0,
+    octopus: familyCounts.octopus ?? 0,
+    penguin: familyCounts.penguin ?? 0,
+    sailor: familyCounts.sailor ?? 0,
+  };
+  const seahorse = familyCounts.seahorse ?? 0;
+  if (seahorse > 0) {
+    // Pick the collector family where +1 card yields the biggest score gain
+    // (over no-seahorse baseline). Ties broken by collector iteration order.
+    let bestGain = 0;
+    let bestFam: keyof typeof collectorCounts | null = null;
+    for (const fam of ['shell', 'octopus', 'penguin', 'sailor'] as const) {
+      const baseline = collectorPoints(fam, collectorCounts[fam]);
+      const augmented = collectorCounts[fam] >= 1
+        ? collectorPoints(fam, collectorCounts[fam] + 1)
+        : 0; // seahorse needs at least one of that collector
+      const gain = augmented - baseline;
+      if (gain > bestGain) {
+        bestGain = gain;
+        bestFam = fam;
+      }
+    }
+    total += bestGain;
+    void bestFam;
+  }
+
+  total += collectorPoints('shell', collectorCounts.shell);
+  total += collectorPoints('octopus', collectorCounts.octopus);
+  total += collectorPoints('penguin', collectorCounts.penguin);
+  total += collectorPoints('sailor', collectorCounts.sailor);
 
   // Multipliers
   if (familyCounts.lighthouse) total += familyCounts.boat ?? 0;
   if (familyCounts.shoal) total += familyCounts.fish ?? 0;
   if (familyCounts.penguinColony) total += 2 * (familyCounts.penguin ?? 0);
   if (familyCounts.captain) total += 3 * (familyCounts.sailor ?? 0);
+  if (familyCounts.crabBasket) total += familyCounts.crab ?? 0;
 
   return total;
 }
 
+export interface TotalScoreOpts extends CardPointsOpts {
+  /** Calm Waters event: double the mermaid color bonus. */
+  doubleColorBonus?: boolean;
+}
+
 /** Sum card points + mermaid color bonus across all of a player's cards. */
-export function totalScore(handAndTable: SspCard[]): { cardPoints: number; colorBonus: number; total: number } {
-  const cp = cardPoints(handAndTable);
-  const cb = mermaidColorBonus(handAndTable);
+export function totalScore(
+  handAndTable: SspCard[],
+  opts: TotalScoreOpts = {},
+): { cardPoints: number; colorBonus: number; total: number } {
+  const cp = cardPoints(handAndTable, opts);
+  let cb = mermaidColorBonus(handAndTable);
+  if (opts.doubleColorBonus) cb *= 2;
   return { cardPoints: cp, colorBonus: cb, total: cp + cb };
 }
 
@@ -114,19 +181,39 @@ export function allCards(hand: SspCard[], table: SspCard[]): SspCard[] {
   return [...hand, ...table];
 }
 
-/** True if the two cards form a valid duo pair. */
+/** True if the two cards form a valid duo pair (Salt-aware: jellyfish+swimmer
+ *  and lobster+crab are also valid). Symmetric. */
 export function isValidDuoPair(a: SspCard, b: SspCard): boolean {
   if (a.id === b.id) return false;
   if (a.family === b.family) {
     return a.family === 'crab' || a.family === 'boat' || a.family === 'fish';
   }
-  const partner = duoPartner(a.family);
-  return partner === b.family;
+  const pairs: ReadonlyArray<[SspCardFamily, SspCardFamily]> = [
+    ['shark', 'swimmer'],
+    ['jellyfish', 'swimmer'],
+    ['lobster', 'crab'],
+  ];
+  for (const [x, y] of pairs) {
+    if ((a.family === x && b.family === y) || (a.family === y && b.family === x)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** True if the three cards form a valid starfish trio (any duo pair + one starfish). */
+export function isValidStarfishTrio(a: SspCard, b: SspCard, c: SspCard): boolean {
+  const cards = [a, b, c];
+  const star = cards.find((x) => x.family === 'starfish');
+  if (!star) return false;
+  const rest = cards.filter((x) => x.id !== star.id);
+  if (rest.length !== 2) return false;
+  return isValidDuoPair(rest[0], rest[1]);
 }
 
 /** Used by the "can end round?" check. Mirrors total score, including color bonus. */
-export function tentativeScore(hand: SspCard[], table: SspCard[]): number {
-  return totalScore(allCards(hand, table)).total;
+export function tentativeScore(hand: SspCard[], table: SspCard[], opts: TotalScoreOpts = {}): number {
+  return totalScore(allCards(hand, table), opts).total;
 }
 
 /** A card's nominal point contribution for AI heuristics — see ai.ts for the full model. */
