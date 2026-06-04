@@ -1,0 +1,221 @@
+# CLAUDE.md
+
+Context for Claude working in this repo.
+
+## What this is
+
+A personal multi-game card-collecting web app, hosted on GitHub Pages, played hot-seat or with friends over WebRTC. Ships with Sushi Go! Party, Sea Salt & Paper, 7 Wonders (base + 5 expansions), 7 Wonders Duel, and Air, Land & Sea (base + SLS scaffolding). No backend.
+
+## Tech stack (locked)
+
+TypeScript, Vite, React 19, Zustand for state, Trystero (`/torrent`) for WebRTC P2P, Vitest for tests. No backend — GitHub Pages is static-only.
+
+## Architecture
+
+Five layers, separated by directory:
+
+- **`src/core/`** — `GameModule<S, A, C>` contract, seeded RNG (mulberry32 in `rng.ts`), shared types (`Seat`, `PlayerId`, `GamePhase`). Game-agnostic — never references a specific game.
+- **`src/games/<id>/`** — one folder per game. Each folder owns its own types, reducer (`applyAction`), AI, and UI bundle. Registered in `src/games/registry.ts`.
+- **`src/net/`** — Trystero wrapper (`room.ts`, stubbed), stable identity (`identity.ts` — localStorage UUID + `?fresh` escape hatch), wire envelopes (`types.ts`).
+- **`src/store/`** — Zustand stores (`gameStore`, `networkStore`). `gameStore` holds the active module + state and exposes `dispatch` (broadcasts) and `applyLocal` (silent receiver path).
+- **`src/ui/`** — Game-agnostic shell: `App.tsx` (route between picker / lobby / playing), `GameLobby.tsx` (seat builder + game's `LobbyConfig`), `GameHost.tsx` (mounts the active game's `GameView`).
+
+## GameModule contract
+
+The single rule that makes the multi-game design work:
+
+```ts
+GameModule<S, A, C> {
+  id, name, tagline, minPlayers, maxPlayers
+  defaultConfig(seats) → C
+  validateConfig(config) → string[]
+  createInitialState(config, seed) → S
+  applyAction(state, action) → S          // pure, deterministic
+  chooseAIAction?(state, playerId) → A | null
+  ui() → Promise<{ LobbyConfig, GameView }>   // lazy-loaded
+}
+```
+
+**Hard invariants every module must uphold:**
+- `applyAction` is pure. No `Date.now`, no `Math.random`, no I/O. RNG draws from `state.rngState`.
+- Randomness chosen by the acting player (deals, draws) is folded into the action payload so all peers reduce identically.
+- `S` (game state) is JSON-serializable — sent over the wire, snapshotted on join.
+- The full state is replicated; hidden-information rules (other players' hands) are a UI concern. Friends-only honor, no anti-cheat.
+
+The shell, store, and net layer never name a specific game. Adding a new game means: drop a folder, register it, done.
+
+## Multiplayer model
+
+- **Trystero `/torrent`** for WebRTC signaling. No backend. App ID `card-collecting-v1`; room code is both the topic and the encryption password. Lazy-imported in `src/net/room.ts` so the solo bundle stays small.
+- **Stable identity**: `localStorage` UUID (`card-collecting.uuid`), exchanged via `hello` channel. `?fresh` flips storage to `sessionStorage` for two-window local testing.
+- **Full state replication**: every peer holds full `GameState`.
+- **Actions, not diffs**: `{ byUuid, actionJson }` envelopes; receivers verify the UUID owns a seat in `lobby.seats` before applying via `gameStore.applyLocal`.
+- **Determinism**: randomness lives in `state.rngState` (mulberry32 seeded at game start), plus per-action payload for player-chosen draws.
+- **Host-authoritative lobby**: host owns lobby state, broadcasts on every edit. Seat assignment in the lobby is done by the host via a per-seat peer dropdown (changing `seat.id` from a placeholder to the chosen peer's uuid). Start broadcasts the initial `GameState` + `seatUuids[]`.
+- **Rejoin / spectator**: when a peer says hello, the host responds with `sendLobby` (always) and `sendSnapshot(toPeerId)` (if a game is already in flight). Joiner's uuid matching a seat → guest; otherwise spectator (read-only — dispatch is no-op'd in `GameHost`).
+- **AI in online**: only the host runs `chooseAIAction`. `GameHost.tsx`'s AI driver fires when `state.activePlayerId` resolves to an AI seat; reducers park `activePlayerId` on the next un-acted AI seat during simultaneous-pick subphases (Sushi Go `selecting`, 7 Wonders `picking`) and on a click-through screen in all-AI matches (Sushi Go `roundEnd`, 7 Wonders `militaryEnd`) so the driver self-advances. Driver early-returns when role is `guest` or `spectator`. If host drops, AI seats freeze.
+- **Chat**: in-memory in `networkStore.chat`, not part of `GameState`. `ChatPanel` floats bottom-right in-game; lobby chat is a compact log on the lobby's right column.
+- **Channels**: `hello`, `lobby`, `start`, `action`, `snap`, `chat`. Each is a separate `makeAction` namespace.
+- **Online wiring**: `networkStore.wireRoom` subscribes to all channels and calls `gameStore.registerBroadcastHandler` so `dispatch()` from any game UI emits an action envelope. The two stores stay decoupled — `gameStore` has no awareness of the network.
+
+## AI heuristics
+
+Every module exports a `chooseAIAction(state, playerId) → action | null`. All AIs are deterministic, single-difficulty heuristics — no search, no MCTS. They score the legal moves available to `playerId` and return the highest scorer. Smoke tests under `<game>/ai.test.ts` drive end-to-end AI vs AI matches to make sure no AI returns illegal actions or stalls the state machine.
+
+Key contextual signals each AI consumes:
+
+- **Sushi Go!** — builds a `Knowledge` snapshot every pick: per-kind unseen cards (deck composition − everything visible on tables and in own hand), picks remaining this round, and own picks remaining. Wasabi value scales with `P(see another nigiri)`, sashimi with `P(see 1 / 2 more sashimi)`, eel with `P(see a second eel)`, chopsticks/spoon/menu with future-picks remaining, tea with how much room is left to grow the most-played kind. Tempura discounts a new pair start by partner probability. Combined with a from-scratch round re-score that adds the card to the table (so wasabi-before-nigiri ordering, edamame neighbors, soy-sauce color count, etc. all factor in). Chopsticks/spoon double-pick triggers only when top-2 value exceeds top-1 by `chopsticksSaveValue`.
+- **Sea Salt & Paper** — builds a per-family unseen-count map (`buildKnowledge`) the same way: deck total − everything on tables, discard piles, own hand. Uses it to compute `expectedUnseenDrawValue` (average marginal value of a face-down draw), then compares against the best face-up discard top to choose `drawPair` vs `drawFromDiscard`. Plays the highest-value duo pair in hand (boat = bonus turn ≈ next-draw value; fish = +1 free deck card; crab = best visible card in either discard; shark+swimmer = average opponent hand value). Decides `stop` / `lastChance` / `pass` from a per-player STOP threshold (5 with `stopAtFive`, else 7), how big the lead is, and whether mermaid-4 / Three Mermaids is reachable.
+- **7 Wonders** — scores each card in hand: vp/shields/coins/science/produce, end-VP cards by counting matching targets, neighbor-purchase cost via `suggestCheapestPurchase`. Strong negative when a duplicate name is already in tableau or no plan can pay. If no build is positive, picks the lowest-value card for a wonder stage (if affordable) or discards. The base AI now dispatches to `getActiveExpansions(config)`'s `chooseAIAction` for expansion-owned subphases — Leaders' `leaderDraft`, `leaderPlay`, `solomonAwaitPick` — so the host driver can drive AI through the leader draft + per-age leader play.
+- **7 Wonders Duel** — for each available pyramid card, scores build/bury/discard outcomes against opponent production (price per unit = `2 + opponent's fixed production`, flattened to 1 with the matching trade-discount card). Wonder draft ranks each wonder by approximate VP + shields + coins/science/produce; bury value uses the best unbuilt wonder's value. Progress-token pick uses a static preference list (Philosophy → Mathematics → Agriculture → Masonry → Architecture → Law → Urbanism → Strategy → Economy → Theology).
+- **Air, Land & Sea** — `controlMargin` per seat across all theaters; deploy/improvise scored by raw strength swing, threshold-crossing bonus (going from "behind" to "ahead" in a theater), per-ability value (instants 2–4 pts, ongoings 3–4 pts). Burning a 5-6 strength card on a full hand penalty. Improvise heavy penalty if any Containment is in play. Withdraws when control margin is below half-theaters and `vpForWithdraw(handSize) < FULL_BATTLE_VP`. Ability follow-up subphases (flip / transport / redeploy / reinforce) score by maximizing strength swung onto our losing theaters.
+
+## Game-specific design notes (deferred implementation)
+
+Each game's `types.ts` carries detailed notes on the eventual reducer. Short summary:
+
+### Sushi Go! Party (`src/games/sushi-go/`)
+Simultaneous pick + pass-hands. Engine waits at `subPhase: 'selecting'` until all live players submit `submitPick`, then batch-applies and rotates hands. Specials (chopsticks/spoon/special-order/menu/takeout-box) enter a `specialResolution` sub-phase for the playing player. Multi-round (default 3); dessert pile persists across rounds, table resets. Menu builder picks 8 card kinds in the lobby; turn structure is identical across menus. `activePlayerId` is parked on whichever AI seat hasn't picked yet this tick (mirrors 7W's `picking` setup) so the GameHost AI driver wakes up for each AI in turn — without this, simultaneous-pick games would freeze when no human is around to dispatch.
+
+### Sea Salt & Paper (`src/games/sea-salt-paper/`)
+Each turn: draw 2 (keep 1 or both), optional play-pair-for-ability, then STOP / LAST CHANCE / pass. "LAST CHANCE" triggers a peer-relative final round — proposer wins bonus only if their score still leads. Multi-round; first to `targetScore` ends the match. Base families: mermaid, shark/swimmer/crab/boat/fish (duos), shell/octopus/penguin/sailor (collectors), lighthouse/shoal/penguinColony/captain (multipliers).
+
+**Expansions** (togglable per match via `config.expansions`):
+- *Extra Salt* — adds jellyfish/lobster/starfish/seahorse/crabBasket to the deck (8 cards). New duo pairings (jellyfish+swimmer, lobster+crab) handled in `isValidDuoPair`/`duoPartner`. Starfish trios are a new action type `playTrio` and stored as `player.trios` so scoring can flatly award 3 pts and skip the duo ability. Lobster reveal lives in `subPhase: 'awaitingLobsterPick'` with `pendingLobsterPick` buffer. Jellyfish lock uses `state.nextTurnLockedPlayerId`; the locked player's turn-handlers throw on anything but drawPair → pass.
+- *Extra Pepper* — separate event deck (`state.event`). One event revealed per round (`startNewRound`), applied via predicates in `events.ts` (`playerHasEvent`, `isRoundEvent`). At round end (`awardEventCard`), `+` events go to leader, `−` to laggard, `global` events are discarded. Six events implemented in `EVENT_BY_ID` — add more by extending that map + `ALL_EVENT_IDS`; the reducer wiring (threshold lookups, mermaid-count lookup, color-bonus doubling, score-modifier) is already in place.
+
+### 7 Wonders (`src/games/seven-wonders/`)
+3 Ages × 6 picks per Age. Simultaneous: each player submits a `pendingPick` (build / wonder-stage / discard); reducer reveals + applies in batch, rotates hands (CW Ages I/III, CCW Age II), resolves military at Age end. Final scoring across 7 categories at Age III end. Expansions (Leaders, Cities, Babel, Armada, Edifice) will live under `src/games/seven-wonders/expansions/` and contribute extra decks + post-action hooks. No `if (expansion === ...)` conditionals — add a module hook instead.
+
+### Air, Land & Sea (`src/games/air-land-sea/`)
+Strict 2-player; alternating single-action turns. Each turn: **Deploy** (face-up to the matching theater; Instant abilities fire on placement, Ongoing abilities persist while face-up), **Improvise** (face-down to any theater, strength 2, no ability), or **Withdraw** (battle ends; opponent scores VP per the withdrawing player's hand-size chart: 6→2, 4-5→3, 2-3→4, 0-1→6; full-play loss = 6). Battle ends when either player withdraws or both hands are empty. Winner controls more than half the theaters (2/3 or 3/5); ties go to the 1st player. Match ends at 12 VP. Between battles the theater row rotates one step (rightmost→front) and 1st player swaps.
+
+State machine lives in `subPhase`: `awaitingAction` (the main loop), then per Instant ability one of `awaitingFlipTarget` / `awaitingTransportTarget` / `awaitingRedeployTarget` / `awaitingReinforcePlacement`, then `battleEnd` (Continue button) → `gameOver`. `state.pendingAbility` carries the in-flight Instant's source and the chooser seat, so Disrupt's two-flip dance (opponent flips → source flips) stays consistent. `activePlayerId` is repurposed during follow-ups to point at the chooser seat, so the existing `GameHost` AI driver ticks ability follow-ups one at a time.
+
+Ongoing abilities are computed passively from face-up cards on the board — never stored as flags. `scoring.ts` walks the board for Cover Fire (covered card → 4), Escalation (owner's face-down → 4), Air Support (+3 to adjacent theaters on the same side), and Aerodrome (1-3 strength relax in `validateDeploy`). Containment (face-down plays are immediately discarded) and Blockade (a new card making opponent's adjacent stack ≥3 is discarded) are checked post-placement in `abilities.ts`. Per BGG FAQ, ongoing abilities still emit while COVERED — only being flipped face-down silences them.
+
+Hidden info follows the project's "full state replication + UI gating" pattern — face-down cards are stored with `faceDown: true` in state; the UI hides text from non-owners (and from the inactive seat in hot-seat).
+
+**Spies, Lies, & Supplies expansion** is wired in but partially modeled. The lobby toggles 3 new theaters (Intelligence / Diplomacy / Economics) and Epic Mode (5 theaters, 9-card hands). The 18 new cards exist in `deckPool` with proper strengths and theaters — they are dealt, played, and contribute their raw strength to scoring normally. Their tactical abilities are placeholder no-ops in `abilities.ts` (`intel1` … `econ6`), pending authoritative rulebook text. To fill in: replace the `case 'intel1':` etc. branches with real handlers; no other file needs to change. Supply Tokens are storage is already in `state.supplyTokens` (parallel to theaters, [seat0, seat1]) and contribute to `theaterStrength` — Economics cards just need to dispatch `placeSupplyToken` once their abilities are known. Also several base-game ability assignments (Sea 4/5 in particular) need confirmation; see `cards.ts` notes.
+
+## Conventions
+
+- Strict TypeScript. No `any` unless genuinely necessary.
+- Co-locate tests next to code: `reducer.ts` and `reducer.test.ts` side by side.
+- The game logic in `src/games/<id>/` must not import from `src/ui`, `src/net`, or `src/store`.
+- The net layer may import from `src/core` but not `src/ui`.
+- Path alias: `@/` → `src/`.
+- Game-specific UI is lazy-loaded via `module.ui()` — keeps the picker bundle tiny.
+- Don't introduce game-agnostic code into a game folder. Don't introduce game-specific code into the shell. If you're about to, you probably want a new field on `GameModule` or `GameStateShape` instead.
+
+## Commands
+
+- `npm run dev` — local dev server at `http://localhost:5173/card-collecting/`
+- `npm run build` — production build (`tsc` typecheck then `vite build`)
+- `npm run typecheck` — `tsc` no-emit
+- `npm run test` — Vitest watch
+- `npm run test:run` — Vitest single run
+
+## Deployment
+
+`.github/workflows/deploy.yml` deploys `dist/` to GitHub Pages on push to `main`. Vite `base` is `/card-collecting/` — update in `vite.config.ts` if the repo is renamed.
+
+## Non-goals (do not implement)
+
+- Persistent saves between sessions
+- User accounts, matchmaking, lobby browser
+- Anti-cheat / verifiable randomness
+- Monetization, ads, telemetry
+- Server-side anything
+
+## Roadmap
+
+See [README.md](README.md#project-plan--roadmap). Current status: **Phases 0–5 + 6 (partial) + 7 (5/5 expansions) + 8 (partial) + 9 (Duel) complete.** SSP + Sushi Go + 7 Wonders (base + all 5 expansions togglable) + 7 Wonders Duel (standalone) + Air, Land & Sea (base with all abilities + SLS scaffolding) playable hot-seat and online. Trystero room, lobby sync, action broadcast, snapshot on join, lobby + in-game chat, host-only AI driver, spectator fallback all wired. SSP has both Extra Salt (full) and Extra Pepper (6/12 events) togglable in the lobby. 7 Wonders has the Leaders expansion (all 36 leaders, draft + per-age play + Bilkis activated ability + Solomon recruit-from-discard, all effect categories modeled), the Cities expansion (27 black cards + debt tokens + diplomacy mechanic + Tourist Office / Gambling Hall scoring extras), partial Babel (15 orange cards + 3 themed scoring rules) and Armada (15 navy cards + 3 themed scoring rules) expansions, and the Edifice expansion (3 central project tiles with contributor-tracking via wonder-stage builds; reward/penalty resolved at endgame). Babel's central Tower / Great Projects boards and Armada's shipyards / naval combat / island cards / pirate track are NOT modeled in v1. 7 Wonders Duel ships as a separate top-level game module (`src/games/seven-wonders-duel/`) with no shared code — pyramid draft, 12 wonders, 5/10 Progress Tokens, three supremacy paths. ALS has the Spies, Lies, & Supplies expansion togglable (theater swap + Epic Mode wired) but its per-card abilities are no-ops until rulebook text is in hand.
+
+### 7 Wonders implementation notes
+
+- Cards: `src/games/seven-wonders/cards.ts` — templates for Ages I/II/III + Age III guilds. Per-player-count copy fidelity is approximate; the reducer's `dealAge` pads with duplicate ids when the deck is short of `playerCount × 7`.
+- Wonders: `wonders.ts` — all 7 wonders × A/B sides. A few stage effects ("build from discard", "play your last card free", "copy a guild") are deliberately not modeled — they have empty effect lists and a "not modeled" label in the stage text.
+- Resources: `resources.ts` — production set, neighbor purchase (`suggestCheapestPurchase`), trade discounts (raw/manufactured, per side), chain-builds. `effectiveCostFor` folds in active expansions' `modifyCost` hooks.
+- Scoring: `scoring.ts` — 7 categories. Scientists Guild adds a wild science symbol via `bestScienceScore`. Olympia A's "build free per age" / Halicarnassus / Babylon B / Olympia B "copy guild" are NOT scored. `scoreMatch` calls active expansions' `scoreExtras(state, player)` to populate `row.extras` (e.g., `{ leaders: 12 }`).
+- Reducer: `reducer.ts` — simultaneous picks via `pendingPick`; reveal tick when all submit. Cards purchased from neighbors transfer coins via seat-order pass through `applyPick`. Active player is repurposed during `picking` to point at the next un-submitted AI seat so the existing `GameHost` AI driver ticks them one at a time. Unknown action types are routed through `getActiveExpansions(config)` so each expansion owns its own subphases + actions.
+
+### 7 Wonders expansion architecture
+
+- Contract: `src/games/seven-wonders/expansions/types.ts` — `SwExpansion` interface with hooks for `setupMatch`, `beforeAgeStart`, `applyAction`, `nextAIPicker`, `chooseAIAction`, `modifyCost`, `onEvent`, `scoreExtras`, `LobbySection`, `GameOverlay`, `ownsSubPhase`. Events emitted by the base reducer: `cardBuilt`, `wonderStageBuilt`, `neighborPurchase`, `militaryTokenGained`, `tickStart`.
+- Registry: `expansions/registry.ts` — `getActiveExpansions(config)` filters by `config.expansions`. **No `if (expansion === ...)` switches anywhere in the base.**
+- New `SwCardEffect` kinds for expansion-owned effects (`leaderCostModifier`, `leaderTrigger`, `leaderScoreExtra`, `leaderActivated`, `leaderOnRecruit`) live on the base union but are only read by the relevant expansion's hooks.
+
+### 7 Wonders Leaders expansion notes
+
+- All 36 leaders modeled in `expansions/leaders/cards.ts`, classified by hook tier (pure on-play, end-game endVp, cost modifier, on-play trigger, activated ability, set-completion scoring, on-recruit). Tomyris (defeat-token redirect) is in the deck but flagged not-modeled.
+- Subphases owned by the expansion: `'leaderDraft'` (pick-and-pass 4→1), `'leaderPlay'` (per-age leader play), `'solomonAwaitPick'` (Solomon's build-from-discard).
+- New actions: `submitLeaderDraft`, `submitLeaderPlay`, `useBilkis`, `solomonPick`. The base reducer routes them through the expansion's `applyAction` via the unknown-action fallback.
+- Bilkis is modeled as a transient resource buffer (`player.transientResources`) that's consumed at the end of each pick tick. Once-per-turn enforced by `bilkisUsedThisTick`. UI button rendered inline in HandPanel.
+- Hatshepsut's once-per-turn refund tracked via `hatshepsutPaidThisTick` (declared inline by the triggers module — not in the base types). Cleared on `tickStart` events.
+- Effects that need new behavior (Aristotle, Plato, Justinian, Midas, Alexander) use a `leaderScoreExtra` effect; the Leaders expansion's `scoreExtras` evaluates them.
+- Leader cards have `color: 'leader'` so the base color-counting scoring (civilian/commercial/guild) doesn't double-count their VP — leader VPs land in `row.extras.leaders`. Science symbols from leader cards (Euclid/Ptolemy/Pythagoras) DO count toward base science scoring because `scienceVps` was extended to walk `leaderTableau`.
+
+### 7 Wonders Cities expansion notes
+
+- 27 black cards (9 per age) modeled in `expansions/cities/cards.ts` using player-count `appearances` like the base deck. Cards are added to each age via the `ageDeckCards` hook on `SwExpansion`; the base `dealAge` concatenates expansion contributions before shuffle. Card ids start at 20000 (distinct from base cards at 1+ and leaders at 10000+).
+- New `SwPlayer` fields: `debtTokens` and `diplomacyTokens` (both optional; only populated when Cities is active). `setupMatch` zero-inits both.
+- **Debt tokens**: accrued via the `citiesDebtToNeighbors` effect kind, applied in the `onEvent` hook on `cardBuilt`. Each debt token = −1 VP at endgame (`scoreExtrasCities`). Cards with this effect (Gambling Den, Mercenaries, Torture Chamber) hand `amount` debt tokens to BOTH seat neighbors on play.
+- **Diplomacy tokens**: granted via the `citiesGainDiplomacy` effect. Modeled in `resolveMilitary` in the BASE reducer: at age-end, any player with ≥1 diplomacy token auto-spends one and is skipped from the military comparison (draws both sides, gains 0 tokens). Their neighbors then compare against each OTHER across the gap. This is the simpler v1 reading of the rulebook's "Diplomacy makes you count as having no neighbors this age" rule.
+- **Scoring**: black cards' pure `vp` effects are NOT counted by the base `civilianVps`/`commercialVps`/`guildVps` (those scope to specific colors). Instead they land in `scoreExtras` as the `cities` column. Two `citiesScoreExtra` rules are implemented: `completeAllColorsSet` (Tourist Office: +7 per set of {brown,gray,blue,yellow,red,green,purple}) and `vpPerDebtTotal` (Gambling Hall: +1 VP per debt token held by ANY player).
+- **Card text fidelity**: cost / shields / production / VP effects are modeled faithfully on every Cities card. A few cards (Pigeon Loft, Spy Ring's secondary, Black Market, Slave Market) have placeholder no-op effects with descriptions marked "Not fully modeled in v1" pending authoritative rulebook text — matching the SLS pattern in ALS. These cards still take a hand slot and (where applicable) contribute their VP/shields; only their unique ability is the no-op.
+- Cities does NOT own any subphases. It's a pure deck-contribution + onEvent observer + scoreExtras provider. Diplomacy is implemented as a base-reducer modification to `resolveMilitary`; this is the one piece of Cities-aware code in the base, but it's keyed off the optional `diplomacyTokens` field rather than a config switch (when no expansion populates it, it stays undefined and is a no-op).
+- 3-player Cities "ghost city" variant is NOT modeled. The current implementation works at 3–7 players using Cities cards' normal `minPlayers/maxPlayers` ranges.
+
+### 7 Wonders Babel expansion notes
+
+- **Modeled (v1 partial):** 15 orange cards (5 per age) under `expansions/babel/cards.ts`, dealt via the same `ageDeckCards` hook Cities uses. Card ids start at 30000 (distinct from base/leaders/cities). Per-card effects use the existing kinds (vp, shields, produce, science, coins) plus one Babel-specific effect kind `babelScoreExtra` with three rules:
+  - `vpPerScienceSet` — Tower of Babel: +V per complete {compass,gear,tablet} set, counting symbols from base tableau AND leaderTableau (mirrors base `scienceVps`).
+  - `vpPerNeighborCards` — Court of Babylon: +V per matching-color card across BOTH seat neighbors.
+  - `vpPerOwnColors` — Ziggurat of Etemenanki: +V per card whose color is in a listed set.
+- **NOT modeled (deferred):** the central Tower of Babel board (shared law tiles placed by all players to mutate rules round-by-round) and the Great Projects of Babylon (cooperative central goals with milestone rewards). Both require shared central state coordinated across all picks; the seam can be added later by giving the Babel expansion an `applyAction` hook + a custom subPhase (similar to Leaders' `leaderDraft`), but the rule text was not in hand at implementation time. Marked in lobby copy ("Central Tower of Babel / Great Projects boards NOT modeled in v1") and in the two `modeled: false` cards (Tower Workers, Great Project Worksite) whose effects are placeholder.
+- Orange-card pure VP lands in `row.extras.babel` (not in any base color bucket), via `scoreExtrasBabel`. Babel does NOT own any subphases, emits no events, and contributes nothing besides the deck + scoring.
+
+### 7 Wonders Armada expansion notes
+
+- **Modeled (v1 partial):** 15 navy cards (5 per age) under `expansions/armada/cards.ts`, dealt via `ageDeckCards`. Card ids start at 40000 (distinct from base/leaders/cities/babel). Per-card effects use the existing kinds plus one Armada-specific effect kind `armadaScoreExtra` with three rules:
+  - `vpPerNeighborMilitaryLosses` — Pirates Cove: +V per defeat token (negative military token) across BOTH neighbors. Pillage-themed.
+  - `vpPerOwnAgeIIIBuilds` — Naval Academy: +V per Age III card in own tableau (count includes the Naval Academy itself).
+  - `vpPerOwnNavalSet` — Admiralty: +V per complete set of (red+blue+green+yellow) in own tableau.
+- **NOT modeled (deferred):** the personal shipyard boards (4 fleets × 3 levels each), naval combat at age-end (parallel military track), island cards (separate deck visited via a Naval action), and the pirate track. These require parallel central + per-player state plus a new action type per turn — pending authoritative rule text. The seam supports adding them later: give the Armada expansion an `applyAction` hook + a custom subPhase, similar to Leaders' `leaderDraft`. Marked in lobby copy and in the two `modeled: false` cards (Shipyard, Lighthouse Beacon, Naval Yard) whose effects are placeholder.
+- Navy-card pure VP lands in `row.extras.armada` (not in any base color bucket), via `scoreExtrasArmada`. Armada does NOT own any subphases, emits no events.
+
+### 7 Wonders Edifice expansion notes
+
+- **Modeled (v1):** the full cooperative-project mechanic — at match setup, three project tiles are drawn (one per age) from a pool of 8 in `expansions/edifice/projects.ts`. A player contributes to age N's project by building any wonder stage during that age (`wonderStageBuilt` event observed in `onEvent`). Multi-stage builds in one age count as one contribution.
+- **State**: `SwState.edificeProjects` (length 3, indexed by age-1) and `SwState.edificeContributors` (parallel array of PlayerId lists). Both optional — undefined when Edifice is off.
+- **Scoring**: applied at endgame via `scoreExtrasEdifice`. For each project: if `contributors.length >= project.threshold`, every contributor gets the reward; every non-contributor gets the penalty. Outcomes are converted to VP equivalents (`shields × 2`, `science = 5`, `coins / 2`, `debtTokens → -1 each`) so they all land in a single `edifice` extras column.
+- **Mechanic simplification**: in the full rulebook, players deposit a Pawn token on a project to contribute; here we fold that into the existing wonder-stage build (a player "contributes" if they built any wonder stage during the matching age). This is the simplest faithful mapping — no new action type, deterministic, and matches the cooperative spirit.
+- **Caveat**: the Leaders 'bury' path (burying a leader under a wonder stage) advances `wonderStagesBuilt` but does NOT emit `wonderStageBuilt` and so does NOT count as an Edifice contribution. Documented; would need a 1-line change to leaders/reducer.ts to fix.
+- Edifice does NOT own any subphases, contributes no cards, and has no UI overlay beyond the lobby section. It's a pure observer + scoreExtras provider.
+
+### 7 Wonders Duel module notes
+
+- Lives in `src/games/seven-wonders-duel/` as a separate top-level `GameModule`. Registered in `src/games/registry.ts`. **Shares no code with base 7 Wonders** — different types (`DuelState`/`DuelAction`/`DuelConfig`), reducer, AI, UI, card pool, wonder list. The picker shows it as its own tile next to base 7W.
+- **Pyramid draft**: `pyramid.ts` defines fixed slot layouts per age (each 20 slots) — `coveredBy` indices encode the dependency graph. `isSlotAvailable(slot, pyramid)` = `!slot.taken && all coveredBy taken`. `flipUncovered` runs after each take to convert newly-uncovered face-down slots to face-up.
+- **State machine**:
+  - `wonderDraft` (8 wonders, alternating-pick order `[0,1,1,0,0,1,1,0]` — each player ends with 4)
+  - `turn` (active seat picks an available card → build / bury / discard)
+  - `wonderConstruct` (after `takeAndBury`, active seat chooses which unbuilt wonder)
+  - `progressPick` (after a science-symbol pair, active seat picks from `progressOffer`)
+  - `finalScoring` (gameOver with `endReason: 'civilian' | 'military' | 'science'`)
+- **Military track**: `state.militaryPawn` in [-9, +9]. Positive favors seat 0; negative favors seat 1. Crossing ±3 / ±6 drains opponent's coins (2 / 5). Hitting ±9 = Military Supremacy victory.
+- **Science Supremacy**: a player collecting 6 distinct science symbols (out of 7) wins immediately. `Law` progress token adds a wild +1 toward that count.
+- **Progress tokens**: 10 in pool, 5 drawn deterministically from `state.rngState` at setup. Each token's mechanic is documented in `progress.ts`. On-claim (Agriculture, Urbanism) coins are applied directly in `reducer.handleChooseProgressToken`. Endgame VP (Philosophy, Mathematics, Agriculture) in `scoring.progressVps`. Ongoing rule modifications (Architecture, Masonry, Strategy, Law) in the relevant code path. **Theology (extra turn) is NOT modeled in v1** — flagged in progress.ts.
+- **Wonder-only effects not modeled in v1**: `extraTurn` and `pickFromDiscard` are recognized effect kinds but their interactive sub-phase isn't implemented. The numerical components (VP, coins, shields, science, produce) DO apply. Affected wonders: Hanging Gardens, Piraeus, Sphinx, Appian Way (extra turn); Mausoleum, Great Library (pick from discard). Documented in `wonders.ts` descriptions.
+- **AI**: `ai.ts` ranks each available card by (build value − total cost), considers bury (only if any unbuilt wonder is affordable) + discard, picks the best. Wonder draft AI ranks by approximate VP value. Progress pick AI has a static preference order (Philosophy > Mathematics > Agriculture > Masonry > Architecture > Law > Urbanism > Strategy > Economy > Theology).
+- **Resource purchase**: in Duel there's only one opponent. Price per unit = `2 + opponent's fixed production of that resource`, flattened to `1` if buyer has the appropriate trade-discount card. Opponent's coins gained via trade are routed through the Economy progress token check (with Economy: opponent gets the coins; without: coins go to the bank, Duel rule).
+
+## Where to start next
+
+1. **7 Wonders central-board expansion mechanics** — Babel's Tower of Babel + Great Projects, Armada's shipyards + naval combat + island cards + pirate track. Currently those expansions contribute only a card pool + scoring rules. Adding the central boards is a self-contained next step (`applyAction` hook + new subPhase + UI overlay per expansion).
+2. **7 Wonders Duel polish** — model the wonder-only `extraTurn` and `pickFromDiscard` effects (currently stubbed). Adding `extraTurn` would skip the seat swap after a wonder build; `pickFromDiscard` would introduce a new `discardPick` subphase (the type is already in the SwSubPhase union for future use).
+3. **7 Wonders polish** — model the deferred wonder stage effects (Olympia A "free per age", Halicarnassus "build from discard" — likely sharable with Solomon's `solomonAwaitPick` flow, Babylon A "play last card", Olympia B "copy guild", Babylon B "choose science"). Also: Tomyris (defeat-token redirect) needs a hook into `resolveMilitary`.
+4. **Finish Pepper** — add the remaining 6 event cards to `events.ts` once authoritative rule text is in hand. Each new event needs an id in `SspEventId`, an entry in `EVENT_BY_ID`/`ALL_EVENT_IDS`, and (if it has a per-player rule effect) a hook into the reducer.
+5. **AI heuristics polish** — each game now has a working heuristic AI with smoke tests (see the **AI heuristics** section above). Possible follow-ups: round-aware weighting in 7W (early-Age military matters less than late-Age; science snowballs late), opponent-modelling in SSP (currently treats opponents as "average unseen hand"), look-ahead for Sushi Go's pass direction (cards we play this tick are seen by neighbors before they pick).
+6. **ALS card text from rulebook** — confirm Sea 4 / Sea 5 ability assignments against the authoritative rulebook (Investigation, Salvage in `cards.ts` are best-guess assignments) and fill in the 18 SLS abilities. The dispatch in `abilities.ts` (`intel1` … `econ6`) is already wired; each branch just needs its real effect (or a follow-up sub-phase + pending-ability shape if it needs a target).
