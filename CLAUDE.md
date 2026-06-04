@@ -46,15 +46,17 @@ The shell, store, and net layer never name a specific game. Adding a new game me
 
 ## Multiplayer model
 
-- **Trystero `/torrent`** for WebRTC signaling. No backend. App ID `card-collecting-v1`; room code is the encryption password.
+- **Trystero `/torrent`** for WebRTC signaling. No backend. App ID `card-collecting-v1`; room code is both the topic and the encryption password. Lazy-imported in `src/net/room.ts` so the solo bundle stays small.
 - **Stable identity**: `localStorage` UUID (`card-collecting.uuid`), exchanged via `hello` channel. `?fresh` flips storage to `sessionStorage` for two-window local testing.
 - **Full state replication**: every peer holds full `GameState`.
-- **Actions, not diffs**: `{ action, byUuid }` envelopes; receivers verify the UUID owns the action's seat.
+- **Actions, not diffs**: `{ byUuid, actionJson }` envelopes; receivers verify the UUID owns a seat in `lobby.seats` before applying via `gameStore.applyLocal`.
 - **Determinism**: randomness lives in `state.rngState` (mulberry32 seeded at game start), plus per-action payload for player-chosen draws.
-- **Host-authoritative lobby**: host owns lobby state, broadcasts on change. Start broadcasts the initial GameState.
-- **Rejoin / spectator**: host responds with a snapshot on `peerJoin`. UUID matches a seat → guest; otherwise spectator (read-only).
-- **AI in online**: only the host runs AI drivers. If host drops, AI freezes.
-- **Chat**: in-memory in `networkStore.chat`, not part of `GameState`.
+- **Host-authoritative lobby**: host owns lobby state, broadcasts on every edit. Seat assignment in the lobby is done by the host via a per-seat peer dropdown (changing `seat.id` from a placeholder to the chosen peer's uuid). Start broadcasts the initial `GameState` + `seatUuids[]`.
+- **Rejoin / spectator**: when a peer says hello, the host responds with `sendLobby` (always) and `sendSnapshot(toPeerId)` (if a game is already in flight). Joiner's uuid matching a seat → guest; otherwise spectator (read-only — dispatch is no-op'd in `GameHost`).
+- **AI in online**: only the host runs `chooseAIAction`. `GameHost.tsx`'s AI driver early-returns when role is `guest` or `spectator`. If host drops, AI seats freeze.
+- **Chat**: in-memory in `networkStore.chat`, not part of `GameState`. `ChatPanel` floats bottom-right in-game; lobby chat is a compact log on the lobby's right column.
+- **Channels**: `hello`, `lobby`, `start`, `action`, `snap`, `chat`. Each is a separate `makeAction` namespace.
+- **Online wiring**: `networkStore.wireRoom` subscribes to all channels and calls `gameStore.registerBroadcastHandler` so `dispatch()` from any game UI emits an action envelope. The two stores stay decoupled — `gameStore` has no awareness of the network.
 
 ## Game-specific design notes (deferred implementation)
 
@@ -101,12 +103,11 @@ Each turn: draw 2 (keep 1 or both), optional play-pair-for-ability, then STOP / 
 
 ## Roadmap
 
-See [README.md](README.md#project-plan--roadmap). Current status: **Phase 0 — scaffolding complete.** Next: pick one game (suggest Sea Salt & Paper — smallest deck, cleanest scoring, fastest path to a complete loop that exercises the module contract end-to-end) and fill in its reducer + UI.
+See [README.md](README.md#project-plan--roadmap). Current status: **Phases 0–3 complete.** SSP + Sushi Go playable hot-seat and online; Trystero room, lobby sync, action broadcast, snapshot on join, lobby + in-game chat, host-only AI driver, spectator fallback all wired.
 
 ## Where to start next
 
-1. Pick a game. Sea Salt & Paper recommended — ~58 cards, simple per-turn loop, scoring is just sums; it'll surface any gaps in the module contract before you commit to a bigger engine.
-2. Fill in its `applyAction` reducer with unit tests alongside.
-3. Wire its `GameView` to render the hand + table + scores.
-4. Verify hot-seat works end-to-end. Then move to online: implement `src/net/room.ts` against Trystero, wire `useNetworkStore.registerBroadcastHandler` on the gameStore, handle `start` / `action` / `snap` / `chat`.
-5. Repeat for the next game.
+1. **7 Wonders base game** — fill out `src/games/seven-wonders/` reducer (3 ages × 6 picks, simultaneous `pendingPick`, hand rotation CW/CCW by age, military resolution at age end, final scoring across 7 categories).
+2. **Sea Salt & Paper expansions** — *Extra Salt* (8 cards shuffled into the deck) and *Extra Pepper* (12 round-event cards in a separate deck). Both drop into `src/games/sea-salt-paper/expansions/<id>/` and are gated by lobby config flags like 7W expansions; Extra Pepper needs an extra state slice for the event deck and per-round event card.
+3. **AI heuristics** — improve each game's `ai.ts` beyond "first legal move". Pure functions; no network awareness needed.
+4. **7 Wonders expansions** — Leaders, Cities, Babel, Armada, Edifice. Each under `src/games/seven-wonders/expansions/` with module-level hooks; no `if (expansion === ...)` switches.

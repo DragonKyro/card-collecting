@@ -40,9 +40,18 @@ Each game lives in its own folder behind the `GameModule<S, A, C>` contract from
 
 - Full state replication: every peer holds the full `GameState` and runs the same pure `applyAction` reducer.
 - Actions (not diffs) are broadcast over Trystero channels. Randomness is decided by the acting player and folded into the action payload so peers reduce identically.
-- Lobby is host-authoritative. Host broadcasts the opening state at start; mid-game joiners get a snapshot.
+- Lobby is host-authoritative. Host broadcasts the opening state at start; mid-game joiners get a snapshot addressed to their peer id.
 - Stable identity is a `localStorage` UUID exchanged over the `hello` channel. `?fresh` switches to `sessionStorage` for local two-window testing.
+- Channels: `hello` (uuid + name), `lobby` (host → all), `start` (host → all), `action` (peer → all), `snap` (host → newcomer), `chat`. Trystero loads as a separate chunk so the solo/hot-seat bundle stays small.
 - No accounts, no matchmaking, no anti-cheat — friends-only.
+
+### Online flow
+
+1. **Host online** mints a 6-character room code and joins a Trystero room (app id `card-collecting-v1`, password = room code). The host configures the menu/options and assigns each seat to a connected peer via a dropdown.
+2. **Join** by entering the room code on the lobby screen. The host sees you appear in the peer list and can drop you into any open seat.
+3. **Start** broadcasts the opening `GameState` + the `seat → uuid` map. Each peer's reducer runs identically off that state; subsequent actions are envelopes `{ byUuid, actionJson }` applied through the same `applyAction`.
+4. **Mid-game join**: the host responds to a new arrival's `hello` with a targeted snapshot. If the joiner's uuid matches a seat they become a guest; otherwise they're a spectator.
+5. **AI in online**: only the host runs the AI driver. If the host disconnects, AI seats freeze.
 
 ## Commands
 
@@ -60,13 +69,16 @@ npm run test:run    # vitest single run
 
 ## Project plan / roadmap
 
-- [x] **Phase 0** — Scaffolding (this commit). Vite + React + TS, GameModule contract, Zustand stores, Trystero stub, GitHub Pages workflow, hot-seat lobby, stub modules for all three games.
-- [ ] **Phase 1** — Sea Salt & Paper (smallest engine — fewest cards, simplest scoring; good first integration test for the module contract).
-- [ ] **Phase 2** — Sushi Go! Party engine (simultaneous-pick + hand-pass loop, menu builder, all party cards + specials).
-- [ ] **Phase 3** — Online multiplayer wired up (Trystero room, lobby sync, action broadcast, snapshot on join, in-game chat).
+- [x] **Phase 0** — Scaffolding. Vite + React + TS, GameModule contract, Zustand stores, Trystero stub, GitHub Pages workflow, hot-seat lobby, stub modules for all three games.
+- [x] **Phase 1** — Sea Salt & Paper (hot-seat reducer + UI + AI complete).
+- [x] **Phase 2** — Sushi Go! Party engine (simultaneous-pick + hand-pass loop, menu builder, base party cards + specials).
+- [x] **Phase 3** — Online multiplayer wired up for SSP + Sushi Go (Trystero `/torrent` room, lobby sync, action broadcast, snapshot on join, lobby + in-game chat, host-only AI driver, spectator fallback).
 - [ ] **Phase 4** — 7 Wonders base game (3-age draft, military resolution, final scoring).
 - [ ] **Phase 5** — AI heuristics per game (pure functions in each game's `ai.ts`, optional `chooseAIAction` on the module).
-- [ ] **Phase 6** — 7 Wonders expansions (Leaders, Cities, Babel, Armada, Edifice — each as a sub-module under `src/games/seven-wonders/expansions/`).
-- [ ] **Phase 7** — Additional games as desired.
+- [ ] **Phase 6** — Sea Salt & Paper expansions:
+  - *Extra Salt* — 8 new cards / 5 new effects shuffled into the main deck (jellyfish + swimmer immobilize, lobster + crab top-5 peek, basket of crabs, starfish, seahorse wildcard). Drop-in under `src/games/sea-salt-paper/expansions/extra-salt/`; gated by a lobby config flag.
+  - *Extra Pepper* — 12 event cards as a separate deck. Reveal one at round start (rules twist for the round); awarded at round end to the player with the most/fewest points depending on the event. Same expansion-folder pattern; event deck is its own state slice in `SspState`.
+- [ ] **Phase 7** — 7 Wonders expansions (Leaders, Cities, Babel, Armada, Edifice — each as a sub-module under `src/games/seven-wonders/expansions/`).
+- [ ] **Phase 8** — Additional games as desired.
 
 Game-specific design notes live in each game's `types.ts` and in [CLAUDE.md](CLAUDE.md).

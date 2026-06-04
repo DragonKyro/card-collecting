@@ -49,12 +49,21 @@ export async function joinRoom(roomCode: string): Promise<RoomHandle> {
 
   // Each makeAction call gives us a [send, receive, progress] triple. We only
   // register one receiver per channel — fan-out is handled by the caller.
-  const [sendHello, recvHello] = room.makeAction<HelloMessage>('hello');
-  const [sendLobby, recvLobby] = room.makeAction<LobbyState>('lobby');
-  const [sendStart, recvStart] = room.makeAction<StartMessage>('start');
-  const [sendAction, recvAction] = room.makeAction<ActionEnvelope>('action');
-  const [sendSnap, recvSnap] = room.makeAction<SnapshotMessage>('snap');
-  const [sendChat, recvChat] = room.makeAction<ChatMessage>('chat');
+  // Trystero's DataPayload requires an index signature; our envelopes don't
+  // declare one, so we cast through `as any`. The schemas are still type-safe
+  // at our API boundary.
+  type Send<T> = (data: T, targetPeers?: string | string[] | null) => Promise<void[]>;
+  type Recv<T> = (cb: (data: T, peerId: string) => void) => void;
+  const makeChan = <T>(ns: string): [Send<T>, Recv<T>] => {
+    const triple = room.makeAction(ns) as unknown as [Send<T>, Recv<T>, unknown];
+    return [triple[0], triple[1]];
+  };
+  const [sendHello, recvHello] = makeChan<HelloMessage>('hello');
+  const [sendLobby, recvLobby] = makeChan<LobbyState>('lobby');
+  const [sendStart, recvStart] = makeChan<StartMessage>('start');
+  const [sendAction, recvAction] = makeChan<ActionEnvelope>('action');
+  const [sendSnap, recvSnap] = makeChan<SnapshotMessage>('snap');
+  const [sendChat, recvChat] = makeChan<ChatMessage>('chat');
 
   return {
     roomCode,

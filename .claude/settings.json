@@ -44,7 +44,8 @@
       "Bash(npm run test:run)",
       "Bash(npm run build)",
       "Bash(npm install *)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(npx tsc *)"
     ]
   }
 }
