@@ -23,7 +23,7 @@ import {
   buildCardForFree, startAge as baseStartAge, setActiveAIIfAny,
 } from '../../reducer';
 import {
-  canChainBuild, effectiveCostFor, neighborsOf, validatePayment,
+  effectiveCostFor, neighborsOf, validatePayment,
   sumCoinsOnPlay,
 } from '../../resources';
 import { wonderById } from '../../wonders';

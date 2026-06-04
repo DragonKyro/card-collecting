@@ -112,12 +112,20 @@ function emitEvent(state: SwState, event: SwEvent): void {
   }
 }
 
-/** Deal 7 cards to each player, sized to player count. */
+/** Deal 7 cards to each player, sized to player count.
+ *  Expansions may contribute extra cards via `ageDeckCards`. Cities, e.g., adds
+ *  black cards proportional to player count. */
 function dealAge(state: SwState, age: SwAge): void {
   const playerCount = state.players.length;
   let deck = age === 3
     ? buildAgeIIIDeck(state.rngState, playerCount)
     : buildAgeDeck(age, playerCount);
+  // Fold in expansion-contributed cards (Cities, future Babel/Armada/Edifice).
+  for (const ext of getActiveExpansions(state.config)) {
+    if (!ext.ageDeckCards) continue;
+    const extra = ext.ageDeckCards(age, playerCount, state.rngState);
+    if (extra.length > 0) deck = deck.concat(extra);
+  }
   const target = ageDeckTargetSize(playerCount);
   deck = shuffle(state.rngState, deck);
   // The card-data table doesn't perfectly track the rulebook's per-player
@@ -335,7 +343,10 @@ function discardLastCards(state: SwState): void {
   }
 }
 
-/** Compute military resolution at age end. Mutates each player's militaryTokens. */
+/** Compute military resolution at age end. Mutates each player's militaryTokens.
+ *  Cities: a player with ≥1 diplomacy token auto-spends one this age and is
+ *  skipped from military comparison (counts as draws on both sides). Their
+ *  neighbors are then compared against each OTHER across the gap. */
 function resolveMilitary(state: SwState): SwMilitarySummary {
   const ageVp = AGE_MILITARY_WIN_VP[state.age];
   const perPlayer: SwMilitarySummary['perPlayer'] = [];
@@ -343,17 +354,43 @@ function resolveMilitary(state: SwState): SwMilitarySummary {
   for (const p of state.players) shieldsByPlayer.set(p.id, shieldsFor(p));
 
   const n = state.players.length;
+  // Auto-spend one diplomacy token per holder, mark skipped.
+  const skipped = new Set<PlayerId>();
+  for (const p of state.players) {
+    if ((p.diplomacyTokens ?? 0) > 0) {
+      p.diplomacyTokens! -= 1;
+      skipped.add(p.id);
+    }
+  }
+  // Resolve neighbors by walking past skipped players.
+  const neighborOf = (i: number, dir: -1 | 1): SwPlayer | null => {
+    let j = i;
+    for (let step = 0; step < n; step++) {
+      j = (j + dir + n) % n;
+      if (j === i) return null;
+      const cand = state.players[j];
+      if (!skipped.has(cand.id)) return cand;
+    }
+    return null;
+  };
   for (let i = 0; i < n; i++) {
     const p = state.players[i];
-    const west = state.players[(i - 1 + n) % n];
-    const east = state.players[(i + 1) % n];
+    if (skipped.has(p.id)) {
+      // Skipped: draws on both sides, no tokens.
+      perPlayer.push({ playerId: p.id, vsWest: 'draw', vsEast: 'draw', tokenGained: 0 });
+      continue;
+    }
+    const west = neighborOf(i, -1);
+    const east = neighborOf(i, 1);
     const myS = shieldsByPlayer.get(p.id) ?? 0;
-    const wS = shieldsByPlayer.get(west.id) ?? 0;
-    const eS = shieldsByPlayer.get(east.id) ?? 0;
-    const vsWest: 'win' | 'loss' | 'draw' =
-      myS > wS ? 'win' : myS < wS ? 'loss' : 'draw';
-    const vsEast: 'win' | 'loss' | 'draw' =
-      myS > eS ? 'win' : myS < eS ? 'loss' : 'draw';
+    const wS = west ? (shieldsByPlayer.get(west.id) ?? 0) : myS;
+    const eS = east ? (shieldsByPlayer.get(east.id) ?? 0) : myS;
+    const vsWest: 'win' | 'loss' | 'draw' = west
+      ? (myS > wS ? 'win' : myS < wS ? 'loss' : 'draw')
+      : 'draw';
+    const vsEast: 'win' | 'loss' | 'draw' = east
+      ? (myS > eS ? 'win' : myS < eS ? 'loss' : 'draw')
+      : 'draw';
     let gained = 0;
     if (vsWest === 'win') gained += ageVp;
     else if (vsWest === 'loss') gained -= 1;
@@ -508,9 +545,10 @@ export function setupNewMatch(state: SwState): void {
   // Let expansions set up their pre-game state (e.g., Leaders' draft).
   let expansionTookControl = false;
   for (const ext of getActiveExpansions(state.config)) {
-    const before = state.subPhase;
+    const before: string = state.subPhase;
     ext.setupMatch?.(state);
-    if (state.subPhase !== before && !BASE_SUBPHASES.has(state.subPhase)) {
+    const after: string = state.subPhase;
+    if (after !== before && !BASE_SUBPHASES.has(after)) {
       expansionTookControl = true;
     }
   }

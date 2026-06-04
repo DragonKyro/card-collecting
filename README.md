@@ -75,12 +75,17 @@ npm run test:run    # vitest single run
 - [x] **Phase 1** — Sea Salt & Paper (hot-seat reducer + UI + AI complete).
 - [x] **Phase 2** — Sushi Go! Party engine (simultaneous-pick + hand-pass loop, menu builder, base party cards + specials).
 - [x] **Phase 3** — Online multiplayer wired up for SSP + Sushi Go (Trystero `/torrent` room, lobby sync, action broadcast, snapshot on join, lobby + in-game chat, host-only AI driver, spectator fallback).
-- [x] **Phase 4** — 7 Wonders base game (3-age draft, simultaneous pick, hand rotation CW/CCW by age, payment to neighbors with discounts, military resolution between ages, final scoring across 7 categories). Expansion toggles UI present but not yet implemented.
+- [x] **Phase 4** — 7 Wonders base game (3-age draft, simultaneous pick, hand rotation CW/CCW by age, payment to neighbors with discounts, military resolution between ages, final scoring across 7 categories).
 - [ ] **Phase 5** — AI heuristics per game (pure functions in each game's `ai.ts`, optional `chooseAIAction` on the module).
 - [x] **Phase 6** — Sea Salt & Paper expansions, togglable per match in the lobby:
   - *Extra Salt* — 8 new cards / 5 new effects shuffled into the main deck (jellyfish + swimmer next-turn lock, lobster + crab top-5 peek, basket of crabs multiplier, starfish trio, seahorse collector wildcard).
   - *Extra Pepper* — separate event deck. One event flipped at round start applies to all (or the current holder); awarded at round end to the leader (`+`) or laggard (`−`). Six event cards implemented (Three Mermaids, Stop at Five, Angelfish, Stormy Seas, Calm Waters, Pepper Burn) — the framework supports the remaining six pending authoritative text.
-- [ ] **Phase 7** — 7 Wonders expansions (Leaders, Cities, Babel, Armada, Edifice — each as a sub-module under `src/games/seven-wonders/expansions/`).
+- [ ] **Phase 7** — 7 Wonders expansions (each as a sub-module under `src/games/seven-wonders/expansions/`).
+  - [x] *Leaders* — pick-and-pass draft of 4 leaders at match start, then one leader per Age (play / bury / discard / skip). All 36 leaders modeled across 7 hook tiers (pure on-play, end-game per-X, cost modifier, on-play trigger, activated ability, set-completion, on-recruit). Bilkis once-per-turn ability and Solomon "build from discard" sub-phase wired.
+  - [x] *Cities* — 27 black cards (9 per age) shuffled into existing age decks. Debt tokens (−1 VP each) handed to neighbors via the `citiesDebtToNeighbors` effect. Diplomacy tokens auto-spent at age-end military (holder is skipped, neighbors compare across the gap). Tourist Office (+7 per 7-color set) and Gambling Hall (+1 VP per debt token across all players) scoring extras implemented. A few card abilities still placeholder no-ops pending authoritative rulebook text.
+  - [ ] *Babel* — central board (Tower / Great Projects).
+  - [ ] *Armada* — naval boards + island cards + 4th end-of-age track.
+  - [ ] *Edifice* — cooperative project tiles.
 - [x] **Phase 8** — Air, Land & Sea (2-player; 3-theater battles; Deploy / Improvise (face-down) / Withdraw; instant + ongoing abilities; best-to-12 across rotating battles). Spies, Lies, & Supplies expansion scaffolded — its 3 new theaters (Intel/Diplo/Econ) and 18 cards are playable with raw strengths; per-card abilities are placeholder no-ops pending authoritative rulebook text. Epic Mode (5 theaters, 9-card hands) wired through the lobby toggle.
 - [ ] **Phase 9** — Additional games as desired.
 

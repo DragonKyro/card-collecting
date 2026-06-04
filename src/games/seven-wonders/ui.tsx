@@ -10,16 +10,18 @@ import type {
 import { WONDERS, wonderById, wondersByName } from './wonders';
 import {
   canChainBuild, shortfall, suggestCheapestPurchase,
-  validatePayment, shieldsFor, productionFor,
+  validatePayment, shieldsFor, productionFor, effectiveCostFor,
 } from './resources';
+import { getActiveExpansions, getAllExpansions } from './expansions/registry';
+import { BilkisButton } from './expansions/leaders/ui';
 import './seven-wonders.css';
 
-const ALL_EXPANSIONS: Array<{ id: SwExpansionId; label: string; desc: string }> = [
-  { id: 'leaders', label: 'Leaders', desc: 'Draft a Leader before each Age; new yellow + leader scoring.' },
-  { id: 'cities', label: 'Cities', desc: 'Adds Cities (black) cards: diplomacy + debt mechanics.' },
-  { id: 'babel', label: 'Babel', desc: 'Tower of Babel — central board with shared & great projects.' },
-  { id: 'armada', label: 'Armada', desc: 'Naval fleet boards + island cards. Adds 4th end-of-age track.' },
-  { id: 'edifice', label: 'Edifice', desc: 'Cooperative project tiles that everyone contributes to.' },
+const ALL_EXPANSIONS: Array<{ id: SwExpansionId; label: string; desc: string; implemented: boolean }> = [
+  { id: 'leaders', label: 'Leaders', desc: 'Pick-and-pass draft of 4 leaders, then play one before each Age. All 36 leaders modeled.', implemented: true },
+  { id: 'cities', label: 'Cities', desc: 'Adds ~9 black cards per age: diplomacy + debt mechanics. Per-card abilities are best-effort modeled; some are placeholder no-ops pending authoritative rulebook text.', implemented: true },
+  { id: 'babel', label: 'Babel', desc: 'Tower of Babel — central board with shared & great projects.', implemented: false },
+  { id: 'armada', label: 'Armada', desc: 'Naval fleet boards + island cards. Adds 4th end-of-age track.', implemented: false },
+  { id: 'edifice', label: 'Edifice', desc: 'Cooperative project tiles that everyone contributes to.', implemented: false },
 ];
 
 // ===================================================================
@@ -103,7 +105,7 @@ function LobbyConfig({ config, seats, onChange }: { config: SwConfig; seats: Sea
 
       <h4 style={{ margin: '14px 0 4px' }}>Expansions</h4>
       <p style={{ fontSize: 12, color: 'var(--fg-muted)', margin: '0 0 8px' }}>
-        Placeholder UI — none of these are implemented yet. Toggle them to plan future matches.
+        Toggle expansions. Only the ones marked <em>implemented</em> actually affect play.
       </p>
       {ALL_EXPANSIONS.map((e) => (
         <div key={e.id} className="sw-expansion-row">
@@ -112,12 +114,28 @@ function LobbyConfig({ config, seats, onChange }: { config: SwConfig; seats: Sea
               type="checkbox"
               checked={config.expansions.includes(e.id)}
               onChange={() => toggleExpansion(e.id)}
+              disabled={!e.implemented}
             />
             <strong>{e.label}</strong>
+            {!e.implemented && (
+              <span style={{ fontSize: 10, color: 'var(--fg-muted)', fontStyle: 'italic' }}>(not implemented)</span>
+            )}
           </label>
           <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{e.desc}</span>
         </div>
       ))}
+      {/* Render implemented expansions' LobbySection components */}
+      {getAllExpansions()
+        .filter((ext) => config.expansions.includes(ext.id) && ext.LobbySection)
+        .map((ext) => {
+          const Section = ext.LobbySection!;
+          return (
+            <div key={ext.id} style={{ marginTop: 8, padding: '6px 8px', background: 'rgba(0,0,0,0.04)', borderRadius: 4 }}>
+              <strong style={{ fontSize: 12 }}>{ext.label}:</strong>
+              <Section config={config} onChange={onChange} />
+            </div>
+          );
+        })}
       <p style={{ fontSize: 11, color: 'var(--fg-muted)', marginTop: 12 }}>
         Player count is taken from the seat list ({seats.length} seat{seats.length === 1 ? '' : 's'}).
         7 Wonders supports 3–7 players.
@@ -170,6 +188,39 @@ function GameView({
     );
   }
 
+  // Expansion-owned subphase: defer rendering to its overlay.
+  const expansionOverlay = (() => {
+    for (const ext of getActiveExpansions(state.config)) {
+      if (ext.ownsSubPhase?.(state.subPhase) && ext.GameOverlay) {
+        const Overlay = ext.GameOverlay;
+        return (
+          <div className="sw">
+            <div className="sw-board">
+              <div className="sw-status">
+                <span>Age {state.age}</span>
+                <span>{state.subPhase}</span>
+              </div>
+              <div className="sw-opponents">
+                {opponents.map((p) => (
+                  <OpponentStrip key={p.id} player={p} state={state} />
+                ))}
+              </div>
+              {me && (
+                <>
+                  <WonderArea player={me} />
+                  <SelfTableau player={me} />
+                </>
+              )}
+              <Overlay state={state} localPlayerId={localPlayerId} dispatch={dispatch} />
+            </div>
+          </div>
+        );
+      }
+    }
+    return null;
+  })();
+  if (expansionOverlay) return expansionOverlay;
+
   const submitted = me?.pendingPick != null;
   const submittedCount = state.players.filter((p) => p.pendingPick !== null).length;
 
@@ -216,6 +267,7 @@ function OpponentStrip({ player, state }: { player: SwPlayer; state: SwState }) 
   const seat = state.seats.find((s) => s.id === player.id);
   const w = wonderById(player.wonderId);
   const submitted = player.pendingPick != null;
+  const leaders = player.leaderTableau ?? [];
   return (
     <div className={`sw-player-strip ${submitted ? 'active' : ''}`}>
       <header>
@@ -231,6 +283,7 @@ function OpponentStrip({ player, state }: { player: SwPlayer; state: SwState }) 
       </header>
       <div style={{ fontSize: 11, opacity: 0.75 }}>
         {w.name} ({w.side}) · Stage {player.wonderStagesBuilt}/{w.stages.length}
+        {leaders.length > 0 && <span> · 👤 {leaders.length}</span>}
       </div>
       <div className="sw-tableau">
         {player.tableau.map((c) => (
@@ -238,6 +291,14 @@ function OpponentStrip({ player, state }: { player: SwPlayer; state: SwState }) 
             key={c.id}
             className={`sw-tableau-card ${c.color}`}
             title={`${c.name} — ${cardEffectsText(c)}`}
+          />
+        ))}
+        {leaders.map((c) => (
+          <div
+            key={c.id}
+            className={`sw-tableau-card leader`}
+            style={{ background: '#d8c598', color: '#3a2e15' }}
+            title={`Leader: ${c.name}`}
           />
         ))}
       </div>
@@ -255,15 +316,17 @@ function SelfTableau({ player }: { player: SwPlayer }) {
     green: player.tableau.filter((c) => c.color === 'green'),
     purple: player.tableau.filter((c) => c.color === 'purple'),
   };
+  const leaders = player.leaderTableau ?? [];
+  const totalCards = player.tableau.length + leaders.length;
   return (
     <div className="sw-hand-area">
       <h3>
-        <span>Your tableau · {player.tableau.length} card{player.tableau.length === 1 ? '' : 's'}</span>
+        <span>Your tableau · {totalCards} card{totalCards === 1 ? '' : 's'}</span>
         <span style={{ fontSize: 12, opacity: 0.75 }}>
           🪙 {player.coins} · ⚔ {shieldsFor(player)}
         </span>
       </h3>
-      {player.tableau.length === 0 ? (
+      {totalCards === 0 ? (
         <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.75)' }}>You haven't built anything yet.</p>
       ) : (
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
@@ -285,6 +348,21 @@ function SelfTableau({ player }: { player: SwPlayer }) {
               </div>
             );
           })}
+          {leaders.length > 0 && (
+            <div>
+              <div style={{ fontSize: 11, opacity: 0.7 }}>Leaders</div>
+              <div className="sw-tableau">
+                {leaders.map((c) => (
+                  <div
+                    key={c.id}
+                    className="sw-tableau-card leader"
+                    style={{ background: '#d8c598', color: '#3a2e15' }}
+                    title={c.name}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -379,6 +457,8 @@ function HandPanel({
     }
   }
 
+  const hasBilkis = (me.leaderTableau ?? []).some((c) => c.name === 'Bilkis');
+
   return (
     <div className="sw-hand-area">
       <h3>
@@ -387,6 +467,17 @@ function HandPanel({
           {submitted ? 'Submitted. Waiting for others…' : 'Click a card to inspect.'}
         </span>
       </h3>
+
+      {hasBilkis && !submitted && (
+        <div style={{ marginBottom: 8 }}>
+          <BilkisButton state={state} me={me} dispatch={dispatch} />
+          {me.transientResources && me.transientResources.length > 0 && (
+            <span style={{ fontSize: 11, marginLeft: 8, opacity: 0.7 }}>
+              Bilkis resource: {me.transientResources.join(', ')}
+            </span>
+          )}
+        </div>
+      )}
 
       <div className="sw-hand">
         {me.hand.map((c) => {
@@ -567,6 +658,10 @@ function GameOver({ state }: { state: SwState }) {
   const breakdown = state.finalScoringBreakdown ?? [];
   const sorted = [...breakdown].sort((a, b) => b.total - a.total);
   const winnerId = sorted[0]?.playerId ?? null;
+  // Collect extras columns from active expansions.
+  const extraCategories = Array.from(new Set(
+    getActiveExpansions(state.config).flatMap((e) => e.scoreCategories ?? [])
+  ));
   return (
     <div className="sw">
       <div className="sw-board">
@@ -586,6 +681,9 @@ function GameOver({ state }: { state: SwState }) {
               <th>Commercial</th>
               <th>Guild</th>
               <th>Science</th>
+              {extraCategories.map((c) => (
+                <th key={c} style={{ textTransform: 'capitalize' }}>{c}</th>
+              ))}
               <th>Total</th>
             </tr>
           </thead>
@@ -600,6 +698,9 @@ function GameOver({ state }: { state: SwState }) {
                 <td>{row.commercial}</td>
                 <td>{row.guild}</td>
                 <td>{row.science}</td>
+                {extraCategories.map((c) => (
+                  <td key={c}>{row.extras?.[c] ?? 0}</td>
+                ))}
                 <td><strong>{row.total}</strong></td>
               </tr>
             ))}
@@ -648,6 +749,8 @@ function cardColorHex(c: SwCard['color']): string {
     case 'red': return '#b73c3c';
     case 'green': return '#5fa552';
     case 'purple': return '#8d6cc0';
+    case 'leader': return '#d8c598';
+    case 'black': return '#2b2b2b';
   }
 }
 
@@ -667,9 +770,10 @@ function computeBuildPlan(state: SwState, me: SwPlayer, card: SwCard): PlanResul
   if (canChainBuild(me, card)) {
     return { canBuild: true, chainFree: true, fromWest: [], fromEast: [], coinsToWest: 0, coinsToEast: 0, totalCoins: 0 };
   }
-  const sf = shortfall(state, me, card.cost);
+  const effCost = effectiveCostFor(state, me, { kind: 'card', card });
+  const sf = shortfall(state, me, effCost);
   if (sf.selfCovers) {
-    const total = card.cost.coins ?? 0;
+    const total = effCost.coins ?? 0;
     if (me.coins < total) {
       return { canBuild: false, chainFree: false, reason: 'Not enough coins.', fromWest: [], fromEast: [], coinsToWest: 0, coinsToEast: 0, totalCoins: total };
     }
@@ -679,13 +783,13 @@ function computeBuildPlan(state: SwState, me: SwPlayer, card: SwCard): PlanResul
   if (!plan) {
     return { canBuild: false, chainFree: false, reason: 'Neighbors cannot supply needed resources.', fromWest: [], fromEast: [], coinsToWest: 0, coinsToEast: 0, totalCoins: 0 };
   }
-  const baseCoins = card.cost.coins ?? 0;
+  const baseCoins = effCost.coins ?? 0;
   const total = baseCoins + plan.coins;
   if (me.coins < total) {
     return { canBuild: false, chainFree: false, reason: 'Not enough coins.', fromWest: plan.fromWest, fromEast: plan.fromEast, coinsToWest: 0, coinsToEast: 0, totalCoins: total };
   }
   // Validate via reducer logic.
-  const v = validatePayment(state, me, card.cost, { fromWest: plan.fromWest, fromEast: plan.fromEast, coins: 0 });
+  const v = validatePayment(state, me, effCost, { fromWest: plan.fromWest, fromEast: plan.fromEast, coins: 0 });
   if (!v.ok) {
     return { canBuild: false, chainFree: false, reason: v.error, fromWest: plan.fromWest, fromEast: plan.fromEast, coinsToWest: 0, coinsToEast: 0, totalCoins: total };
   }
@@ -702,7 +806,8 @@ function computeWonderPlan(state: SwState, me: SwPlayer, stageIdx: number): Plan
   if (stageIdx >= wonder.stages.length) {
     return { canBuild: false, chainFree: false, reason: 'No more stages.', fromWest: [], fromEast: [], coinsToWest: 0, coinsToEast: 0, totalCoins: 0 };
   }
-  const cost = wonder.stages[stageIdx].cost;
+  const stage = wonder.stages[stageIdx];
+  const cost = effectiveCostFor(state, me, { kind: 'wonderStage', stageIndex: stageIdx, stage });
   const sf = shortfall(state, me, cost);
   if (sf.selfCovers) {
     const total = cost.coins ?? 0;

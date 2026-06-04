@@ -25,7 +25,8 @@ export type SwCardColor =
   | 'red'      // military shields
   | 'green'    // science (compass/gear/tablet)
   | 'purple'   // guild (Age III only)
-  | 'leader';  // expansion: Leaders
+  | 'leader'   // expansion: Leaders
+  | 'black';   // expansion: Cities
 
 // ---------- Resources ----------
 
@@ -115,6 +116,19 @@ export type SwCardEffect =
 
   // LEADERS: marks a card as triggering a recruit-time deck pull.
   | { kind: 'leaderOnRecruit'; effect: 'solomonBuildFromDiscard' }
+
+  // ---------- Cities-owned effect kinds ----------
+  // CITIES: hand a debt token to each neighbor on play.
+  | { kind: 'citiesDebtToNeighbors'; amount: number }
+  // CITIES: gain a diplomacy token to spend at next military resolution.
+  | { kind: 'citiesGainDiplomacy'; amount: number }
+  // CITIES: end-game scoring extra (one color of each — Cities' equivalent of Plato).
+  | { kind: 'citiesScoreExtra';
+      rule:
+        | { type: 'completeAllColorsSet'; vpPerSet: number }      // "1 per color" set bonus
+        | { type: 'coinsPerDebtTotal' }                            // coin reward proportional to total debt
+        | { type: 'vpPerDebtTotal'; vpPer: number }                // VP per N debt tokens across all players
+      }
   ;
 
 export interface SwCard {
@@ -183,6 +197,13 @@ export interface SwPlayer {
   transientResources?: SwResource[];
   /** Leaders played into the tableau. */
   leaderTableau?: SwCard[];
+
+  // ---------- Cities expansion fields (only set when Cities is active) ----------
+
+  /** Debt tokens accrued. Each is worth -1 VP at endgame. */
+  debtTokens?: number;
+  /** Diplomacy tokens held. Each spent at next age-end military to skip that resolution. */
+  diplomacyTokens?: number;
 }
 
 /** What a player has chosen to do with the picked card this tick. */

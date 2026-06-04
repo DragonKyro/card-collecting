@@ -35,6 +35,9 @@ function approxLeaderValue(card: SwCard): number {
 
 export function chooseAIAction(state: SwState, playerId: PlayerId): SwAction | null {
   if (state.subPhase === 'leaderDraft') {
+    const player = state.players.find((p) => p.id === playerId);
+    if (!player) return null;
+    if (player.leaderDraftPick !== null && player.leaderDraftPick !== undefined) return null;
     const hand = state.leaderDraftHands?.[playerId] ?? [];
     if (hand.length === 0) return null;
     const sorted = [...hand].sort((a, b) => approxLeaderValue(b) - approxLeaderValue(a));
@@ -43,6 +46,7 @@ export function chooseAIAction(state: SwState, playerId: PlayerId): SwAction | n
   if (state.subPhase === 'leaderPlay') {
     const player = state.players.find((p) => p.id === playerId);
     if (!player) return null;
+    if (player.leaderPlayPick !== null && player.leaderPlayPick !== undefined) return null;
     const hand = player.leaderHand ?? [];
     if (hand.length === 0) {
       return { type: 'submitLeaderPlay', playerId, pick: { kind: 'skip' } };
