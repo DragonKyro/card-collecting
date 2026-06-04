@@ -33,6 +33,7 @@ src/
     sushi-go/                   Sushi Go! Party module.
     sea-salt-paper/             Sea Salt & Paper module.
     seven-wonders/              7 Wonders module (+ expansion folders later).
+    air-land-sea/               Air, Land & Sea module (+ Spies, Lies, & Supplies expansion).
 ```
 
 Each game lives in its own folder behind the `GameModule<S, A, C>` contract from `src/core/module.ts`. To add a new game: create `src/games/<id>/`, export a module, add it to `src/games/registry.ts`. **No other file needs to change.**
@@ -80,7 +81,7 @@ npm run test:run    # vitest single run
   - *Extra Salt* — 8 new cards / 5 new effects shuffled into the main deck (jellyfish + swimmer next-turn lock, lobster + crab top-5 peek, basket of crabs multiplier, starfish trio, seahorse collector wildcard).
   - *Extra Pepper* — separate event deck. One event flipped at round start applies to all (or the current holder); awarded at round end to the leader (`+`) or laggard (`−`). Six event cards implemented (Three Mermaids, Stop at Five, Angelfish, Stormy Seas, Calm Waters, Pepper Burn) — the framework supports the remaining six pending authoritative text.
 - [ ] **Phase 7** — 7 Wonders expansions (Leaders, Cities, Babel, Armada, Edifice — each as a sub-module under `src/games/seven-wonders/expansions/`).
-- [ ] **Phase 8** — Air, Land & Sea (2-player, 3-round trick-taker / set-collection hybrid; theatre cards, instants, withdraw bluffing).
+- [x] **Phase 8** — Air, Land & Sea (2-player; 3-theater battles; Deploy / Improvise (face-down) / Withdraw; instant + ongoing abilities; best-to-12 across rotating battles). Spies, Lies, & Supplies expansion scaffolded — its 3 new theaters (Intel/Diplo/Econ) and 18 cards are playable with raw strengths; per-card abilities are placeholder no-ops pending authoritative rulebook text. Epic Mode (5 theaters, 9-card hands) wired through the lobby toggle.
 - [ ] **Phase 9** — Additional games as desired.
 
 Game-specific design notes live in each game's `types.ts` and in [CLAUDE.md](CLAUDE.md).

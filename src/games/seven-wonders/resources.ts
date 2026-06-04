@@ -18,6 +18,8 @@ import type {
 } from './types';
 import { RAW_RESOURCES, MANUFACTURED_RESOURCES } from './types';
 import { wonderById } from './wonders';
+import { getActiveExpansions } from './expansions/registry';
+import type { SwCostTarget } from './expansions/types';
 
 export interface ProductionSet {
   /** Fixed (single-resource) sources: counts per resource. */
@@ -26,7 +28,8 @@ export interface ProductionSet {
   choices: SwProduction[];
 }
 
-/** Compute a player's full production: built cards + wonder initial + wonder stages built. */
+/** Compute a player's full production: built cards + wonder initial + wonder stages built.
+ *  Also folds in transient resources (Bilkis ability) and any leader-tableau produce effects. */
 export function productionFor(state: SwState, player: SwPlayer): ProductionSet {
   const fixed = new Map<SwResource, number>();
   const choices: SwProduction[] = [];
@@ -56,6 +59,22 @@ export function productionFor(state: SwState, player: SwPlayer): ProductionSet {
   for (const c of player.tableau) {
     for (const eff of c.effects) {
       if (eff.kind === 'produce') add(eff.production);
+    }
+  }
+
+  // Leader tableau (cards built by Leaders expansion).
+  if (player.leaderTableau) {
+    for (const c of player.leaderTableau) {
+      for (const eff of c.effects) {
+        if (eff.kind === 'produce') add(eff.production);
+      }
+    }
+  }
+
+  // Transient resources (Bilkis).
+  if (player.transientResources && player.transientResources.length > 0) {
+    for (const r of player.transientResources) {
+      fixed.set(r, (fixed.get(r) ?? 0) + 1);
     }
   }
 
@@ -151,7 +170,11 @@ export function hasTradeDiscount(
   side: 'east' | 'west',
   resourceKind: 'raw' | 'manufactured',
 ): boolean {
-  for (const c of player.tableau) {
+  const sourcesToCheck = [
+    ...player.tableau,
+    ...(player.leaderTableau ?? []),
+  ];
+  for (const c of sourcesToCheck) {
     for (const eff of c.effects) {
       if (resourceKind === 'raw' && eff.kind === 'tradeDiscountRaw') {
         if (eff.sides.includes('both') || eff.sides.includes(side)) return true;
@@ -346,12 +369,19 @@ export function costOfBuild(state: SwState, player: SwPlayer, card: SwCard): SwC
   return card.cost;
 }
 
-/** Convenience: shields total for a player from cards + wonder stages built. */
+/** Convenience: shields total for a player from cards + wonder stages + leaders. */
 export function shieldsFor(player: SwPlayer): number {
   let s = 0;
   for (const c of player.tableau) {
     for (const eff of c.effects) {
       if (eff.kind === 'shields') s += eff.shields;
+    }
+  }
+  if (player.leaderTableau) {
+    for (const c of player.leaderTableau) {
+      for (const eff of c.effects) {
+        if (eff.kind === 'shields') s += eff.shields;
+      }
     }
   }
   const wonder = wonderById(player.wonderId);
@@ -387,6 +417,30 @@ export function hasBuildFromDiscard(_player: SwPlayer): boolean {
 export function canChainBuild(player: SwPlayer, card: SwCard): boolean {
   if (!card.chainFrom || card.chainFrom.length === 0) return false;
   return card.chainFrom.some((n) => tableauHasChain(player, n));
+}
+
+/** Effective cost of building something — folds in active expansions' modifyCost hooks.
+ *  E.g., Leaders' Archimedes removes one resource from green cards' cost. */
+export function effectiveCostFor(
+  state: SwState,
+  player: SwPlayer,
+  target: SwCostTarget,
+): SwCost {
+  // Start from the raw cost.
+  const baseCost: SwCost =
+    target.kind === 'card' ? target.card.cost
+    : target.kind === 'leader' ? target.card.cost
+    : target.stage.cost;
+  // Clone so modifiers don't mutate the underlying card.
+  let cost: SwCost = {
+    coins: baseCost.coins,
+    resources: baseCost.resources ? baseCost.resources.slice() : undefined,
+  };
+  for (const ext of getActiveExpansions(state.config)) {
+    if (!ext.modifyCost) continue;
+    cost = ext.modifyCost(state, player, target, cost);
+  }
+  return cost;
 }
 
 void MANUFACTURED_RESOURCES;

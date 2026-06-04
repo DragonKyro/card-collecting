@@ -11,10 +11,17 @@
 
 import type { SwFinalScoringRow, SwPlayer, SwState } from './types';
 import { wonderById } from './wonders';
+import { getActiveExpansions } from './expansions/registry';
+import { applyExtrasToRow } from './expansions/types';
 
 export function scoreMatch(state: SwState): SwFinalScoringRow[] {
   const players = state.players;
-  return players.map((p) => scorePlayer(state, p));
+  const expansions = getActiveExpansions(state.config);
+  return players.map((p) => {
+    const row = scorePlayer(state, p);
+    applyExtrasToRow(expansions, state, p, row);
+    return row;
+  });
 }
 
 function scorePlayer(state: SwState, p: SwPlayer): SwFinalScoringRow {
@@ -123,7 +130,8 @@ function collectTargets(state: SwState, p: SwPlayer, from: 'self' | 'neighbors' 
 /** Science scoring with Scientists Guild bonus (adds 1 to your best symbol). */
 function scienceVps(p: SwPlayer): number {
   const symbols: Record<'compass' | 'gear' | 'tablet', number> = { compass: 0, gear: 0, tablet: 0 };
-  for (const c of p.tableau) {
+  const sources = [...p.tableau, ...(p.leaderTableau ?? [])];
+  for (const c of sources) {
     for (const eff of c.effects) {
       if (eff.kind === 'science') symbols[eff.symbol] += 1;
     }

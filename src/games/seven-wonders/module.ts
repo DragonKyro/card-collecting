@@ -113,6 +113,12 @@ export function attachSeatsAndStart(state: SwState, seats: Seat[]): SwState {
     coins: 3,
     militaryTokens: [],
     pendingPick: null,
+    leaderHand: [],
+    leaderTableau: [],
+    leaderDraftPick: null,
+    leaderPlayPick: null,
+    bilkisUsedThisTick: false,
+    transientResources: [],
   }));
   setupNewMatch(state);
   return state;

@@ -17,19 +17,16 @@
 //   5. After Age III military, transition to phase = 'gameOver' with the final
 //      scoring breakdown filled in.
 //
-// Notes:
-//   - randomness for deck shuffling is folded into a single deal at age start
-//     and the hands are then on every peer's state — no per-action randomness.
-//   - the activePlayerId field is repurposed during 'picking' to point at the
-//     next un-submitted AI seat, so the existing host AI driver in GameHost
-//     ticks through AI seats one at a time. It's set back to null once all
-//     submissions are in.
+// Expansion hooks: any action type not in the base switch is routed through
+// active expansions' applyAction. Subphases not in the base set (e.g.,
+// 'leaderDraft', 'leaderPlay') are owned by expansions. The base reducer never
+// switches on expansion id — it iterates getActiveExpansions(state.config).
 
 import type { PlayerId } from '@/core/types';
 import { shuffle } from '@/core/rng';
 import type {
   SwState, SwAction, SwPlayer, SwPendingPick, SwAge,
-  SwMilitarySummary, SwLogEntry,
+  SwMilitarySummary, SwLogEntry, SwCard,
 } from './types';
 import {
   buildAgeDeck, buildAgeIIIDeck, ageDeckTargetSize, resetCardIdCounter,
@@ -37,12 +34,16 @@ import {
 import { wonderById } from './wonders';
 import {
   productionFor, productionCanSupply, canChainBuild, validatePayment,
-  shieldsFor, sumCoinsOnPlay, neighborsOf,
+  shieldsFor, sumCoinsOnPlay, neighborsOf, effectiveCostFor,
 } from './resources';
 import { scoreMatch, coinsOnPlayForEndVp } from './scoring';
+import { getActiveExpansions } from './expansions/registry';
+import type { SwEvent } from './expansions/types';
 
 const AGE_MILITARY_WIN_VP: Record<SwAge, number> = { 1: 1, 2: 3, 3: 5 };
 const DISCARD_COIN_REWARD = 3;
+
+const BASE_SUBPHASES = new Set(['picking', 'militaryEnd', 'finalScoring']);
 
 function clone<T>(x: T): T {
   return JSON.parse(JSON.stringify(x));
@@ -74,7 +75,7 @@ function allPlayersSubmitted(state: SwState): boolean {
 }
 
 /** Find the next AI player without a pendingPick, or null. */
-function nextAIPicker(state: SwState): PlayerId | null {
+function nextAIPickerBase(state: SwState): PlayerId | null {
   for (const p of state.players) {
     if (p.pendingPick !== null) continue;
     const seat = state.seats.find((s) => s.id === p.id);
@@ -83,8 +84,32 @@ function nextAIPicker(state: SwState): PlayerId | null {
   return null;
 }
 
-function setActiveAIIfAny(state: SwState): void {
-  state.activePlayerId = nextAIPicker(state);
+/** Public helper: set activePlayerId to whichever AI seat should act next.
+ *  Defers to expansions when the subphase is expansion-owned. */
+export function setActiveAIIfAny(state: SwState): void {
+  if (BASE_SUBPHASES.has(state.subPhase)) {
+    if (state.subPhase === 'picking') {
+      state.activePlayerId = nextAIPickerBase(state);
+    } else {
+      state.activePlayerId = null;
+    }
+    return;
+  }
+  // Expansion-owned subphase: ask each expansion.
+  for (const ext of getActiveExpansions(state.config)) {
+    if (ext.ownsSubPhase?.(state.subPhase) && ext.nextAIPicker) {
+      state.activePlayerId = ext.nextAIPicker(state);
+      return;
+    }
+  }
+  state.activePlayerId = null;
+}
+
+/** Emit an event to all active expansions. */
+function emitEvent(state: SwState, event: SwEvent): void {
+  for (const ext of getActiveExpansions(state.config)) {
+    ext.onEvent?.(state, event);
+  }
 }
 
 /** Deal 7 cards to each player, sized to player count. */
@@ -115,14 +140,30 @@ function dealAge(state: SwState, age: SwAge): void {
   }
 }
 
-/** Start a new Age: deal, set subPhase, pass direction, reset ageRound. */
-function startAge(state: SwState, age: SwAge): void {
+/** Start a new Age: deal, set subPhase, pass direction, reset ageRound.
+ *  Asks active expansions first if any wants to intercept (e.g., Leaders for
+ *  the per-age leader-play step). */
+export function tryStartAge(state: SwState, age: SwAge): void {
+  for (const ext of getActiveExpansions(state.config)) {
+    if (ext.beforeAgeStart?.(state, age)) {
+      // Expansion took control — it will dispatch the actual age start later.
+      state.age = age;
+      return;
+    }
+  }
+  startAge(state, age);
+}
+
+/** Actually deal an age — called after expansion intercepts have run. */
+export function startAge(state: SwState, age: SwAge): void {
   state.age = age;
   state.ageRound = 1;
   state.subPhase = 'picking';
   state.passDirection = age === 2 ? 'ccw' : 'cw';
   dealAge(state, age);
   pushLog(state, { kind: 'ageStart' });
+  // tickStart fires for per-tick housekeeping (e.g., Bilkis once-per-tick reset).
+  emitEvent(state, { kind: 'tickStart' });
   setActiveAIIfAny(state);
 }
 
@@ -159,7 +200,8 @@ function validatePick(state: SwState, player: SwPlayer, pick: SwPendingPick): vo
     }
     // Chain-build → free.
     if (!canChainBuild(player, card)) {
-      const validation = validatePayment(state, player, card.cost, pick.payment);
+      const effCost = effectiveCostFor(state, player, { kind: 'card', card });
+      const validation = validatePayment(state, player, effCost, pick.payment);
       if (!validation.ok) throw new Error(`Cannot pay for ${card.name}: ${validation.error}`);
     }
   } else if (pick.kind === 'wonder') {
@@ -171,8 +213,9 @@ function validatePick(state: SwState, player: SwPlayer, pick: SwPendingPick): vo
     if (stageIdx >= wonder.stages.length) {
       throw new Error('No more wonder stages available.');
     }
-    const stageCost = wonder.stages[stageIdx].cost;
-    const validation = validatePayment(state, player, stageCost, pick.payment);
+    const stage = wonder.stages[stageIdx];
+    const effCost = effectiveCostFor(state, player, { kind: 'wonderStage', stageIndex: stageIdx, stage });
+    const validation = validatePayment(state, player, effCost, pick.payment);
     if (!validation.ok) throw new Error(`Cannot pay for wonder stage: ${validation.error}`);
   }
   // 'discard' is always legal.
@@ -197,14 +240,22 @@ function applyPick(state: SwState, player: SwPlayer): void {
     const card = player.hand.find((c) => c.id === pick.cardId);
     if (!card) return;
     player.hand = player.hand.filter((c) => c.id !== pick.cardId);
+    const viaChain = canChainBuild(player, card);
     // Apply payment.
-    if (!canChainBuild(player, card)) {
-      const v = validatePayment(state, player, card.cost, pick.payment);
+    if (!viaChain) {
+      const effCost = effectiveCostFor(state, player, { kind: 'card', card });
+      const v = validatePayment(state, player, effCost, pick.payment);
       if (v.ok) {
         player.coins -= v.totalCoins;
         const { west, east } = neighborsOf(state, player.id);
         west.coins += v.toWest;
         east.coins += v.toEast;
+        if (pick.payment.fromWest.length > 0) {
+          emitEvent(state, { kind: 'neighborPurchase', buyerId: player.id, sellerId: west.id, units: pick.payment.fromWest.length });
+        }
+        if (pick.payment.fromEast.length > 0) {
+          emitEvent(state, { kind: 'neighborPurchase', buyerId: player.id, sellerId: east.id, units: pick.payment.fromEast.length });
+        }
       }
     }
     // Add to tableau.
@@ -216,6 +267,7 @@ function applyPick(state: SwState, player: SwPlayer): void {
         player.coins += coinsOnPlayForEndVp(state, player, eff);
       }
     }
+    emitEvent(state, { kind: 'cardBuilt', playerId: player.id, card, viaChain });
     return;
   }
 
@@ -224,17 +276,26 @@ function applyPick(state: SwState, player: SwPlayer): void {
     if (!card) return;
     // Remove from hand — card goes face-down under the wonder (effectively gone).
     player.hand = player.hand.filter((c) => c.id !== pick.cardId);
-    const v = validatePayment(state, player, wonderById(player.wonderId).stages[pick.stageIndex].cost, pick.payment);
+    const wonder = wonderById(player.wonderId);
+    const stage = wonder.stages[pick.stageIndex];
+    const effCost = effectiveCostFor(state, player, { kind: 'wonderStage', stageIndex: pick.stageIndex, stage });
+    const v = validatePayment(state, player, effCost, pick.payment);
     if (v.ok) {
       player.coins -= v.totalCoins;
       const { west, east } = neighborsOf(state, player.id);
       west.coins += v.toWest;
       east.coins += v.toEast;
+      if (pick.payment.fromWest.length > 0) {
+        emitEvent(state, { kind: 'neighborPurchase', buyerId: player.id, sellerId: west.id, units: pick.payment.fromWest.length });
+      }
+      if (pick.payment.fromEast.length > 0) {
+        emitEvent(state, { kind: 'neighborPurchase', buyerId: player.id, sellerId: east.id, units: pick.payment.fromEast.length });
+      }
     }
     player.wonderStagesBuilt += 1;
     // Apply stage effects: coins immediately.
-    const stage = wonderById(player.wonderId).stages[pick.stageIndex];
     player.coins += sumCoinsOnPlay(stage.effects);
+    emitEvent(state, { kind: 'wonderStageBuilt', playerId: player.id, stageIndex: pick.stageIndex });
     return;
   }
 }
@@ -257,7 +318,11 @@ function revealAndApply(state: SwState): void {
     });
     applyPick(state, p);
   }
-  for (const p of state.players) p.pendingPick = null;
+  for (const p of state.players) {
+    p.pendingPick = null;
+    p.transientResources = [];
+    p.bilkisUsedThisTick = false;
+  }
 }
 
 /** Discard everyone's last card (after 6 picks). */
@@ -303,6 +368,7 @@ function resolveMilitary(state: SwState): SwMilitarySummary {
       // Even a "0" outcome from two draws still appends nothing.
     } else if (row.tokenGained > 0) {
       p.militaryTokens.push(row.tokenGained);
+      emitEvent(state, { kind: 'militaryTokenGained', playerId: p.id, vp: row.tokenGained, age: state.age });
     } else {
       // A loss appends -1 per loss. We track per-loss tokens for guild counting.
       // Each loss = 1 token of -1.
@@ -314,7 +380,10 @@ function resolveMilitary(state: SwState): SwMilitarySummary {
       const wins =
         (row.vsWest === 'win' ? ageVp : 0) +
         (row.vsEast === 'win' ? ageVp : 0);
-      if (wins > 0) p.militaryTokens.push(wins);
+      if (wins > 0) {
+        p.militaryTokens.push(wins);
+        emitEvent(state, { kind: 'militaryTokenGained', playerId: p.id, vp: wins, age: state.age });
+      }
     }
   }
   return { age: state.age, perPlayer };
@@ -350,6 +419,7 @@ function tick(state: SwState): void {
     rotateHands(state);
     state.ageRound += 1;
     state.subPhase = 'picking';
+    emitEvent(state, { kind: 'tickStart' });
     setActiveAIIfAny(state);
     return;
   }
@@ -386,10 +456,33 @@ export function applyAction(state: SwState, action: SwAction): SwState {
     case 'continue': {
       if (s.subPhase !== 'militaryEnd') throw new Error('continue: not in militaryEnd');
       const nextAge: SwAge = (s.age + 1) as SwAge;
-      startAge(s, nextAge);
+      tryStartAge(s, nextAge);
       return s;
     }
+
+    default: {
+      // Route to active expansions.
+      for (const ext of getActiveExpansions(s.config)) {
+        if (!ext.applyAction) continue;
+        const result = ext.applyAction(s, action);
+        if (result !== undefined) return result;
+      }
+      throw new Error(`Unhandled action type: ${(action as { type: string }).type}`);
+    }
   }
+}
+
+/** Build a card into a player's tableau as a side-effect (used by Solomon).
+ *  Does not charge coins or resources. */
+export function buildCardForFree(state: SwState, player: SwPlayer, card: SwCard): void {
+  player.tableau.push(card);
+  player.coins += sumCoinsOnPlay(card.effects);
+  for (const eff of card.effects) {
+    if (eff.kind === 'endVp') {
+      player.coins += coinsOnPlayForEndVp(state, player, eff);
+    }
+  }
+  emitEvent(state, { kind: 'cardBuilt', playerId: player.id, card, viaChain: false });
 }
 
 /** Initial setup hook: build state, assign wonders, place starting coins. */
@@ -410,12 +503,29 @@ export function setupNewMatch(state: SwState): void {
   state.finalScoringBreakdown = null;
   state.finalScores = null;
   state.phase = 'playing';
-  startAge(state, 1);
+  state.subPhase = 'picking'; // default; expansion setupMatch may override
+
+  // Let expansions set up their pre-game state (e.g., Leaders' draft).
+  let expansionTookControl = false;
+  for (const ext of getActiveExpansions(state.config)) {
+    const before = state.subPhase;
+    ext.setupMatch?.(state);
+    if (state.subPhase !== before && !BASE_SUBPHASES.has(state.subPhase)) {
+      expansionTookControl = true;
+    }
+  }
+  // If no expansion took control, start Age 1 directly.
+  if (!expansionTookControl) {
+    tryStartAge(state, 1);
+  } else {
+    setActiveAIIfAny(state);
+  }
 }
+
+export { validatePick };
 
 /** Re-exported for tests. */
 export const _internals = {
   rotateHands, revealAndApply, resolveMilitary, advanceAfterMilitary,
-  productionFor, productionCanSupply, dealAge,
+  productionFor, productionCanSupply, dealAge, emitEvent,
 };
-

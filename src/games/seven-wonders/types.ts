@@ -24,7 +24,8 @@ export type SwCardColor =
   | 'yellow'   // commercial (income/discounts/VP)
   | 'red'      // military shields
   | 'green'    // science (compass/gear/tablet)
-  | 'purple';  // guild (Age III only)
+  | 'purple'   // guild (Age III only)
+  | 'leader';  // expansion: Leaders
 
 // ---------- Resources ----------
 
@@ -79,8 +80,41 @@ export type SwCardEffect =
       coinsPerOnPlay?: number;            // immediate coins per match (Haven, Lighthouse, Chamber of Commerce)
       vpPer?: number;                     // end-of-game VPs per match
     }
-  // Guild cards' final VPs — same shape as endVp but kept as a separate kind for clarity.
-  // (Folded into endVp above; this entry kept for future "loose" guild effects.)
+  // ---------- Expansion-owned effect kinds ----------
+  // The base reducer ignores these; the relevant expansion's hooks read them.
+
+  // LEADERS: cost modifier — reduce one resource from cards of `targetColor`,
+  // wonder stages, leaders, or guilds.
+  | { kind: 'leaderCostModifier';
+      target: 'cardColor' | 'wonderStage' | 'leader' | 'guild';
+      targetColor?: SwCardColor;
+      remove: 'oneResource' | 'allResources' | 'allCoins' }
+
+  // LEADERS: on-play trigger — fires when this leader's owner does something
+  // AFTER the leader was recruited. Each fire grants the listed reward.
+  | { kind: 'leaderTrigger';
+      on:
+        | { type: 'buildCardColor'; color: SwCardColor }
+        | { type: 'buildViaChain' }
+        | { type: 'militaryWin' }
+        | { type: 'neighborPurchase' };
+      reward: { coins?: number } }
+
+  // LEADERS: end-game scoring rule that doesn't fit the existing endVp shape.
+  | { kind: 'leaderScoreExtra';
+      rule:
+        | { type: 'completeScienceSet'; vpPerSet: number }     // Aristotle: +3 per {compass,gear,tablet}
+        | { type: 'completeRGBSet'; vpPerSet: number }          // Justinian: +3 per {red,blue,green}
+        | { type: 'completeAllColorsSet'; vpPerSet: number }    // Plato: +7 per {b,g,B,Y,R,G,P}
+        | { type: 'midasCoinBonus' }                            // Midas: +1 VP per 3 coins (stacks)
+        | { type: 'alexanderTokenBonus' }                       // Alexander: +1 per existing victory token
+      }
+
+  // LEADERS: marks a card as having an activated ability.
+  | { kind: 'leaderActivated'; ability: 'bilkis' }
+
+  // LEADERS: marks a card as triggering a recruit-time deck pull.
+  | { kind: 'leaderOnRecruit'; effect: 'solomonBuildFromDiscard' }
   ;
 
 export interface SwCard {
@@ -134,6 +168,21 @@ export interface SwPlayer {
   militaryTokens: number[];
   /** Submitted card pick for the current tick, applied on reveal. null if no submission. */
   pendingPick: SwPendingPick | null;
+
+  // ---------- Leaders expansion fields (only set when Leaders is active) ----------
+
+  /** Leaders currently in the player's reserve (drafted, not yet played). */
+  leaderHand?: SwCard[];
+  /** Pending leader-draft pick for the current draft tick. */
+  leaderDraftPick?: { cardId: number } | null;
+  /** Pending leader-play pick for the current age's pre-play step. */
+  leaderPlayPick?: SwLeaderPlayPick | null;
+  /** Whether Bilkis has been used THIS pick tick (resets per tick). */
+  bilkisUsedThisTick?: boolean;
+  /** Transient resources granted for this build (e.g., Bilkis). Cleared on apply. */
+  transientResources?: SwResource[];
+  /** Leaders played into the tableau. */
+  leaderTableau?: SwCard[];
 }
 
 /** What a player has chosen to do with the picked card this tick. */
@@ -169,10 +218,20 @@ export interface SwConfig {
 // ---------- Game state ----------
 
 export type SwSubPhase =
-  | 'picking'        // each player submits a pick this tick
-  | 'militaryEnd'    // post-age military resolution shown briefly
-  | 'finalScoring'   // game over; finalScores populated
+  | 'picking'           // each player submits a pick this tick
+  | 'militaryEnd'       // post-age military resolution shown briefly
+  | 'finalScoring'      // game over; finalScores populated
+  | 'leaderDraft'       // Leaders: initial pass-pick of 4 leaders
+  | 'leaderPlay'        // Leaders: pre-age leader play (one per age)
+  | 'solomonAwaitPick'  // Leaders: Solomon recruited — owner picks from discard
   ;
+
+/** Leaders expansion: per-age leader play pick. */
+export type SwLeaderPlayPick =
+  | { kind: 'play'; cardId: number; payment: SwPayment }   // build into leaderTableau
+  | { kind: 'bury'; cardId: number; payment: SwPayment }   // under next wonder stage
+  | { kind: 'discard'; cardId: number }                    // → 3 coins
+  | { kind: 'skip' };                                      // play no leader this age
 
 export interface SwState {
   phase: GamePhase;
@@ -202,6 +261,17 @@ export interface SwState {
   /** Append-only event log for the sidebar history. */
   log: SwLogEntry[];
   logSeq: number;
+
+  // ---------- Leaders expansion fields (only set when Leaders is active) ----------
+
+  /** Pool of leaders being passed during initial draft. Empty after draft ends. */
+  leaderDraftHands?: Record<PlayerId, SwCard[]>;
+  /** Draft round (4 → 1). When 0, draft is done. */
+  leaderDraftRound?: number;
+  /** Pass direction during draft (CW per rulebook). */
+  leaderDraftPassDir?: 'cw' | 'ccw';
+  /** Solomon's owner if we're in solomonAwaitPick subphase. */
+  solomonPickerId?: PlayerId | null;
 }
 
 // ---------- Summaries ----------
@@ -227,6 +297,8 @@ export interface SwFinalScoringRow {
   guild: number;
   science: number;
   total: number;
+  /** Expansion-contributed scoring categories (e.g., { leaders: 12 }). */
+  extras?: Record<string, number>;
 }
 
 // ---------- Log ----------
@@ -243,4 +315,13 @@ export type SwLogEntry =
 export type SwAction =
   | { type: 'submitPick'; playerId: PlayerId; pick: SwPendingPick }
   /** Advance from a between-age pause (military summary shown) into the next age. */
-  | { type: 'continue' };
+  | { type: 'continue' }
+  // ---------- Leaders expansion actions ----------
+  /** Submit a pick during the initial leader-draft phase. */
+  | { type: 'submitLeaderDraft'; playerId: PlayerId; cardId: number }
+  /** Submit a leader-play decision before an age begins. */
+  | { type: 'submitLeaderPlay'; playerId: PlayerId; pick: SwLeaderPlayPick }
+  /** Use Bilkis' once-per-tick ability: pay 1 coin, gain 1 resource for this build. */
+  | { type: 'useBilkis'; playerId: PlayerId; resource: SwResource }
+  /** Solomon recruited: pick a card from the discard pile to build for free. */
+  | { type: 'solomonPick'; playerId: PlayerId; cardId: number };

@@ -75,6 +75,17 @@ Each turn: draw 2 (keep 1 or both), optional play-pair-for-ability, then STOP / 
 ### 7 Wonders (`src/games/seven-wonders/`)
 3 Ages × 6 picks per Age. Simultaneous: each player submits a `pendingPick` (build / wonder-stage / discard); reducer reveals + applies in batch, rotates hands (CW Ages I/III, CCW Age II), resolves military at Age end. Final scoring across 7 categories at Age III end. Expansions (Leaders, Cities, Babel, Armada, Edifice) will live under `src/games/seven-wonders/expansions/` and contribute extra decks + post-action hooks. No `if (expansion === ...)` conditionals — add a module hook instead.
 
+### Air, Land & Sea (`src/games/air-land-sea/`)
+Strict 2-player; alternating single-action turns. Each turn: **Deploy** (face-up to the matching theater; Instant abilities fire on placement, Ongoing abilities persist while face-up), **Improvise** (face-down to any theater, strength 2, no ability), or **Withdraw** (battle ends; opponent scores VP per the withdrawing player's hand-size chart: 6→2, 4-5→3, 2-3→4, 0-1→6; full-play loss = 6). Battle ends when either player withdraws or both hands are empty. Winner controls more than half the theaters (2/3 or 3/5); ties go to the 1st player. Match ends at 12 VP. Between battles the theater row rotates one step (rightmost→front) and 1st player swaps.
+
+State machine lives in `subPhase`: `awaitingAction` (the main loop), then per Instant ability one of `awaitingFlipTarget` / `awaitingTransportTarget` / `awaitingRedeployTarget` / `awaitingReinforcePlacement`, then `battleEnd` (Continue button) → `gameOver`. `state.pendingAbility` carries the in-flight Instant's source and the chooser seat, so Disrupt's two-flip dance (opponent flips → source flips) stays consistent. `activePlayerId` is repurposed during follow-ups to point at the chooser seat, so the existing `GameHost` AI driver ticks ability follow-ups one at a time.
+
+Ongoing abilities are computed passively from face-up cards on the board — never stored as flags. `scoring.ts` walks the board for Cover Fire (covered card → 4), Escalation (owner's face-down → 4), Air Support (+3 to adjacent theaters on the same side), and Aerodrome (1-3 strength relax in `validateDeploy`). Containment (face-down plays are immediately discarded) and Blockade (a new card making opponent's adjacent stack ≥3 is discarded) are checked post-placement in `abilities.ts`. Per BGG FAQ, ongoing abilities still emit while COVERED — only being flipped face-down silences them.
+
+Hidden info follows the project's "full state replication + UI gating" pattern — face-down cards are stored with `faceDown: true` in state; the UI hides text from non-owners (and from the inactive seat in hot-seat).
+
+**Spies, Lies, & Supplies expansion** is wired in but partially modeled. The lobby toggles 3 new theaters (Intelligence / Diplomacy / Economics) and Epic Mode (5 theaters, 9-card hands). The 18 new cards exist in `deckPool` with proper strengths and theaters — they are dealt, played, and contribute their raw strength to scoring normally. Their tactical abilities are placeholder no-ops in `abilities.ts` (`intel1` … `econ6`), pending authoritative rulebook text. To fill in: replace the `case 'intel1':` etc. branches with real handlers; no other file needs to change. Supply Tokens are storage is already in `state.supplyTokens` (parallel to theaters, [seat0, seat1]) and contribute to `theaterStrength` — Economics cards just need to dispatch `placeSupplyToken` once their abilities are known. Also several base-game ability assignments (Sea 4/5 in particular) need confirmation; see `cards.ts` notes.
+
 ## Conventions
 
 - Strict TypeScript. No `any` unless genuinely necessary.
@@ -107,7 +118,7 @@ Each turn: draw 2 (keep 1 or both), optional play-pair-for-ability, then STOP / 
 
 ## Roadmap
 
-See [README.md](README.md#project-plan--roadmap). Current status: **Phases 0–4 + 6 (partial) complete.** SSP + Sushi Go + 7 Wonders (base) playable hot-seat and online. Trystero room, lobby sync, action broadcast, snapshot on join, lobby + in-game chat, host-only AI driver, spectator fallback all wired. SSP has both Extra Salt (full) and Extra Pepper (6/12 events) togglable in the lobby. 7 Wonders has expansion toggles in the lobby UI but none of the expansions are implemented yet.
+See [README.md](README.md#project-plan--roadmap). Current status: **Phases 0–4 + 6 (partial) + 8 (partial) complete.** SSP + Sushi Go + 7 Wonders (base) + Air, Land & Sea (base with all abilities + SLS scaffolding) playable hot-seat and online. Trystero room, lobby sync, action broadcast, snapshot on join, lobby + in-game chat, host-only AI driver, spectator fallback all wired. SSP has both Extra Salt (full) and Extra Pepper (6/12 events) togglable in the lobby. 7 Wonders has expansion toggles in the lobby UI but none of the expansions are implemented yet. ALS has the Spies, Lies, & Supplies expansion togglable (theater swap + Epic Mode wired) but its per-card abilities are no-ops until rulebook text is in hand.
 
 ### 7 Wonders implementation notes
 
@@ -123,3 +134,4 @@ See [README.md](README.md#project-plan--roadmap). Current status: **Phases 0–4
 2. **7 Wonders polish** — model the deferred wonder stage effects (Olympia A "free per age", Halicarnassus "build from discard", Babylon A "play last card", Olympia B "copy guild", Babylon B "choose science"). The state machine already has hooks for between-age UI.
 3. **Finish Pepper** — add the remaining 6 event cards to `events.ts` once authoritative rule text is in hand. Each new event needs an id in `SspEventId`, an entry in `EVENT_BY_ID`/`ALL_EVENT_IDS`, and (if it has a per-player rule effect) a hook into the reducer.
 4. **AI heuristics** — improve each game's `ai.ts` beyond "first legal move". The 7W AI is intentionally simple — should weigh military/science/civilian more dynamically against the round.
+5. **ALS card text from rulebook** — confirm Sea 4 / Sea 5 ability assignments against the authoritative rulebook (Investigation, Salvage in `cards.ts` are best-guess assignments) and fill in the 18 SLS abilities. The dispatch in `abilities.ts` (`intel1` … `econ6`) is already wired; each branch just needs its real effect (or a follow-up sub-phase + pending-ability shape if it needs a target).
