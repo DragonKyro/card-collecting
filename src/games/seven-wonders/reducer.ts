@@ -467,7 +467,16 @@ function tick(state: SwState): void {
   state.lastMilitaryResolution = summary;
   pushLog(state, { kind: 'militaryResolution', summary });
   advanceAfterMilitary(state);
-  state.activePlayerId = null;
+  // At militaryEnd, in an all-AI match park activePlayerId on the first AI seat
+  // so the GameHost AI driver dispatches 'continue' automatically (otherwise the
+  // match would freeze waiting for a click that no one makes). When humans are
+  // playing, leave it null so the human can read the summary and click through.
+  if (state.subPhase === 'militaryEnd') {
+    const allAI = state.seats.length > 0 && state.seats.every((s) => s.isAI);
+    state.activePlayerId = allAI ? (state.seats[0]?.id ?? null) : null;
+  } else {
+    state.activePlayerId = null;
+  }
 }
 
 export function applyAction(state: SwState, action: SwAction): SwState {

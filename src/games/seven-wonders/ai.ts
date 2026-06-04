@@ -13,6 +13,7 @@ import {
   shortfall, suggestCheapestPurchase, validatePayment,
   shieldsFor,
 } from './resources';
+import { getActiveExpansions } from './expansions/registry';
 
 function approxCardValue(state: SwState, p: SwPlayer, card: SwCard): number {
   let v = 0;
@@ -167,7 +168,17 @@ export function chooseAIAction(state: SwState, playerId: PlayerId): SwAction | n
     // active player. We accept the continue from anyone.
     return { type: 'continue' };
   }
-  if (state.subPhase !== 'picking') return null;
+  // Expansion-owned subphase (e.g., Leaders' draft/play, Solomon's pick) —
+  // delegate to whichever expansion owns it. Without this, AI seats freeze
+  // during the leader draft when Leaders is enabled.
+  if (state.subPhase !== 'picking') {
+    for (const ext of getActiveExpansions(state.config)) {
+      if (!ext.ownsSubPhase?.(state.subPhase) || !ext.chooseAIAction) continue;
+      const a = ext.chooseAIAction(state, playerId);
+      if (a) return a;
+    }
+    return null;
+  }
   const me = state.players.find((p) => p.id === playerId);
   if (!me) return null;
   if (me.pendingPick !== null) return null;

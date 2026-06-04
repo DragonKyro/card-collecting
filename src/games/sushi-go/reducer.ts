@@ -52,6 +52,23 @@ export function dealHands(state: SushiGoState): void {
   }
 }
 
+/** Find the next AI player without a pendingPick this tick, or null. */
+function nextAIPicker(state: SushiGoState): PlayerId | null {
+  for (const p of state.players) {
+    if (p.pendingPick !== null) continue;
+    const seat = state.seats.find((s) => s.id === p.id);
+    if (seat?.isAI) return p.id;
+  }
+  return null;
+}
+
+/** Park activePlayerId on whichever AI seat hasn't picked yet this tick, so the
+ *  GameHost AI driver can dispatch a submitPick for them. Null = no AI waiting,
+ *  which (for simultaneous-pick games) means humans + the AI driver are quiet. */
+function setActiveAIIfAny(state: SushiGoState): void {
+  state.activePlayerId = nextAIPicker(state);
+}
+
 /** Begin a new round: shuffle deck (or re-use leftover), deal, reset tables. */
 function startRound(state: SushiGoState, roundNumber: number): void {
   state.round = roundNumber;
@@ -63,8 +80,8 @@ function startRound(state: SushiGoState, roundNumber: number): void {
   }
   dealHands(state);
   state.subPhase = 'selecting';
-  state.activePlayerId = null;
   state.lastRoundSummary = null;
+  setActiveAIIfAny(state);
 }
 
 /** Validate that the cards in `cardIds` are all in the player's hand and that
@@ -222,12 +239,18 @@ function revealAndAdvance(state: SushiGoState): void {
     pushLog(state, { kind: 'roundEnd' });
     harvestDesserts(state);
     state.subPhase = 'roundEnd';
+    // Park activePlayerId on an AI seat (if any) so the GameHost AI driver
+    // can dispatch 'nextRound' automatically in all-AI matches. Same logic as
+    // 7W's militaryEnd handling.
+    const allAI = state.seats.length > 0 && state.seats.every((s) => s.isAI);
+    state.activePlayerId = allAI ? (state.seats[0]?.id ?? null) : null;
     return;
   }
 
   // Otherwise rotate hands and continue.
   rotateHands(state);
   state.subPhase = 'selecting';
+  setActiveAIIfAny(state);
 }
 
 export function applyAction(state: SushiGoState, action: SushiGoAction): SushiGoState {
@@ -246,6 +269,10 @@ export function applyAction(state: SushiGoState, action: SushiGoAction): SushiGo
 
       if (allPlayersSubmitted(s)) {
         revealAndAdvance(s);
+      } else {
+        // Re-park activePlayerId on the next AI seat so the driver keeps ticking
+        // remaining AI seats in this round.
+        setActiveAIIfAny(s);
       }
       return s;
     }

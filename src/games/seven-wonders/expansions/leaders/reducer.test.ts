@@ -106,6 +106,19 @@ describe('leaders expansion — reducer', () => {
     expect(s.finalScoringBreakdown).not.toBeNull();
   }, 30000);
 
+  it('base chooseAIAction handles leader subphases (no manual expansion fallback needed)', () => {
+    // Regression: GameHost calls the module's chooseAIAction = base AI only.
+    // The base AI must dispatch into the Leaders expansion during leaderDraft.
+    let s = makeState(3, 77);
+    expect(s.subPhase).toBe('leaderDraft');
+    for (const p of s.players) {
+      const action = baseAI(s, p.id);
+      expect(action, `base AI returned null for ${p.id} during leaderDraft`).not.toBeNull();
+      expect(action!.type).toBe('submitLeaderDraft');
+      s = applyAction(s, action!);
+    }
+  });
+
   it('match WITHOUT leaders works (backward-compat)', () => {
     let s = sevenWondersModule.createInitialState(
       { expansions: [], wonderAssignment: 'random', wonderSide: 'A' },
