@@ -1,0 +1,334 @@
+/* 7 Wonders Duel — scoped styles. */
+
+.swd-game {
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
+  grid-template-columns: 1fr 240px;
+  gap: 8px;
+  padding: 8px;
+  height: 100%;
+  min-height: 480px;
+}
+
+.swd-opp-strip,
+.swd-self-strip {
+  grid-column: 1 / 2;
+  background: var(--bg-card, #1a1a1a);
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  padding: 8px;
+}
+
+.swd-opp-strip h4,
+.swd-self-strip h4 {
+  font-size: 14px;
+  margin: 0 0 4px;
+}
+
+.swd-stat-row {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--fg-muted, #999);
+  margin-bottom: 4px;
+}
+
+.swd-military {
+  grid-column: 1 / 3;
+  background: var(--bg-card, #1a1a1a);
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.swd-track-row {
+  display: flex;
+  gap: 2px;
+  justify-content: center;
+}
+
+.swd-track-cell {
+  width: 22px;
+  height: 22px;
+  border: 1px solid #555;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  background: #2a2a2a;
+}
+
+.swd-track-cell.threshold {
+  background: #4a3a18;
+  border-color: #7a5a28;
+}
+
+.swd-track-cell.pawn {
+  background: #b73c3c !important;
+  color: #fff;
+  font-weight: bold;
+}
+
+.swd-track-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--fg-muted, #999);
+  margin-top: 4px;
+}
+
+.swd-center {
+  grid-column: 1 / 2;
+  grid-row: 3 / 4;
+  background: var(--bg-card, #1a1a1a);
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  padding: 12px;
+  overflow-y: auto;
+}
+
+.swd-offer-strip {
+  grid-column: 2 / 3;
+  grid-row: 1 / 4;
+  background: var(--bg-card, #1a1a1a);
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+}
+
+.swd-offer-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 4px;
+  padding: 6px;
+}
+
+/* Pyramid */
+.swd-pyramid-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.swd-pyramid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
+}
+
+.swd-pyramid-row {
+  display: flex;
+  gap: 4px;
+}
+
+.swd-pyramid-slot {
+  width: 60px;
+  height: 80px;
+  border: 1px solid #555;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  text-align: center;
+  padding: 2px;
+  color: #1c1410;
+  font-weight: 600;
+  cursor: default;
+  transition: transform 0.1s, box-shadow 0.1s;
+}
+
+.swd-pyramid-slot.facedown {
+  background: #2a3245;
+  color: #88a;
+  font-size: 18px;
+}
+
+.swd-pyramid-slot.taken {
+  visibility: hidden;
+}
+
+.swd-pyramid-slot.available.faceup {
+  cursor: pointer;
+  box-shadow: 0 0 0 2px gold;
+}
+
+.swd-pyramid-slot.available.faceup:hover {
+  transform: translateY(-2px);
+}
+
+.swd-pyramid-slot.selected {
+  box-shadow: 0 0 0 3px #5cc1ff;
+}
+
+/* Tableau */
+.swd-tableau {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.swd-tab-card {
+  width: 50px;
+  height: 28px;
+  border-radius: 3px;
+  font-size: 9px;
+  color: #1c1410;
+  font-weight: 600;
+  padding: 2px 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.swd-mini-card {
+  width: 14px;
+  height: 20px;
+  border-radius: 2px;
+  display: inline-block;
+  border: 1px solid #1c1410;
+}
+
+/* Card actions panel */
+.swd-card-actions {
+  background: #2a2a2a;
+  border: 1px solid #4a4a4a;
+  border-radius: 6px;
+  padding: 10px;
+  margin-top: 10px;
+}
+
+.swd-card-actions-title {
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+
+.swd-card-actions-info {
+  margin-bottom: 8px;
+}
+
+.swd-card-actions-buttons {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.swd-card-actions-buttons button {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid #555;
+  background: #3a3a3a;
+  color: #ddd;
+  cursor: pointer;
+}
+
+.swd-card-actions-buttons button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Wonder draft + construct */
+.swd-wonder-grid,
+.swd-progress-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.swd-wonder-card,
+.swd-progress-card {
+  background: #2a2a2a;
+  border: 1px solid #4a4a4a;
+  border-radius: 6px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.swd-wonder-card.pickable,
+.swd-progress-card.pickable {
+  cursor: pointer;
+  transition: transform 0.1s, box-shadow 0.1s;
+}
+
+.swd-wonder-card.pickable:hover,
+.swd-progress-card.pickable:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 0 0 2px gold;
+}
+
+.swd-wonder-card.locked,
+.swd-progress-card.locked {
+  opacity: 0.5;
+}
+
+.swd-wonder-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.swd-wonder-cost,
+.swd-wonder-desc {
+  font-size: 11px;
+  color: var(--fg-muted, #999);
+}
+
+/* Chips */
+.swd-wonder-chip,
+.swd-prog-chip {
+  display: inline-block;
+  padding: 2px 6px;
+  font-size: 11px;
+  border-radius: 3px;
+  background: #382318;
+  border: 1px solid #4a3a2e;
+  color: #e0c98a;
+}
+
+.swd-wonder-chip.built {
+  background: #4a3a18;
+}
+
+/* Game over */
+.swd-game-over {
+  padding: 20px;
+  text-align: center;
+}
+
+.swd-score-table {
+  margin: 12px auto;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.swd-score-table th,
+.swd-score-table td {
+  padding: 4px 8px;
+  border: 1px solid #444;
+}
+
+.swd-score-table th {
+  background: #2a2a2a;
+}
+
+/* Panels */
+.swd-panel h3 {
+  margin: 0 0 8px;
+}
+
+/* Lobby */
+.swd-lobby {
+  padding: 8px;
+}

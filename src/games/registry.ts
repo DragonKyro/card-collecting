@@ -7,12 +7,14 @@ import type { AnyGameModule } from '@/core/module';
 import { sushiGoModule } from './sushi-go/module';
 import { seaSaltPaperModule } from './sea-salt-paper/module';
 import { sevenWondersModule } from './seven-wonders/module';
+import { sevenWondersDuelModule } from './seven-wonders-duel/module';
 import { airLandSeaModule } from './air-land-sea/module';
 
 export const GAMES: AnyGameModule[] = [
   sushiGoModule as unknown as AnyGameModule,
   seaSaltPaperModule as unknown as AnyGameModule,
   sevenWondersModule as unknown as AnyGameModule,
+  sevenWondersDuelModule as unknown as AnyGameModule,
   airLandSeaModule as unknown as AnyGameModule,
 ];
 

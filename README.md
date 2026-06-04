@@ -5,8 +5,8 @@ A multi-game web app for **card-collecting games** where the objective is to max
 Shipping targets:
 - **Sushi Go! Party** (incl. menu builder, not just the base set)
 - **Sea Salt & Paper**
-- **7 Wonders** (with expansion hooks: Leaders, Cities, Babel, Armada, Edifice)
-- **7 Wonders Duel** (planned — standalone 2-player variant; separate game module)
+- **7 Wonders** (with all 5 expansions: Leaders, Cities, Babel, Armada, Edifice)
+- **7 Wonders Duel** (standalone 2-player variant — pyramid draft + three supremacy paths)
 - **Air, Land & Sea**
 - More to follow.
 
@@ -89,6 +89,6 @@ npm run test:run    # vitest single run
   - [x] *Edifice* — 3 central project tiles (one per age) drawn from a pool of 8 at match setup. A player contributes to age N's project by building any wonder stage during that age. At endgame, projects whose threshold of contributors is met reward each contributor and penalize each non-contributor. Outcomes (VP, shields, science, coins, debt tokens) are surfaced as an "edifice" column in final scoring.
 - [x] **Phase 8** — Air, Land & Sea (2-player; 3-theater battles; Deploy / Improvise (face-down) / Withdraw; instant + ongoing abilities; best-to-12 across rotating battles). Spies, Lies, & Supplies expansion scaffolded — its 3 new theaters (Intel/Diplo/Econ) and 18 cards are playable with raw strengths; per-card abilities are placeholder no-ops pending authoritative rulebook text. Epic Mode (5 theaters, 9-card hands) wired through the lobby toggle.
 - [ ] **Phase 9** — Additional games as desired.
-  - [ ] *7 Wonders Duel* — standalone 2-player variant. Separate game module under `src/games/seven-wonders-duel/`; shares zero state with the base 7 Wonders module. Different draft (revealed-card pyramid instead of pass-hands), 12 unique wonders, 3 Progress Tokens, single-line military track with two-sided markers, Science Supremacy / Military Supremacy / Civilian Victory.
+  - [x] *7 Wonders Duel* — standalone 2-player variant. Separate game module under `src/games/seven-wonders-duel/`; shares zero state with the base 7 Wonders module. Pyramid draft (face-up + face-down rows of cards, "available when uncovered"), 12 unique wonders (8 drafted per match, 4 each), 5 of 10 Progress Tokens (claimed by matching a 2nd science symbol), single-line two-sided military track. Three victory conditions: Civilian Victory (most VP at endgame), Military Supremacy (pawn at ±9), Science Supremacy (6 different science symbols). Effects modeled v1; the wonder-only "extra turn" and "pick from discard" mechanics are stubbed pending follow-up.
 
 Game-specific design notes live in each game's `types.ts` and in [CLAUDE.md](CLAUDE.md).
