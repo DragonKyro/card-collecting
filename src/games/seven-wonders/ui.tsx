@@ -19,7 +19,7 @@ import './seven-wonders.css';
 const ALL_EXPANSIONS: Array<{ id: SwExpansionId; label: string; desc: string; implemented: boolean }> = [
   { id: 'leaders', label: 'Leaders', desc: 'Pick-and-pass draft of 4 leaders, then play one before each Age. All 36 leaders modeled.', implemented: true },
   { id: 'cities', label: 'Cities', desc: 'Adds ~9 black cards per age: diplomacy + debt mechanics. Per-card abilities are best-effort modeled; some are placeholder no-ops pending authoritative rulebook text.', implemented: true },
-  { id: 'babel', label: 'Babel', desc: 'Tower of Babel — central board with shared & great projects.', implemented: false },
+  { id: 'babel', label: 'Babel', desc: 'Adds 5 orange cards per age + 3 Babel-themed scoring rules. Central Tower of Babel / Great Projects boards NOT modeled in v1.', implemented: true },
   { id: 'armada', label: 'Armada', desc: 'Naval fleet boards + island cards. Adds 4th end-of-age track.', implemented: false },
   { id: 'edifice', label: 'Edifice', desc: 'Cooperative project tiles that everyone contributes to.', implemented: false },
 ];
@@ -751,6 +751,7 @@ function cardColorHex(c: SwCard['color']): string {
     case 'purple': return '#8d6cc0';
     case 'leader': return '#d8c598';
     case 'black': return '#2b2b2b';
+    case 'orange': return '#d97a2e';
   }
 }
 

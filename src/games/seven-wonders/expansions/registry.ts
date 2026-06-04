@@ -7,12 +7,14 @@ import type { SwConfig, SwExpansionId } from '../types';
 import type { SwExpansion } from './types';
 import { leadersExpansion } from './leaders';
 import { citiesExpansion } from './cities';
+import { babelExpansion } from './babel';
 
 /** All known expansions, in canonical order (also affects modifier stacking). */
 const ALL_EXPANSIONS: readonly SwExpansion[] = [
   leadersExpansion,
   citiesExpansion,
-  // babel, armada, edifice — added as each is implemented.
+  babelExpansion,
+  // armada, edifice — added as each is implemented.
 ];
 
 /** Look up an expansion by id. */

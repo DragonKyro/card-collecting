@@ -26,7 +26,8 @@ export type SwCardColor =
   | 'green'    // science (compass/gear/tablet)
   | 'purple'   // guild (Age III only)
   | 'leader'   // expansion: Leaders
-  | 'black';   // expansion: Cities
+  | 'black'    // expansion: Cities
+  | 'orange';  // expansion: Babel
 
 // ---------- Resources ----------
 
@@ -128,6 +129,15 @@ export type SwCardEffect =
         | { type: 'completeAllColorsSet'; vpPerSet: number }      // "1 per color" set bonus
         | { type: 'coinsPerDebtTotal' }                            // coin reward proportional to total debt
         | { type: 'vpPerDebtTotal'; vpPer: number }                // VP per N debt tokens across all players
+      }
+
+  // ---------- Babel-owned effect kinds ----------
+  // BABEL: end-game scoring extra (kinds not covered by base endVp).
+  | { kind: 'babelScoreExtra';
+      rule:
+        | { type: 'vpPerScienceSet'; vpPerSet: number }            // +V per {compass,gear,tablet} set including leader symbols
+        | { type: 'vpPerNeighborCards'; color: SwCardColor; vpPer: number } // +V per matching card across BOTH neighbors
+        | { type: 'vpPerOwnColors'; colors: readonly SwCardColor[]; vpPer: number } // +V per matching card across listed colors in own tableau
       }
   ;
 
