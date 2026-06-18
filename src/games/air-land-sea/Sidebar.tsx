@@ -1,6 +1,6 @@
 // Right-side panel: tabbed Cheatsheet / History / Chat for Air, Land & Sea.
 
-import { useEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { create } from 'zustand';
 import type { AlsState, AlsLogEntry, AlsCardTemplate } from './types';
 import { THEATER_DEFS } from './cards';
@@ -18,21 +18,15 @@ export const useAlsChat = create<ChatStore>((set) => ({
   clear: () => set({ msgs: [] }),
 }));
 
-type Tab = 'cheat' | 'log' | 'chat';
-
 export function Sidebar({ state, mySeatName }: { state: AlsState; mySeatName: string }) {
-  const [tab, setTab] = useState<Tab>('cheat');
+  void Cheatsheet;
   return (
     <div className="als-sidebar">
       <div className="als-sidebar-tabs">
-        <button className={tab === 'cheat' ? 'active' : ''} onClick={() => setTab('cheat')}>Cards</button>
-        <button className={tab === 'log' ? 'active' : ''} onClick={() => setTab('log')}>History</button>
-        <button className={tab === 'chat' ? 'active' : ''} onClick={() => setTab('chat')}>Chat</button>
+        <button className="active" disabled>History &amp; Chat</button>
       </div>
       <div className="als-sidebar-body">
-        {tab === 'cheat' && <Cheatsheet state={state} />}
-        {tab === 'log' && <History state={state} />}
-        {tab === 'chat' && <Chat mySeatName={mySeatName} />}
+        <Feed state={state} mySeatName={mySeatName} />
       </div>
     </div>
   );
@@ -78,93 +72,42 @@ function Cheatsheet({ state }: { state: AlsState }) {
   );
 }
 
-function History({ state }: { state: AlsState }) {
+function Feed({ state, mySeatName }: { state: AlsState; mySeatName: string }) {
   const log = state.log ?? [];
-  if (log.length === 0) return <p style={{ color: 'var(--fg-muted)' }}>No moves yet.</p>;
-  return (
-    <div className="als-log">
-      {log.map((e) => (
-        <LogLine key={e.seq} entry={e} state={state} />
-      ))}
-    </div>
-  );
-}
-
-function LogLine({ entry, state }: { entry: AlsLogEntry; state: AlsState }) {
-  const name = (id: PlayerId | null) => (id ? (state.seats.find((s) => s.id === id)?.name ?? id) : 'System');
-  const cardName = (id: number) => state.deckPool[id]?.name ?? `card${id}`;
-  let cls = 'als-log-entry';
-  let body: React.ReactNode = null;
-  switch (entry.kind) {
-    case 'deploy':
-      body = (<><span className="who">{name(entry.playerId)}</span> deployed <strong>{cardName(entry.cardId)}</strong>.</>);
-      break;
-    case 'improvise':
-      body = (<><span className="who">{name(entry.playerId)}</span> played a face-down card.</>);
-      break;
-    case 'withdraw':
-      cls += ' system';
-      body = (<><span className="who">{name(entry.playerId)}</span> withdrew with {entry.cardsLeftInHand} card{entry.cardsLeftInHand === 1 ? '' : 's'} left.</>);
-      break;
-    case 'flip':
-      body = (<><span className="who">{name(entry.playerId)}</span> flipped <strong>{cardName(entry.cardId)}</strong> {entry.now}.</>);
-      break;
-    case 'transport':
-      body = (<><span className="who">{name(entry.playerId)}</span> transported <strong>{cardName(entry.cardId)}</strong>.</>);
-      break;
-    case 'redeploy':
-      body = (<><span className="who">{name(entry.playerId)}</span> redeployed (returned face-down card to hand).</>);
-      break;
-    case 'reinforce':
-      body = entry.theaterIdx === null
-        ? (<><span className="who">{name(entry.playerId)}</span> reinforced — declined to place.</>)
-        : (<><span className="who">{name(entry.playerId)}</span> reinforced face-down.</>);
-      break;
-    case 'containment':
-      cls += ' system';
-      body = (<><span className="who">Containment</span> discarded a face-down play.</>);
-      break;
-    case 'blockade':
-      cls += ' system';
-      body = (<><span className="who">Blockade</span> discarded a newly-played card.</>);
-      break;
-    case 'supplyTokenPlaced':
-      body = (<><span className="who">{name(entry.playerId)}</span> placed a supply token.</>);
-      break;
-    case 'battleEnd':
-      cls += ' system';
-      body = (<><span className="who">Battle {entry.battle} ended</span> — {entry.result.endedBy === 'withdraw' ? 'withdraw' : 'full play'}; winner gains {entry.result.vpAwardedToWinner} VP.</>);
-      break;
-    case 'matchEnd':
-      cls += ' system match-end';
-      body = (<><span className="who">Match over</span>.</>);
-      break;
-  }
-  return <div className={cls}>{body}</div>;
-}
-
-function Chat({ mySeatName }: { mySeatName: string }) {
   const msgs = useAlsChat((s) => s.msgs);
   const add = useAlsChat((s) => s.add);
   const [text, setText] = useState('');
   const threadRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (threadRef.current) threadRef.current.scrollTop = threadRef.current.scrollHeight;
-  }, [msgs.length]);
+  type FeedItem =
+    | { kind: 'log'; key: string; sortKey: number; entry: AlsLogEntry }
+    | { kind: 'chat'; key: string; sortKey: number; msg: typeof msgs[number] };
+  const items: FeedItem[] = [
+    ...log.map((e) => ({ kind: 'log' as const, key: `l-${e.seq}`, sortKey: e.seq * 10, entry: e })),
+    ...msgs.map((m) => ({ kind: 'chat' as const, key: `c-${m.id}`, sortKey: m.at * 10 + 1, msg: m })),
+  ].sort((a, b) => a.sortKey - b.sortKey);
+  useLayoutEffect(() => {
+    const el = threadRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [items.length, log.length, msgs.length]);
   function send() {
     const t = text.trim();
     if (!t) return;
-    add({ who: mySeatName || 'You', text: t, at: msgs.length });
+    add({ who: mySeatName || 'You', text: t, at: log.length + msgs.length });
     setText('');
   }
   return (
-    <div>
-      <div className="als-chat-thread" ref={threadRef}>
-        {msgs.length === 0 && <p style={{ color: 'var(--fg-muted)' }}>No messages yet.</p>}
-        {msgs.map((m) => (
-          <div key={m.id} className="als-chat-msg">
-            <span className="who">{m.who}:</span> {m.text}
-          </div>
+    <div className="als-feed">
+      <div className="als-feed-thread" ref={threadRef}>
+        {items.length === 0 && (
+          <p style={{ color: 'var(--fg-muted)' }}>No moves yet — chat or play to fill this feed.</p>
+        )}
+        {items.map((it) => (
+          it.kind === 'log'
+            ? <LogLine key={it.key} entry={it.entry} state={state} />
+            : <div key={it.key} className="als-chat-msg">
+                <span className="who">{it.msg.who}:</span> {it.msg.text}
+              </div>
         ))}
       </div>
       <div className="als-chat-input">
@@ -179,3 +122,61 @@ function Chat({ mySeatName }: { mySeatName: string }) {
     </div>
   );
 }
+
+function LogLine({ entry, state }: { entry: AlsLogEntry; state: AlsState }) {
+  const name = (id: PlayerId | null) => {
+    if (!id) return <span className="who">System</span>;
+    const seat = state.seats.find((s) => s.id === id);
+    return <span className="who" style={{ color: seat?.color ?? undefined }}>{seat?.name ?? id}</span>;
+  };
+  const cardName = (id: number) => state.deckPool[id]?.name ?? `card${id}`;
+  let cls = 'als-log-entry';
+  let body: React.ReactNode = null;
+  switch (entry.kind) {
+    case 'deploy':
+      body = (<>{name(entry.playerId)} deployed <strong>{cardName(entry.cardId)}</strong>.</>);
+      break;
+    case 'improvise':
+      body = (<>{name(entry.playerId)} played a face-down card.</>);
+      break;
+    case 'withdraw':
+      cls += ' system';
+      body = (<>{name(entry.playerId)} withdrew with {entry.cardsLeftInHand} card{entry.cardsLeftInHand === 1 ? '' : 's'} left.</>);
+      break;
+    case 'flip':
+      body = (<>{name(entry.playerId)} flipped <strong>{cardName(entry.cardId)}</strong> {entry.now}.</>);
+      break;
+    case 'transport':
+      body = (<>{name(entry.playerId)} transported <strong>{cardName(entry.cardId)}</strong>.</>);
+      break;
+    case 'redeploy':
+      body = (<>{name(entry.playerId)} redeployed (returned face-down card to hand).</>);
+      break;
+    case 'reinforce':
+      body = entry.theaterIdx === null
+        ? (<>{name(entry.playerId)} reinforced — declined to place.</>)
+        : (<>{name(entry.playerId)} reinforced face-down.</>);
+      break;
+    case 'containment':
+      cls += ' system';
+      body = (<><span className="who">Containment</span> discarded a face-down play.</>);
+      break;
+    case 'blockade':
+      cls += ' system';
+      body = (<><span className="who">Blockade</span> discarded a newly-played card.</>);
+      break;
+    case 'supplyTokenPlaced':
+      body = (<>{name(entry.playerId)} placed a supply token.</>);
+      break;
+    case 'battleEnd':
+      cls += ' system';
+      body = (<><span className="who">Battle {entry.battle} ended</span> — {entry.result.endedBy === 'withdraw' ? 'withdraw' : 'full play'}; winner gains {entry.result.vpAwardedToWinner} VP.</>);
+      break;
+    case 'matchEnd':
+      cls += ' system match-end';
+      body = (<><span className="who">Match over</span>.</>);
+      break;
+  }
+  return <div className={cls}>{body}</div>;
+}
+

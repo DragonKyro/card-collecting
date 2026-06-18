@@ -33,38 +33,41 @@ import type {
   SspState, SspAction, SspCard, SspPlayer, SspEventId,
   SspRoundSummary, SspPlayerRoundScore, SspLogEntry,
 } from './types';
-import { buildShuffledDeck, isMultiplierFamily } from './cards';
+import { buildShuffledDeck, isMultiplierFamily, isCollectorFamily } from './cards';
 import {
-  allCards, cardPoints, isValidDuoPair, isValidStarfishTrio,
-  mermaidColorBonus, tentativeScore,
+  allCards, isValidDuoPair, isValidStarfishTrio, tentativeScore, totalScore,
 } from './scoring';
 import {
-  currentEvent, isRoundEvent, playerHasEvent,
+  EVENT_BY_ID, currentEvent, eventAppliesTo,
 } from './events';
 
 const STOP_THRESHOLD = 7;
-const STOP_THRESHOLD_EARLY = 5;  // when player holds stopAtFive event
+const STOP_THRESHOLD_TREASURE = 10;  // when Treasure Chest applies
 
-/** Per-player STOP/LAST-CHANCE threshold, reduced by `stopAtFive` if held. */
+/** Per-player STOP/LAST-CHANCE threshold, raised to 10 if Treasure Chest is in
+ *  force (round event) or held by the player. */
 function stopThresholdFor(state: SspState, p: SspPlayer): number {
-  if (playerHasEvent(p, 'stopAtFive')) return STOP_THRESHOLD_EARLY;
-  void state;
+  if (eventAppliesTo(state, p, 'treasureChest')) return STOP_THRESHOLD_TREASURE;
   return STOP_THRESHOLD;
 }
 
-/** Mermaid-win threshold for a player, reduced to 3 if they hold `threeMermaids`. */
-function mermaidWinCountFor(p: SspPlayer): number {
-  return playerHasEvent(p, 'threeMermaids') ? 3 : 4;
+/** Mermaid-win threshold for a player. Reduced to 3 when Dance of the Mermaids
+ *  is in force (round event) or held by the player. */
+function mermaidWinCountFor(state: SspState, p: SspPlayer): number {
+  return eventAppliesTo(state, p, 'danceOfMermaids') ? 3 : 4;
 }
 
-/** Build the per-player scoring opts (trios, pepper-burn) used by total/card points. */
+/** Build the per-player scoring opts (trios + event scoring overrides). */
 function scoringOptsFor(state: SspState, p: SspPlayer) {
   const trioCancelledIds = new Set<number>();
   for (const trio of p.trios ?? []) for (const id of trio) trioCancelledIds.add(id);
   return {
     trioCancelledIds,
     trios: p.trios?.length ?? 0,
-    doubleColorBonus: isRoundEvent(state, 'calmWaters'),
+    // Per-event scoring overrides (applied in scoring.cardPoints / totalScore):
+    shellPerCard: eventAppliesTo(state, p, 'danceOfShells'),     // each shell = 2 pts, no set
+    octopusPerCard: eventAppliesTo(state, p, 'kraken'),          // each octopus = 1 pt, no set
+    mermaidsScoreZero: eventAppliesTo(state, p, 'tornado'),      // mermaids contribute 0 pts
   };
 }
 
@@ -108,44 +111,48 @@ function checkMermaidWin(state: SspState): PlayerId | null {
   for (const p of state.players) {
     const mermaids = p.table.filter((c) => c.family === 'mermaid').length
       + p.hand.filter((c) => c.family === 'mermaid').length;
-    if (mermaids >= mermaidWinCountFor(p)) return p.id;
+    if (mermaids >= mermaidWinCountFor(state, p)) return p.id;
   }
   return null;
 }
 
 function scoreRound(state: SspState, summaryKind: SspRoundSummary['endedBy'], endedBy: PlayerId | null): SspRoundSummary {
   let lastChanceWon: boolean | null = null;
-  const calm = isRoundEvent(state, 'calmWaters');
 
   // Compute baseline scores. Per-player scoring opts pull in starfish trios
-  // and the Calm Waters event modifier.
+  // and any active event-driven scoring overrides (Dance of Shells, Kraken,
+  // Tornado). LAST CHANCE: every player gets at least one largest-color-group
+  // claim regardless of mermaid count.
+  //
+  // Display split:
+  //   cardPoints column = duo/collector/multiplier/trio scoring + mermaid claims
+  //   colorBonus column = number of WHITE cards held (== mermaid count)
+  // The two together equal the round's total points.
+  const isLastChance = summaryKind === 'lastChance';
   const baseScores = state.players.map((p) => {
     const cards = allCards(p.hand, p.table);
-    const opts = scoringOptsFor(state, p);
-    const cp = cardPoints(cards, opts);
-    let cb = mermaidColorBonus(cards);
-    if (calm) cb *= 2;
-    // Pepper Burn: -2 pts if held.
-    let pepperBurn = 0;
-    if (playerHasEvent(p, 'pepperBurn')) pepperBurn = -2;
-    return { p, cardPoints: cp + pepperBurn, colorBonus: cb };
+    const opts = { ...scoringOptsFor(state, p), lastChanceColorBonus: isLastChance };
+    const breakdown = totalScore(cards, opts);
+    return { p, cardPoints: breakdown.cardPoints, colorBonus: breakdown.colorBonus };
   });
 
   let forfeitCallerId: PlayerId | null = null;
   if (summaryKind === 'lastChance' && endedBy) {
     const caller = baseScores.find((s) => s.p.id === endedBy)!;
     const others = baseScores.filter((s) => s.p.id !== endedBy);
-    const callerCardTotal = caller.cardPoints;
-    const opponentMaxCardTotal = others.length
+    // Rulebook: the LAST CHANCE bet compares CARD POINTS only (including
+    // mermaid claims). The special color bonus is independent — every player
+    // earns it on LAST CHANCE regardless of who wins the bet.
+    // Ties go to the caller (caller wins if their card total >= every
+    // opponent's card total).
+    const callerCards = caller.cardPoints;
+    const opponentMaxCards = others.length
       ? Math.max(...others.map((s) => s.cardPoints))
       : 0;
-    if (callerCardTotal >= opponentMaxCardTotal) {
-      // Bet won: caller gets cards + bonus, opponents only get color bonus.
+    if (callerCards >= opponentMaxCards) {
       lastChanceWon = true;
       forfeitCallerId = null;
-      // we'll mark opponents as cards-forfeit below
     } else {
-      // Bet lost: caller forfeits cards (color bonus only). Opponents score normally.
       lastChanceWon = false;
       forfeitCallerId = endedBy;
     }
@@ -153,8 +160,10 @@ function scoreRound(state: SspState, summaryKind: SspRoundSummary['endedBy'], en
 
   const perPlayer: SspPlayerRoundScore[] = baseScores.map(({ p, cardPoints: cp, colorBonus: cb }) => {
     let forfeitCards = false;
+    let forfeitBonus = false;
     let total: number;
     if (summaryKind === 'lastChance' && endedBy) {
+      // LAST CHANCE: bonus column always counts (both bet winner and loser).
       if (lastChanceWon) {
         if (p.id === endedBy) {
           total = cp + cb;
@@ -171,7 +180,11 @@ function scoreRound(state: SspState, summaryKind: SspRoundSummary['endedBy'], en
         }
       }
     } else {
-      total = cp + cb;
+      // STOP / deck-empty / mermaid-win: the special color bonus is shown for
+      // reference (so the player can see what they would have got) but does
+      // NOT contribute to the round total.
+      forfeitBonus = true;
+      total = cp;
     }
     return {
       playerId: p.id,
@@ -179,6 +192,7 @@ function scoreRound(state: SspState, summaryKind: SspRoundSummary['endedBy'], en
       colorBonus: cb,
       total,
       forfeitCards,
+      forfeitBonus,
     };
   });
 
@@ -203,6 +217,8 @@ function endRound(state: SspState, endedBy: SspRoundSummary['endedBy'], endedByP
   const summary = scoreRound(state, endedBy, endedByPlayerId);
   commitRoundScores(state, summary);
   state.lastRoundSummary = summary;
+  if (!state.roundHistory) state.roundHistory = [];
+  state.roundHistory.push(summary);
   state.subPhase = 'roundEnd';
   state.lastChanceFrom = null;
   state.lastChanceRemaining = [];
@@ -219,17 +235,10 @@ function endRound(state: SspState, endedBy: SspRoundSummary['endedBy'], endedByP
 /** At round end (after scoring), award the current event card:
  *   - '+'      → goes to the leader (highest matchScore; ties → seat order)
  *   - '-'      → goes to the laggard (lowest matchScore; ties → seat order)
- *   - 'global' → discarded (already applied to all this round)
  *  A player can only hold one event at a time — older one is dropped if so. */
 function awardEventCard(state: SspState): void {
   const event = currentEvent(state);
   if (!state.event || !event) return;
-  if (event.sign === 'global') {
-    // Global events apply only for their reveal round, then are discarded.
-    pushLog(state, { kind: 'eventAwarded', eventId: event.id, playerId: null });
-    state.event.current = null;
-    return;
-  }
   // Find leader / laggard. With ties, take the first in seat order.
   const sortedDesc = [...state.players].sort((a, b) => b.matchScore - a.matchScore);
   const sortedAsc = [...state.players].sort((a, b) => a.matchScore - b.matchScore);
@@ -300,24 +309,15 @@ function reconcileHeldEvents(state: SspState): void {
   for (const p of state.players) {
     if (!p.heldEvents) continue;
     p.heldEvents = p.heldEvents.filter((id) => {
-      const card = (state.event && id) ? id : null;
-      void card;
       const sign = lookupEventSign(id);
       if (sign === '+') return p.id === leaderId;
-      if (sign === '-') return p.id === laggardId;
-      return true;
+      return p.id === laggardId;
     });
   }
 }
 
-function lookupEventSign(id: SspEventId): '+' | '-' | 'global' {
-  // Avoid importing EVENT_BY_ID twice across files; we already imported
-  // currentEvent which doesn't expose by-id. Pull via dynamic require avoided.
-  const map: Record<SspEventId, '+' | '-' | 'global'> = {
-    threeMermaids: '+', stopAtFive: '+', angelfish: 'global',
-    stormySeas: '-', calmWaters: 'global', pepperBurn: '-',
-  };
-  return map[id];
+function lookupEventSign(id: SspEventId): '+' | '-' {
+  return EVENT_BY_ID[id].sign;
 }
 
 function gameOverIfReached(state: SspState): void {
@@ -382,8 +382,14 @@ function applyDuoEffect(state: SspState, p: SspPlayer, family: DuoFamily, other:
     return;
   }
   if (family === 'fish' || other === 'fish') {
-    const c = popDeck(state);
-    if (c) p.hand.push(c);
+    // The Sunfish (Pepper): fish pairs draw 2 instead of 1.
+    const drawCount = eventAppliesTo(state, p, 'sunfish') ? 2 : 1;
+    for (let i = 0; i < drawCount; i++) {
+      const c = popDeck(state);
+      if (!c) break;
+      p.hand.push(c);
+      pushLog(state, { kind: 'fishDraw', playerId: p.id, family: c.family });
+    }
     state.subPhase = 'awaitingPlayOrEnd';
     return;
   }
@@ -403,7 +409,23 @@ function applyDuoEffect(state: SspState, p: SspPlayer, family: DuoFamily, other:
     return;
   }
   if (family === 'crab' || other === 'crab') {
-    // If both discard piles are empty, crab's effect can't be used.
+    // The Hermit Crab (Pepper): crab pair takes ONE card from EACH discard
+    // pile (auto, no choice — the rulebook doesn't say "pick from anywhere",
+    // it says "one card from each pile"). With base rules: pick one card
+    // from EITHER pile via the awaitingCrabPick subphase.
+    if (eventAppliesTo(state, p, 'hermitCrab')) {
+      for (const pileIdx of [0, 1] as const) {
+        const pile = state.discards[pileIdx];
+        if (pile.length === 0) continue;
+        // Take the TOP of each pile (deterministic, no UI choice needed).
+        const taken = pile.pop()!;
+        p.hand.push(taken);
+        pushLog(state, { kind: 'crabPick', playerId: p.id, pile: pileIdx, family: taken.family });
+      }
+      state.subPhase = 'awaitingPlayOrEnd';
+      return;
+    }
+    // Base crab: pick one card from any pile.
     if (state.discards[0].length === 0 && state.discards[1].length === 0) {
       state.subPhase = 'awaitingPlayOrEnd';
     } else {
@@ -424,28 +446,38 @@ function applyDuoEffect(state: SspState, p: SspPlayer, family: DuoFamily, other:
     return;
   }
   // shark + swimmer
-  if (otherPlayersHaveCards(state, p.id)) {
+  if (stealableTargetExists(state, p.id)) {
     state.subPhase = 'awaitingSharkSteal';
   } else {
     state.subPhase = 'awaitingPlayOrEnd';
   }
 }
 
-function otherPlayersHaveCards(state: SspState, exceptId: PlayerId): boolean {
-  return state.players.some((q) => q.id !== exceptId && q.hand.length > 0);
+/** True when at least one other player has cards AND is not the LAST CHANCE
+ *  caller (whose hand is protected by the bet). When false, the shark+swimmer
+ *  pair still scores 1 pt but its steal step is skipped. */
+function stealableTargetExists(state: SspState, exceptId: PlayerId): boolean {
+  return state.players.some((q) =>
+    q.id !== exceptId
+    && q.hand.length > 0
+    && state.lastChanceFrom !== q.id
+  );
 }
 
-/** If the Angelfish (Pepper) event is in force and both discard tops share a
- *  color, draw one card from the deck for free into `p`'s hand. */
+/** If the Angelfish (Pepper) event applies to `p` and both discard tops share
+ *  a color, the player takes one of those tops into their hand (per the
+ *  rulebook — pick one of the two visible discards). For simplicity we pick
+ *  the higher-value top, which gives the AI a deterministic choice.
+ *  Triggered at end of every turn (whether normal pass or via pair plays). */
 function maybeAngelfishDraw(state: SspState, p: SspPlayer): void {
-  if (!isRoundEvent(state, 'angelfish')) return;
+  if (!eventAppliesTo(state, p, 'angelfish')) return;
   const top0 = state.discards[0][state.discards[0].length - 1];
   const top1 = state.discards[1][state.discards[1].length - 1];
   if (!top0 || !top1 || top0.color !== top1.color) return;
-  const c = popDeck(state);
-  if (!c) return;
-  p.hand.push(c);
-  pushLog(state, { kind: 'angelfishDraw', playerId: p.id, family: c.family });
+  // Take the top of pile 0 by default (deterministic for AI / replay).
+  const taken = state.discards[0].pop()!;
+  p.hand.push(taken);
+  pushLog(state, { kind: 'angelfishDraw', playerId: p.id, family: taken.family });
 }
 
 export function applyAction(state: SspState, action: SspAction): SspState {
@@ -475,6 +507,13 @@ export function applyAction(state: SspState, action: SspAction): SspState {
       const p = requireActivePlayer(s);
       const keep = s.pendingDraw[action.keepIndex];
       const discard = s.pendingDraw[action.keepIndex === 0 ? 1 : 0];
+      // Rulebook: if one discard pile is empty, the un-kept card MUST go there
+      // (both piles must be seeded as soon as possible). If both are empty,
+      // either is legal; if both have at least 1 card, the player chooses.
+      const emptyPile = s.discards[0].length === 0 ? 0 : s.discards[1].length === 0 ? 1 : -1;
+      if (emptyPile !== -1 && s.discards[1 - emptyPile].length > 0 && action.discardToPile !== emptyPile) {
+        throw new Error('keepFromDraw: an empty discard pile must be filled first');
+      }
       p.hand.push(keep);
       s.discards[action.discardToPile].push(discard);
       s.pendingDraw = [];
@@ -485,6 +524,17 @@ export function applyAction(state: SspState, action: SspAction): SspState {
         discardedFamily: discard.family,
         toPile: action.discardToPile,
       });
+
+      // The Dolphins (Pepper): when a player discards a collector card
+      // (shell, octopus, penguin, sailor, seahorse), draw the top of the deck
+      // as a freebie. Triggered only on the discarded card, not the kept one.
+      if (eventAppliesTo(s, p, 'dolphins') && isCollectorFamily(discard.family)) {
+        const bonus = popDeck(s);
+        if (bonus) {
+          p.hand.push(bonus);
+          pushLog(s, { kind: 'fishDraw', playerId: p.id, family: bonus.family });
+        }
+      }
 
       const mm = checkMermaidWin(s);
       if (mm) {
@@ -632,6 +682,11 @@ export function applyAction(state: SspState, action: SspAction): SspState {
       const target = playerById(s, action.targetPlayerId);
       if (target.id === s.activePlayerId) throw new Error('sharkSteal: cannot target self');
       if (target.hand.length === 0) throw new Error('sharkSteal: target has empty hand');
+      // Rulebook: the player who called LAST CHANCE is protected from steals
+      // for the remainder of the round (their hand is locked-in for the bet).
+      if (s.lastChanceFrom === target.id) {
+        throw new Error('sharkSteal: target called LAST CHANCE and is protected');
+      }
       // Random steal per rulebook.
       const idx = rngInt(s.rngState, target.hand.length);
       const stolen = target.hand.splice(idx, 1)[0];
@@ -657,7 +712,12 @@ export function applyAction(state: SspState, action: SspAction): SspState {
     case 'stop': {
       if (s.subPhase !== 'awaitingPlayOrEnd') throw new Error('stop: wrong subPhase');
       if (isActiveLocked(s)) throw new Error('stop: locked by jellyfish');
+      // Rulebook: once LAST CHANCE has been called, the remaining players take
+      // their final turn but cannot themselves call STOP / LAST CHANCE.
+      if (s.lastChanceFrom !== null) throw new Error('stop: LAST CHANCE already called');
       const p = requireActivePlayer(s);
+      // The Diodon Fish (Pepper): may not call STOP, must use LAST CHANCE.
+      if (eventAppliesTo(s, p, 'diodonFish')) throw new Error('stop: blocked by Diodon Fish');
       const opts = scoringOptsFor(s, p);
       const score = tentativeScore(p.hand, p.table, opts);
       if (score < stopThresholdFor(s, p)) throw new Error('stop: below threshold');
@@ -669,8 +729,8 @@ export function applyAction(state: SspState, action: SspAction): SspState {
     case 'lastChance': {
       if (s.subPhase !== 'awaitingPlayOrEnd') throw new Error('lastChance: wrong subPhase');
       if (isActiveLocked(s)) throw new Error('lastChance: locked by jellyfish');
+      if (s.lastChanceFrom !== null) throw new Error('lastChance: already called this round');
       const p = requireActivePlayer(s);
-      if (playerHasEvent(p, 'stormySeas')) throw new Error('lastChance: blocked by Stormy Seas');
       const opts = scoringOptsFor(s, p);
       const score = tentativeScore(p.hand, p.table, opts);
       if (score < stopThresholdFor(s, p)) throw new Error('lastChance: below threshold');

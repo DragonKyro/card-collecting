@@ -2,7 +2,7 @@
 //
 // Each card kind belongs to one of 5 categories: nigiri (always 1), roll
 // (choose 1), appetizer (choose 3), special (choose 3), dessert (choose 1).
-// A complete menu has exactly 8 kinds: 1+1+3+3+1 = 8 (counting the nigiri set).
+// A complete menu has exactly 8 kinds: 1+1+3+2+1 = 8 (counting the nigiri set).
 //
 // Card counts per kind are fixed (from the published rulebook). Rolls, specials,
 // and most appetizers/desserts have a single count. Nigiri is a single kind with
@@ -29,7 +29,7 @@ export const DEFAULT_MENU: SushiGoCardKind[] = [
   'nigiri',
   'maki',
   'tempura', 'sashimi', 'dumpling',
-  'soySauce', 'wasabi', 'chopsticks',
+  'wasabi', 'chopsticks',
   'pudding',
 ];
 
@@ -38,7 +38,7 @@ export const CATEGORY_REQUIRED: Record<SushiGoCategory, number> = {
   nigiri: 1,
   roll: 1,
   appetizer: 3,
-  special: 3,
+  special: 2,
   dessert: 1,
 };
 

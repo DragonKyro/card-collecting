@@ -164,8 +164,10 @@ function buildWonderPick(state: SwState, p: SwPlayer, cardId: number): SwPending
 export function chooseAIAction(state: SwState, playerId: PlayerId): SwAction | null {
   if (state.phase !== 'playing') return null;
   if (state.subPhase === 'militaryEnd') {
-    // Only one player needs to advance, but the host driver only ticks the
-    // active player. We accept the continue from anyone.
+    // Pause for humans to read the military results; only auto-advance in
+    // all-AI matches.
+    const hasHuman = state.seats.some((s) => !s.isAI);
+    if (hasHuman) return null;
     return { type: 'continue' };
   }
   // Expansion-owned subphase (e.g., Leaders' draft/play, Solomon's pick) —

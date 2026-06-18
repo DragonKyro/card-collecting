@@ -8,11 +8,13 @@ import type {
 import { CardView, FaceDownCard } from './Card';
 import { ALL_KINDS, KIND_INFO, CATEGORY_REQUIRED, validateMenu, DEFAULT_MENU } from './cards';
 import { Sidebar } from './Sidebar';
+import { RulesBook, RulesHero, RulesGrid, RulesTile } from '@/ui/RulesBook';
 import './sushi-go.css';
 
 const CATEGORIES_ORDERED: SushiGoCategory[] = ['nigiri', 'roll', 'appetizer', 'special', 'dessert'];
 
 function LobbyConfig({ config, seats, onChange }: { config: SushiGoConfig; seats: Seat[]; onChange: (c: SushiGoConfig) => void }) {
+  void seats;
   const byCat: Record<SushiGoCategory, SushiGoCardKind[]> = useMemo(() => {
     const m: Record<SushiGoCategory, SushiGoCardKind[]> = { nigiri: [], roll: [], appetizer: [], special: [], dessert: [] };
     for (const k of ALL_KINDS) m[KIND_INFO[k].category].push(k);
@@ -40,11 +42,7 @@ function LobbyConfig({ config, seats, onChange }: { config: SushiGoConfig; seats
 
   return (
     <div className="game-config sgp-lobby">
-      <p style={{ fontSize: 13, color: 'var(--fg-muted)', marginTop: 0 }}>
-        Pick exactly 8 menu items: 1 nigiri + 1 roll + 3 appetizers + 3 specials + 1 dessert.
-        Default menu loads the base game's "Sushi Go!" experience.
-      </p>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center' }}>
         <button
           className="secondary"
           onClick={() => onChange({ ...config, menu: DEFAULT_MENU.slice() })}
@@ -52,8 +50,8 @@ function LobbyConfig({ config, seats, onChange }: { config: SushiGoConfig; seats
         >
           Reset to default menu
         </button>
-        <span style={{ fontSize: 12, color: 'var(--fg-muted)', alignSelf: 'center' }}>
-          {seats.length} seat{seats.length === 1 ? '' : 's'}.
+        <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
+          Pick 1 nigiri + 1 roll + 3 appetizers + 2 specials + 1 dessert.
         </span>
       </div>
       {CATEGORIES_ORDERED.map((cat) => (
@@ -73,7 +71,6 @@ function LobbyConfig({ config, seats, onChange }: { config: SushiGoConfig; seats
                   title={KIND_INFO[k].rule}
                 >
                   <strong>{KIND_INFO[k].label}</strong>
-                  <span className="rule">{KIND_INFO[k].rule}</span>
                 </button>
               );
             })}
@@ -97,6 +94,125 @@ function categoryHeader(cat: SushiGoCategory): string {
     case 'special': return 'Specials';
     case 'dessert': return 'Desserts';
   }
+}
+
+function Rules() {
+  const byCat: Record<SushiGoCategory, SushiGoCardKind[]> = useMemo(() => {
+    const m: Record<SushiGoCategory, SushiGoCardKind[]> = { nigiri: [], roll: [], appetizer: [], special: [], dessert: [] };
+    for (const k of ALL_KINDS) m[KIND_INFO[k].category].push(k);
+    return m;
+  }, []);
+  const cardRows = (cat: SushiGoCategory) => byCat[cat].map((k) => (
+    <tr key={k}>
+      <td>{KIND_INFO[k].label}</td>
+      <td className="num">{KIND_INFO[k].count}</td>
+      <td className="muted">{KIND_INFO[k].rule}</td>
+    </tr>
+  ));
+  return (
+    <RulesBook
+      pages={[
+        {
+          title: 'Overview',
+          body: (
+            <>
+              <RulesHero
+                title="Sushi Go! Party"
+                subtitle="Pick-and-pass drafting across 3 rounds. Build the tastiest meal."
+                accent="linear-gradient(135deg, #d94e4e 0%, #f4d268 100%)"
+              />
+              <h3>Each tick</h3>
+              <RulesGrid cols={2}>
+                <RulesTile icon="①" label="Pick 1 card" hint="Simultaneously, from your current hand." accent="#6aa0ff" />
+                <RulesTile icon="🥢" label="Or pick 2" hint="With chopsticks or spoon banked from earlier." accent="#9ed27c" />
+                <RulesTile icon="🔁" label="Reveal &amp; pass" hint="Rounds 1+3 clockwise, round 2 counter-clockwise." accent="#f4d268" />
+                <RulesTile icon="🏁" label="Round ends" hint="When the hand runs out. Score, then deal again." accent="#ff7070" />
+              </RulesGrid>
+              <h3>Setup</h3>
+              <p>
+                Build a menu of exactly <strong>8 kinds</strong>:
+                1 nigiri set + 1 roll + 3 appetizers + 2 specials + 1 dessert.
+                The default menu mirrors the original Sushi Go! base game.
+              </p>
+            </>
+          ),
+        },
+        {
+          title: 'Abilities',
+          body: (
+            <>
+              <RulesGrid cols={2}>
+                <RulesTile icon="🌶️" label="Wasabi" hint="Placed before a nigiri triples its value." accent="#9ed27c" />
+                <RulesTile icon="🥢" label="Chopsticks / Spoon" hint="Bank to pick 2 cards on a future tick." accent="#6aa0ff" />
+                <RulesTile icon="✨" label="Special Order" hint="Copies one of your other tableau cards." accent="#b984c9" />
+                <RulesTile icon="📋" label="Menu / Takeout Box" hint="Mid-tick subphases for swapping or rerolling." accent="#f4d268" />
+              </RulesGrid>
+              <h3>Round-end scoring</h3>
+              <p>
+                When the hand runs out, score everything on each table per the
+                card rules. This round's desserts move to the dessert pile (no
+                immediate score). After round 3, the dessert pile is scored once.
+              </p>
+            </>
+          ),
+        },
+        {
+          title: 'Nigiri',
+          body: (
+            <>
+              <table className="tight">
+                <thead><tr><th>Kind</th><th className="num">Count</th><th>Rule</th></tr></thead>
+                <tbody>{cardRows('nigiri')}</tbody>
+              </table>
+              <p className="muted">Nigiri is a single kind with 3 variants: egg ×4, salmon ×5, squid ×5.</p>
+            </>
+          ),
+        },
+        {
+          title: 'Rolls',
+          body: (
+            <table className="tight">
+              <thead><tr><th>Kind</th><th className="num">Count</th><th>Rule</th></tr></thead>
+              <tbody>{cardRows('roll')}</tbody>
+            </table>
+          ),
+        },
+        {
+          title: 'Appetizers',
+          body: (
+            <table className="tight">
+              <thead><tr><th>Kind</th><th className="num">Count</th><th>Rule</th></tr></thead>
+              <tbody>{cardRows('appetizer')}</tbody>
+            </table>
+          ),
+        },
+        {
+          title: 'Specials',
+          body: (
+            <table className="tight">
+              <thead><tr><th>Kind</th><th className="num">Count</th><th>Rule</th></tr></thead>
+              <tbody>{cardRows('special')}</tbody>
+            </table>
+          ),
+        },
+        {
+          title: 'Desserts',
+          body: (
+            <>
+              <table className="tight">
+                <thead><tr><th>Kind</th><th className="num">Count</th><th>Rule</th></tr></thead>
+                <tbody>{cardRows('dessert')}</tbody>
+              </table>
+              <p className="muted">
+                Fruit's 9 cards split across pineapple / watermelon / orange. Per-round
+                dessert additions follow a 5/3/2 schedule across rounds 1/2/3.
+              </p>
+            </>
+          ),
+        },
+      ]}
+    />
+  );
 }
 
 function GameView({
@@ -419,4 +535,5 @@ function nameOf(state: SushiGoState, id: PlayerId | null): string {
 export const bundle: GameUiBundle<SushiGoState, SushiGoAction, SushiGoConfig> = {
   LobbyConfig,
   GameView,
+  Rules,
 };

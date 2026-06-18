@@ -310,32 +310,27 @@
 }
 .sgp-lobby .sgp-menu-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 6px;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 4px;
 }
 .sgp-lobby .sgp-menu-pick {
-  text-align: left;
+  text-align: center;
   border: 1px solid var(--border);
   background: var(--bg-elevated);
   color: var(--fg);
   padding: 6px 8px;
-  border-radius: 6px;
+  border-radius: 999px;
   font-size: 12px;
   cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  transition: background 100ms, border-color 100ms;
 }
 .sgp-lobby .sgp-menu-pick:hover { background: var(--bg-hover); }
 .sgp-lobby .sgp-menu-pick.selected {
   border-color: var(--accent);
-  background: rgba(106, 160, 255, 0.15);
+  background: rgba(106, 160, 255, 0.18);
 }
-.sgp-lobby .sgp-menu-pick .rule {
-  font-size: 11px;
-  color: var(--fg-muted);
-  line-height: 1.35;
-}
+/* Backwards-compat for the now-removed inline rule blurb. */
+.sgp-lobby .sgp-menu-pick .rule { display: none; }
 .sgp-menu-errors {
   margin-top: 12px;
   background: rgba(224, 88, 79, 0.15);

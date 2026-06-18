@@ -292,23 +292,27 @@ export function scoreDesserts(players: SushiGoPlayer[]): Record<PlayerId, number
   const out: Record<PlayerId, number> = {};
   for (const p of players) out[p.id] = 0;
 
-  // pudding: 2p skipped; 3+p: +6 split for most, -6 split for fewest
+  // Pudding:
+  //   2-player: +6 split for most pudding; the −6 penalty for fewest is SKIPPED.
+  //   3+ player: +6 split for most, −6 split for fewest.
   const puddings = players.map((p) => ({
     id: p.id,
     count: p.dessertPile.filter((c) => c.kind === 'pudding').length,
   }));
-  if (players.length >= 3 && puddings.some((c) => c.count > 0)) {
+  if (puddings.some((c) => c.count > 0)) {
     const max = Math.max(...puddings.map((c) => c.count));
     const min = Math.min(...puddings.map((c) => c.count));
     const tiedMax = puddings.filter((c) => c.count === max);
     const tiedMin = puddings.filter((c) => c.count === min);
-    if (max > 0) {
+    if (max > 0 && max !== min) {
+      // Award +6 share to the most-pudding player(s).
       const share = Math.floor(6 / tiedMax.length);
       for (const c of tiedMax) out[c.id] += share;
-    }
-    if (max !== min) {
-      const share = Math.floor(6 / tiedMin.length);
-      for (const c of tiedMin) out[c.id] -= share;
+      // The −6 penalty applies only at 3+ players.
+      if (players.length >= 3) {
+        const penalty = Math.floor(6 / tiedMin.length);
+        for (const c of tiedMin) out[c.id] -= penalty;
+      }
     }
   }
 

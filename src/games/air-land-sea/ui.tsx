@@ -9,8 +9,9 @@ import type {
 import { AlsCardView, FaceDownCard } from './Card';
 import { TheaterColumn } from './Theater';
 import { Sidebar } from './Sidebar';
+import { RulesBook, RulesHero, RulesGrid, RulesTile } from '@/ui/RulesBook';
 import {
-  BASE_THEATER_IDS, SLS_THEATER_IDS, THEATER_DEFS, DEFAULT_TARGET_VP, ALL_THEATER_IDS,
+  BASE_THEATER_IDS, SLS_THEATER_IDS, THEATER_DEFS, DEFAULT_TARGET_VP, ALL_THEATER_IDS, CARD_TEMPLATES,
 } from './cards';
 import { ownerHasOngoing, vpForWithdraw, adjacentTheaters } from './scoring';
 import './als.css';
@@ -20,6 +21,7 @@ import './als.css';
 // ============================================================================
 
 function LobbyConfig({ config, seats, onChange }: { config: AlsConfig; seats: Seat[]; onChange: (c: AlsConfig) => void }) {
+  void seats;
   const slsOn = !!config.expansions?.spiesLiesSupplies;
   const epic = config.theaters.length === 5;
 
@@ -64,10 +66,6 @@ function LobbyConfig({ config, seats, onChange }: { config: AlsConfig; seats: Se
 
   return (
     <div className="game-config">
-      <p style={{ fontSize: 13, color: 'var(--fg-muted)', marginTop: 0 }}>
-        2-player only. First to {config.targetVp} VP wins the match (best across multiple battles).
-      </p>
-
       <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <span>Target VP:</span>
         <input
@@ -138,10 +136,138 @@ function LobbyConfig({ config, seats, onChange }: { config: AlsConfig; seats: Se
         })}
       </div>
 
-      <p style={{ fontSize: 12, color: 'var(--fg-muted)', marginTop: 12 }}>
-        {seats.length} {seats.length === 1 ? 'seat' : 'seats'} (2 required).
-      </p>
     </div>
+  );
+}
+
+function Rules() {
+  // Group cards by theater for the per-theater reference pages.
+  const byTheater: Record<string, typeof CARD_TEMPLATES[number][]> = {};
+  for (const c of CARD_TEMPLATES) {
+    if (!byTheater[c.theater]) byTheater[c.theater] = [];
+    byTheater[c.theater].push(c);
+  }
+  for (const k of Object.keys(byTheater)) byTheater[k].sort((a, b) => a.strength - b.strength);
+  const cardRows = (tid: AlsTheaterId) => (byTheater[tid] ?? []).map((c) => (
+    <tr key={c.id}>
+      <td className="num">{c.strength}</td>
+      <td>{c.name}</td>
+      <td className="muted">{c.abilityText}</td>
+    </tr>
+  ));
+
+  return (
+    <RulesBook
+      pages={[
+        {
+          title: 'Overview',
+          body: (
+            <>
+              <RulesHero
+                title="Air, Land & Sea"
+                subtitle="2-player tactical battles. First to 12 VP across multiple battles."
+                accent="linear-gradient(135deg, #234d5e 0%, #2ecc71 100%)"
+              />
+              <h3>Turn options (alternating single actions)</h3>
+              <RulesGrid cols={3}>
+                <RulesTile icon="⚡" label="Deploy" hint="Face-up to matching theater. Triggers the card's ability." accent="#9ed27c" />
+                <RulesTile icon="🃏" label="Improvise" hint="Face-down to ANY theater for strength 2. No ability." accent="#6aa0ff" />
+                <RulesTile icon="🏳️" label="Withdraw" hint="Battle ends. Opponent scores VP." accent="#ff7070" />
+              </RulesGrid>
+              <h3>Withdraw VP</h3>
+              <table className="tight">
+                <thead><tr><th>Cards left in hand</th><th className="num">VP to opponent</th></tr></thead>
+                <tbody>
+                  <tr><td>6+ cards</td><td className="num">2</td></tr>
+                  <tr><td>4–5 cards</td><td className="num">3</td></tr>
+                  <tr><td>2–3 cards</td><td className="num">4</td></tr>
+                  <tr><td>0–1 cards (full-play loss)</td><td className="num">6</td></tr>
+                </tbody>
+              </table>
+            </>
+          ),
+        },
+        {
+          title: 'Battles',
+          body: (
+            <>
+              <p>
+                A battle ends when either player withdraws or both hands are empty.
+              </p>
+              <RulesGrid cols={2}>
+                <RulesTile icon="📊" label="Control" hint="Higher total strength on your side wins that theater." accent="#f4d268" />
+                <RulesTile icon="🏆" label="Win condition" hint="Control more than half the theaters (2/3 or 3/5)." accent="#9ed27c" />
+                <RulesTile icon="🥇" label="Ties" hint="Go to the player whose card landed in the theater first." accent="#6aa0ff" />
+                <RulesTile icon="🔁" label="Between battles" hint="Theater row rotates 1 step right→front; 1st-player swaps." accent="#b984c9" />
+              </RulesGrid>
+              <h3>Hidden info</h3>
+              <p>
+                Face-down cards are hidden from the opponent (and from the inactive
+                seat in hot-seat play). Ongoing abilities still emit while covered
+                — being flipped face-down is the only way to silence them.
+              </p>
+            </>
+          ),
+        },
+        {
+          title: 'Air cards',
+          body: (
+            <table className="tight">
+              <thead><tr><th className="num">Str</th><th>Name</th><th>Ability</th></tr></thead>
+              <tbody>{cardRows('air')}</tbody>
+            </table>
+          ),
+        },
+        {
+          title: 'Land cards',
+          body: (
+            <table className="tight">
+              <thead><tr><th className="num">Str</th><th>Name</th><th>Ability</th></tr></thead>
+              <tbody>{cardRows('land')}</tbody>
+            </table>
+          ),
+        },
+        {
+          title: 'Sea cards',
+          body: (
+            <table className="tight">
+              <thead><tr><th className="num">Str</th><th>Name</th><th>Ability</th></tr></thead>
+              <tbody>{cardRows('sea')}</tbody>
+            </table>
+          ),
+        },
+        {
+          title: 'SLS expansion',
+          body: (
+            <>
+              <p>
+                Adds 3 theaters (Intelligence / Diplomacy / Economics) and 18
+                cards. Epic Mode plays with all 5 theaters and 9-card hands.
+              </p>
+              <p className="muted">
+                Per-card SLS abilities are placeholder no-ops in v1; cards still
+                contribute their raw strength normally.
+              </p>
+              <h3>Intel cards</h3>
+              <table className="tight">
+                <thead><tr><th className="num">Str</th><th>Name</th><th>Ability</th></tr></thead>
+                <tbody>{cardRows('intel')}</tbody>
+              </table>
+              <h3>Diplomacy cards</h3>
+              <table className="tight">
+                <thead><tr><th className="num">Str</th><th>Name</th><th>Ability</th></tr></thead>
+                <tbody>{cardRows('diplo')}</tbody>
+              </table>
+              <h3>Economics cards</h3>
+              <table className="tight">
+                <thead><tr><th className="num">Str</th><th>Name</th><th>Ability</th></tr></thead>
+                <tbody>{cardRows('econ')}</tbody>
+              </table>
+            </>
+          ),
+        },
+      ]}
+    />
   );
 }
 
@@ -583,4 +709,5 @@ void SLS_THEATER_IDS;
 export const bundle: GameUiBundle<AlsState, AlsAction, AlsConfig> = {
   LobbyConfig,
   GameView,
+  Rules,
 };

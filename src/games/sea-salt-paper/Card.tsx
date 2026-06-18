@@ -1,6 +1,7 @@
 import type { SspCard, SspCardFamily } from './types';
 import { FAMILY } from './cards';
 import { CardArt } from './CardArt';
+import { useFlipCard } from './cardFlip';
 
 interface Props {
   card: SspCard;
@@ -8,9 +9,15 @@ interface Props {
   selectable?: boolean;
   selected?: boolean;
   onClick?: () => void;
+  /** Logical zone the card currently lives in (e.g. 'hand-A', 'pile-0',
+   *  'pending-draw'). The FLIP harness only animates a card when this string
+   *  changes between renders — i.e. when the card actually moves from one
+   *  zone to another. Defaults to a stable per-card label so cards without
+   *  a zone never animate. */
+  zone?: string;
 }
 
-export function CardView({ card, size = 'normal', selectable, selected, onClick }: Props) {
+export function CardView({ card, size = 'normal', selectable, selected, onClick, zone }: Props) {
   const cls = [
     'card',
     size === 'small' ? 'small' : '',
@@ -19,12 +26,12 @@ export function CardView({ card, size = 'normal', selectable, selected, onClick 
     `color-${card.color}`,
   ].filter(Boolean).join(' ');
   const info = FAMILY[card.family];
+  const flipRef = useFlipCard(card.id, zone ?? `static-${card.id}`);
 
   return (
-    <div className={cls} onClick={onClick}>
+    <div className={cls} onClick={onClick} ref={flipRef}>
       <div className="ribbon">
         <span className="pts">{ribbonValue(card.family)}</span>
-        <span className="fam">{shortName(card.family)}</span>
       </div>
       <div className="color-bar" />
       <div className="art">
@@ -44,27 +51,6 @@ export function CardView({ card, size = 'normal', selectable, selected, onClick 
 
 export function FaceDownCard({ size = 'normal' }: { size?: 'normal' | 'small' }) {
   return <div className={`card facedown ${size === 'small' ? 'small' : ''}`} />;
-}
-
-function shortName(family: SspCardFamily): string {
-  switch (family) {
-    case 'penguinColony': return 'COLNY';
-    case 'lighthouse': return 'L.HSE';
-    case 'shoal': return 'SHOAL';
-    case 'captain': return 'CAPT';
-    case 'mermaid': return 'MERM';
-    case 'swimmer': return 'SWIM';
-    case 'octopus': return 'OCTO';
-    case 'penguin': return 'PNGN';
-    case 'sailor': return 'SAIL';
-    case 'shark': return 'SHRK';
-    case 'jellyfish': return 'JELLY';
-    case 'lobster': return 'LOBST';
-    case 'starfish': return 'STAR';
-    case 'seahorse': return 'SHRSE';
-    case 'crabBasket': return 'CRABS';
-    default: return family.slice(0, 4).toUpperCase();
-  }
 }
 
 function ribbonValue(family: SspCardFamily): string {

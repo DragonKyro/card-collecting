@@ -21,6 +21,7 @@ import {
   canChainBuild, effectiveCostForCard, effectiveCostForWonder,
   productionCanSupply, productionFor, purchaseCost,
 } from './resources';
+import { RulesBook, RulesHero, RulesGrid, RulesTile } from '@/ui/RulesBook';
 import './seven-wonders-duel.css';
 
 // ===================================================================
@@ -31,16 +32,113 @@ function LobbyConfig({ config, seats, onChange }: { config: DuelConfig; seats: S
   void onChange; void config; void seats;
   return (
     <div className="game-config swd-lobby">
-      <p style={{ fontSize: 13, color: 'var(--fg-muted)', marginTop: 0 }}>
-        2 players. Pyramid draft over 3 ages. Three paths to victory:
-        Civilian (most VP), Military Supremacy (push pawn to opponent's capital),
-        Science Supremacy (collect 6 different science symbols).
-      </p>
-      <p style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
-        Wonder draft + progress tokens are randomized per match from the
-        rngState seed.
+      <p style={{ fontSize: 12, color: 'var(--fg-muted)', marginTop: 0 }}>
+        Wonder draft + progress tokens are randomized per match from the seed.
       </p>
     </div>
+  );
+}
+
+function Rules() {
+  return (
+    <RulesBook
+      pages={[
+        {
+          title: 'Overview',
+          body: (
+            <>
+              <RulesHero
+                title="7 Wonders Duel"
+                subtitle="Standalone 2-player 7 Wonders. Pyramid draft, three paths to victory."
+                accent="linear-gradient(135deg, #8b3a2e 0%, #d4a85a 100%)"
+              />
+              <h3>Three paths to victory</h3>
+              <RulesGrid cols={3}>
+                <RulesTile icon="🏛️" label="Civilian" hint="Most VP after Age III ends." accent="#6aa0ff" />
+                <RulesTile icon="⚔️" label="Military Supremacy" hint="Push the military pawn to ±9 (opponent's capital)." accent="#ff7070" />
+                <RulesTile icon="🔬" label="Science Supremacy" hint="Collect 6 distinct science symbols (of 7). Instant win." accent="#9ed27c" />
+              </RulesGrid>
+              <h3>Each turn</h3>
+              <RulesGrid cols={3}>
+                <RulesTile icon="🃏" label="Take from pyramid" hint="Any face-up card with no covers above it." accent="#f4d268" />
+                <RulesTile icon="🏗️" label="Build / Bury / Discard" hint="Same options as base 7W." accent="#b984c9" />
+                <RulesTile icon="⚡" label="Science triggers" hint="A second matching symbol grants a Progress Token." accent="#67d4d4" />
+              </RulesGrid>
+            </>
+          ),
+        },
+        {
+          title: 'Military &amp; trade',
+          body: (
+            <>
+              <h3>Military pawn</h3>
+              <p>
+                The pawn lives at 0 and slides toward the opponent's capital with
+                each shield played. Sliding past key markers drains coins from
+                the side being pushed.
+              </p>
+              <table className="tight">
+                <thead><tr><th>Pawn at</th><th>Effect</th></tr></thead>
+                <tbody>
+                  <tr><td>±3</td><td>Opponent loses 2 coins</td></tr>
+                  <tr><td>±6</td><td>Opponent loses 5 coins</td></tr>
+                  <tr><td>±9</td><td><strong>Military Supremacy win</strong></td></tr>
+                </tbody>
+              </table>
+              <h3>Resource purchase</h3>
+              <p>
+                Cost = <code>2 + opponent's fixed production of that resource</code>,
+                flattened to 1 if you've built the matching trade-discount card.
+                With Economy, opponent gains your trade coins; without it, coins
+                go to the bank.
+              </p>
+            </>
+          ),
+        },
+        {
+          title: 'Wonder draft',
+          body: (
+            <>
+              <p>
+                Pre-Age I, players alternate picking from 8 randomly drawn
+                wonders. Pick order is <code>[0,1,1,0,0,1,1,0]</code> — each
+                ending with 4 wonders.
+              </p>
+              <RulesTile icon="🏛️" label="7 total built" hint="Across both players. Once the 7th is built, all unbuilt wonders are discarded." accent="#d4a85a" />
+            </>
+          ),
+        },
+        {
+          title: 'Progress Tokens',
+          body: (
+            <>
+              <p>5 of 10 are drawn deterministically at match start.</p>
+              <table className="tight">
+                <thead><tr><th>Token</th><th>Effect</th></tr></thead>
+                <tbody>
+                  <tr><td>Agriculture</td><td>+4 coins now, +4 VP at end</td></tr>
+                  <tr><td>Architecture</td><td>Wonders cost 2 fewer resources</td></tr>
+                  <tr><td>Economy</td><td>Opponent's trade coins flow to you</td></tr>
+                  <tr><td>Law</td><td>Wild +1 toward science supremacy</td></tr>
+                  <tr><td>Masonry</td><td>Civilian (blue) cards cost 2 fewer resources</td></tr>
+                  <tr><td>Mathematics</td><td>+3 VP per progress token at end</td></tr>
+                  <tr><td>Philosophy</td><td>+7 VP at end</td></tr>
+                  <tr><td>Strategy</td><td>+1 shield per red card</td></tr>
+                  <tr><td>Theology <span className="muted">(NOT modeled)</span></td><td>Wonder builds grant an extra turn</td></tr>
+                  <tr><td>Urbanism</td><td>+6 coins now; +4 coins per chain link</td></tr>
+                </tbody>
+              </table>
+              <p className="muted">
+                Wonder-only effects <code>extraTurn</code> (Hanging Gardens,
+                Piraeus, Sphinx, Appian Way) and <code>pickFromDiscard</code>
+                (Mausoleum, Great Library) recognize numerical components but
+                skip the interactive sub-phase in v1.
+              </p>
+            </>
+          ),
+        },
+      ]}
+    />
   );
 }
 
@@ -564,4 +662,5 @@ void WONDERS; void ALL_PROGRESS_TOKENS;
 export const bundle: GameUiBundle<DuelState, DuelAction, DuelConfig> = {
   LobbyConfig,
   GameView,
+  Rules,
 };

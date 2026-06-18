@@ -133,14 +133,37 @@ describe('mermaidColorBonus', () => {
     expect(mermaidColorBonus(cards)).toBe(5);
   });
 
-  it('mermaids count toward white bonus', () => {
+  it('two mermaids cannot both claim the same color group', () => {
+    // Only ONE non-white color present (yellow×4); the 2nd mermaid has no
+    // distinct group to claim, so it contributes 0 (NOT another 4).
+    const cards = [
+      card(1, 'mermaid', 'white'), card(2, 'mermaid', 'white'),
+      card(3, 'crab', 'yellow'), card(4, 'boat', 'yellow'),
+      card(5, 'fish', 'yellow'), card(6, 'shell', 'yellow'),
+    ];
+    expect(mermaidColorBonus(cards)).toBe(4);
+  });
+
+  it('three mermaids each claim a distinct color group', () => {
+    const cards = [
+      card(1, 'mermaid', 'white'), card(2, 'mermaid', 'white'), card(3, 'mermaid', 'white'),
+      card(4, 'crab', 'yellow'), card(5, 'boat', 'yellow'), card(6, 'fish', 'yellow'),  // 3 yellow
+      card(7, 'shell', 'green'), card(8, 'octopus', 'green'),                            // 2 green
+      card(9, 'penguin', 'pink'),                                                        // 1 pink
+    ];
+    // 3+2+1 = 6.
+    expect(mermaidColorBonus(cards)).toBe(6);
+  });
+
+  it('mermaid claims SKIP the white color group (whites are scored separately)', () => {
     const cards = [
       card(1, 'mermaid', 'white'),
       card(2, 'mermaid', 'white'),
       card(3, 'mermaid', 'white'),
     ];
-    // White group is 3 mermaids; with 3 mermaids → top 3 groups = 3 + 0 + 0 = 3
-    expect(mermaidColorBonus(cards)).toBe(3);
+    // Mermaids only claim NON-WHITE groups. With nothing else, the claim
+    // function returns 0.
+    expect(mermaidColorBonus(cards)).toBe(0);
   });
 });
 
@@ -173,29 +196,34 @@ describe('isValidDuoPair', () => {
 });
 
 describe('totalScore', () => {
-  it('combines card points and color bonus', () => {
+  it('cards column = collector points + mermaid claims; bonus = white count', () => {
     const cards = [
-      card(1, 'shell', 'yellow'), card(2, 'shell', 'yellow'),       // 2 shells = 2
-      card(3, 'mermaid', 'white'),                                  // +bonus
+      card(1, 'shell', 'yellow'), card(2, 'shell', 'yellow'),       // 2 shells (set) = 2
+      card(3, 'mermaid', 'white'),                                  // claims top non-white group
       card(4, 'crab', 'pink'),
     ];
     const t = totalScore(cards);
-    // Yellow: 2 cards; that's the top group. Mermaid (1) → +2.
-    expect(t.cardPoints).toBe(2);
-    expect(t.colorBonus).toBe(2);
-    expect(t.total).toBe(4);
+    // Cards = shell set (2) + mermaid claim of yellow (2) = 4.
+    // Bonus = 1 white card.
+    expect(t.cardPoints).toBe(4);
+    expect(t.colorBonus).toBe(1);
+    expect(t.total).toBe(5);
   });
 
-  it('Calm Waters event doubles the mermaid color bonus', () => {
+  it('two mermaids claim two distinct non-white color groups', () => {
     const cards = [
-      card(1, 'shell', 'yellow'), card(2, 'shell', 'yellow'),
-      card(3, 'mermaid', 'white'),
-      card(4, 'crab', 'pink'),
+      card(1, 'mermaid', 'white'), card(2, 'mermaid', 'white'),
+      card(3, 'crab', 'yellow'), card(4, 'boat', 'yellow'), card(5, 'fish', 'yellow'),  // 3 yellow
+      card(6, 'shell', 'green'), card(7, 'octopus', 'green'),                            // 2 green
     ];
-    const t = totalScore(cards, { doubleColorBonus: true });
-    // Base bonus is 2 (top yellow group), doubled → 4.
-    expect(t.colorBonus).toBe(4);
-    expect(t.total).toBe(6);
+    const t = totalScore(cards);
+    // Cards = pairs (boats: 0 since 1, etc — only fish+fish? no, just 1 fish.
+    // No duo pairs formed. Just collector set scoring: 1 shell → 0, 1 octopus → 0.
+    // Mermaid claims = top 2 non-white groups = 3 (yellow) + 2 (green) = 5.
+    // Bonus = 2 whites.
+    expect(t.cardPoints).toBe(5);
+    expect(t.colorBonus).toBe(2);
+    expect(t.total).toBe(7);
   });
 });
 

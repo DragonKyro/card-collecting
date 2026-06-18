@@ -370,75 +370,76 @@ describe('Extra Pepper: event deck', () => {
     expect(s.event!.current).not.toBeNull();
   });
 
-  it('Three Mermaids reduces the holder\'s mermaid-win threshold to 3', () => {
+  it('Dance of the Mermaids reduces the holder\'s mermaid-win threshold to 3', () => {
     let s = freshStateWithPepper();
     const a = s.players.find((q) => q.id === 'a')!;
-    a.heldEvents = ['threeMermaids'];
+    a.heldEvents = ['danceOfMermaids'];
     a.hand = [
       card(900, 'mermaid', 'white'),
       card(901, 'mermaid', 'white'),
     ];
-    // Pick up the third from discard.
     s.discards[0].push(card(902, 'mermaid', 'white'));
     s = applyAction(s, { type: 'drawFromDiscard', pile: 0 });
     expect(s.phase).toBe('gameOver');
     expect(s.mermaidWinnerId).toBe('a');
   });
 
-  it('Stop at Five lets the holder STOP at 5 pts', () => {
+  it('Treasure Chest raises the holder\'s STOP threshold to 10', () => {
     let s = freshStateWithPepper();
+    // Disable the random round event so only the held one applies.
+    if (s.event) s.event.current = null;
     const a = s.players.find((q) => q.id === 'a')!;
-    a.heldEvents = ['stopAtFive'];
-    // 2 sailors = 5 pts (enough with the event, but not without).
-    a.hand = [card(100, 'sailor'), card(101, 'sailor')];
-    s = applyAction(s, { type: 'drawFromDiscard', pile: 0 });
-    // Without the event this stop would throw; with it, it should succeed.
-    s = applyAction(s, { type: 'stop' });
-    expect(s.subPhase).toBe('roundEnd');
+    a.heldEvents = ['treasureChest'];
+    a.hand = [
+      card(100, 'octopus'), card(101, 'octopus'),
+      card(103, 'sailor'), card(104, 'sailor'),
+    ];
+    s.subPhase = 'awaitingPlayOrEnd';
+    // Score = octopus(2)→3 + sailor(2)→5 = 8. Without Treasure Chest this >=7
+    // would allow STOP; with Treasure Chest threshold is 10, so it must throw.
+    expect(() => applyAction(s, { type: 'stop' })).toThrow();
   });
 
-  it('Stormy Seas blocks LAST CHANCE for the holder', () => {
+  it('Diodon Fish blocks the holder from calling STOP', () => {
     let s = freshStateWithPepper();
+    if (s.event) s.event.current = null;
     const a = s.players.find((q) => q.id === 'a')!;
-    a.heldEvents = ['stormySeas'];
+    a.heldEvents = ['diodonFish'];
     a.hand = [
       card(100, 'octopus'), card(101, 'octopus'), card(102, 'octopus'),
       card(103, 'sailor'), card(104, 'sailor'),
     ];
-    s = applyAction(s, { type: 'drawFromDiscard', pile: 0 });
-    expect(() => applyAction(s, { type: 'lastChance' })).toThrow();
+    s.subPhase = 'awaitingPlayOrEnd';
+    expect(() => applyAction(s, { type: 'stop' })).toThrow();
   });
 
-  it('Pepper Burn deducts 2 pts at round end', () => {
+  it('Tornado zeroes mermaid color bonus at round end', () => {
     let s = freshStateWithPepper();
-    const a = s.players.find((q) => q.id === 'a')!;
-    a.heldEvents = ['pepperBurn'];
-    a.hand = [
-      card(100, 'shell'), card(101, 'shell'), card(102, 'shell'), card(103, 'shell'),
-      card(104, 'sailor'), card(105, 'sailor'),
-    ];
-    s = applyAction(s, { type: 'drawFromDiscard', pile: 0 });
-    s = applyAction(s, { type: 'stop' });
-    const aRow = s.lastRoundSummary!.perPlayer.find((r) => r.playerId === 'a')!;
-    // 4 shells (6) + 2 sailors (5) = 11 — Pepper Burn → 9.
-    expect(aRow.cardPoints).toBe(9);
-  });
-
-  it('Calm Waters event doubles the mermaid color bonus at round end', () => {
-    let s = freshStateWithPepper();
-    if (s.event) s.event.current = 'calmWaters';
+    if (s.event) s.event.current = 'tornado';
     const a = s.players.find((q) => q.id === 'a')!;
     a.hand = [
       card(100, 'shell', 'yellow'), card(101, 'shell', 'yellow'),
-      card(102, 'shell', 'yellow'), card(103, 'shell', 'yellow'),
-      card(104, 'mermaid', 'white'), card(105, 'sailor'), card(106, 'sailor'),
+      card(102, 'mermaid', 'white'), card(103, 'sailor'), card(104, 'sailor'),
     ];
     s = applyAction(s, { type: 'drawFromDiscard', pile: 0 });
     s = applyAction(s, { type: 'stop' });
     const aRow = s.lastRoundSummary!.perPlayer.find((r) => r.playerId === 'a')!;
-    // 6 yellow cards (4 shells + 2 sailors, both default-yellow in card()) — top
-    // group for 1 mermaid = 6; Calm Waters doubles to 12.
-    expect(aRow.colorBonus).toBe(12);
+    expect(aRow.colorBonus).toBe(0);
+  });
+
+  it('Dance of the Shells scores 2 pts per shell (overriding the set)', () => {
+    let s = freshStateWithPepper();
+    if (s.event) s.event.current = 'danceOfShells';
+    const a = s.players.find((q) => q.id === 'a')!;
+    a.hand = [
+      card(100, 'shell'), card(101, 'shell'), card(102, 'shell'),
+      card(103, 'sailor'), card(104, 'sailor'),
+    ];
+    s.subPhase = 'awaitingPlayOrEnd';
+    // Force STOP path — score with Dance: 3 shells × 2 = 6, + sailor(2)→5 = 11.
+    s = applyAction(s, { type: 'stop' });
+    const aRow = s.lastRoundSummary!.perPlayer.find((r) => r.playerId === 'a')!;
+    expect(aRow.cardPoints).toBe(11);
   });
 });
 

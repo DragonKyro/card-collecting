@@ -10,11 +10,13 @@
   --yellow:       #f4d268;
   --green:        #9ed27c;
   --purple:       #b984c9;
-  --lightblue:    #aed5e6;
+  --teal:         #4fb0a8;
   --darkblue:     #1c5f9e;
   --black:        #2a2a36;
   --gray:         #c2c8cc;
   --white:        #f9f6ed;
+  --orange:       #e8a04a;
+  --tan:          #c9a47c;
   color: var(--paper-ink);
 }
 
@@ -26,6 +28,7 @@
   padding: 16px;
   border-radius: 12px;
   color: var(--paper-cream);
+  position: relative;
 }
 
 .ssp .opponents {
@@ -89,8 +92,8 @@
 }
 
 .ssp .pile.empty .empty-slot {
-  width: 90px;
-  height: 130px;
+  width: 78px;
+  height: 118px;
   border: 2px dashed rgba(255,255,255,0.25);
   border-radius: 10px;
   display: flex;
@@ -105,6 +108,13 @@
   border: 1px solid rgba(255,255,255,0.12);
   border-radius: 10px;
   padding: 14px;
+}
+
+/* Reserve a stable cards row so the board doesn't grow/shrink when the hand
+ * wraps to a second line. Two rows of cards fit at 110px each + gap. */
+.ssp .hand-area .cards {
+  min-height: 110px;
+  align-content: flex-start;
 }
 
 .ssp .hand-area h3 {
@@ -128,13 +138,19 @@
   flex-wrap: wrap;
   gap: 4px;
   margin-top: 6px;
+  min-height: 72px;     /* one row of small cards — keeps height stable when empty */
 }
 
+/* Reserve a stable action area so the duo/steal/crab/lobster pickers don't
+ * make the board jump every time the subPhase changes. The buttons sit on a
+ * single row at the top of the slot. */
 .ssp .actions {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
   margin-top: 12px;
+  min-height: 56px;
+  align-items: flex-start;
 }
 
 .ssp .actions button {
@@ -149,8 +165,8 @@
 
 /* Card */
 .ssp .card {
-  width: 90px;
-  height: 130px;
+  width: 78px;
+  height: 118px;
   border-radius: 8px;
   background: var(--paper-cream);
   border: 2px solid var(--paper-ink);
@@ -161,22 +177,49 @@
   user-select: none;
   transition: transform 100ms ease, box-shadow 100ms ease;
   box-shadow: 0 2px 0 var(--paper-edge);
-  /* allow tooltip to escape; clip inner content via .card-inner color-bar specifics */
+  overflow: hidden;
+  /* Card movement (deck → hand, pile → hand, hand → pile) is driven by the
+     FLIP harness in cardFlip.tsx, which writes inline `transform` + `transition`
+     directly on the node. No CSS animation needed here.
+
+     We do keep a tiny fallback fade so cards that aren't tracked (e.g. opponent
+     hand face-down strips, keyed by index) still acknowledge a new arrival. */
+  animation: ssp-card-fade 180ms ease-out;
 }
-.ssp .card .color-bar {
-  border-top-left-radius: 6px;
-  border-top-right-radius: 6px;
+
+@keyframes ssp-card-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
+
+/* The "empty" placeholder square shouldn't animate when a pile is exhausted. */
+.ssp .empty-slot { animation: none; }
+/* Color-bar is no longer needed for identification — the entire card body
+   carries the family color. We keep the class shipped (existing markup) but
+   make it visually invisible (height 0). */
+.ssp .card .color-bar { display: none; }
 
 .ssp .card.small {
   width: 56px;
-  height: 80px;
+  height: 86px;
 }
+.ssp .card.small .art {
+  margin: 16px 4px 2px;
+}
+.ssp .card.small .footer {
+  font-size: 7px;
+  height: 14px;
+  line-height: 14px;
+}
+.ssp .card.small .ribbon { font-size: 8px; top: 2px; left: 2px; right: 2px; }
+.ssp .card.small .ribbon .pts,
+.ssp .card.small .ribbon .fam { padding: 0 3px; }
 
 .ssp .card.selectable { cursor: pointer; }
 .ssp .card.selectable:hover { transform: translateY(-3px); box-shadow: 0 5px 0 var(--paper-edge); }
 
-.ssp .card.selected {
+.ssp .card.selected,
+.ssp .card.selected.selectable:hover {
   box-shadow: 0 0 0 3px var(--yellow), 0 5px 0 var(--paper-edge);
   transform: translateY(-3px);
 }
@@ -187,7 +230,7 @@
   left: 4px;
   right: 4px;
   display: flex;
-  justify-content: space-between;
+  justify-content: center;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.4px;
@@ -195,49 +238,71 @@
 }
 
 .ssp .card .ribbon .pts {
-  background: var(--paper-ink);
-  color: var(--paper-cream);
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
   padding: 0 5px;
   border-radius: 3px;
 }
 
 .ssp .card .ribbon .fam {
-  background: rgba(255,255,255,0.7);
+  background: rgba(255, 255, 255, 0.85);
   padding: 0 5px;
   border-radius: 3px;
   text-transform: uppercase;
   color: var(--paper-ink);
 }
 
+/* The art sits on a translucent white plate so the SVG reads cleanly against
+   any background color. */
 .ssp .card .art {
   flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
+  /* Leave room for the ribbon at the top (it's absolutely positioned, ~16px
+   * tall starting at top:4) and a touch of breathing room from the footer. */
+  margin: 24px 8px 2px;
+  background: rgba(255, 255, 255, 0.78);
+  border-radius: 6px;
+  min-height: 0;
 }
 
 .ssp .card .footer {
-  height: 18px;
+  /* Footer needs enough height to clear descenders + breathing room from the
+   * 2px dark card border below. 22px with line-height 22 leaves ~6px buffer
+   * below the baseline so "SWIMMER" / "MERMAID" don't kiss the border. */
+  height: 22px;
   font-size: 9px;
   text-align: center;
   letter-spacing: 1px;
-  color: rgba(0,0,0,0.5);
+  color: rgba(0, 0, 0, 0.85);
   text-transform: uppercase;
+  background: rgba(255, 255, 255, 0.85);
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  line-height: 22px;
+  flex-shrink: 0;
 }
 
-.ssp .card .color-bar {
-  height: 6px;
-}
+/* Whole-card background colors per the official chart. Where the color is
+   dark, lighten the font/inner-bar contrast accordingly. */
+.ssp .card.color-yellow   { background: var(--yellow); }
+.ssp .card.color-green    { background: var(--green); }
+.ssp .card.color-pink     { background: var(--pink); }
+.ssp .card.color-purple   { background: var(--purple); }
+.ssp .card.color-teal     { background: var(--teal); }
+.ssp .card.color-darkblue { background: var(--darkblue); }
+.ssp .card.color-black    { background: var(--black); }
+.ssp .card.color-gray     { background: var(--gray); }
+.ssp .card.color-white    { background: var(--white); }
+.ssp .card.color-orange   { background: var(--orange); }
+.ssp .card.color-tan      { background: var(--tan); }
 
-.ssp .card.color-yellow    .color-bar { background: var(--yellow); }
-.ssp .card.color-green     .color-bar { background: var(--green); }
-.ssp .card.color-pink      .color-bar { background: var(--pink); }
-.ssp .card.color-purple    .color-bar { background: var(--purple); }
-.ssp .card.color-lightblue .color-bar { background: var(--lightblue); }
-.ssp .card.color-darkblue  .color-bar { background: var(--darkblue); }
-.ssp .card.color-black     .color-bar { background: var(--black); }
-.ssp .card.color-gray      .color-bar { background: var(--gray); }
-.ssp .card.color-white     .color-bar { background: var(--white); border-top: 1px solid var(--paper-edge); }
+/* Dark-background cards: lighten the points pip border for visibility. */
+.ssp .card.color-darkblue .ribbon .pts,
+.ssp .card.color-black .ribbon .pts {
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--paper-ink);
+}
 
 .ssp .card.facedown {
   background: repeating-linear-gradient(
@@ -263,11 +328,37 @@
   color: var(--paper-ink);
   padding: 18px;
   border-radius: 12px;
-  max-width: 540px;
+  max-width: 720px;
   margin: 0 auto;
 }
 
+.ssp .round-summary.minimized { padding: 10px 14px; }
 .ssp .round-summary h2 { margin-top: 0; }
+
+.ssp .round-summary-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.ssp .round-summary-header h2 { margin-bottom: 0; }
+.ssp .round-summary.minimized h2 { font-size: 16px; }
+.ssp .round-summary.minimized > *:not(.round-summary-header) { display: none; }
+
+.ssp .round-summary-reveal {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+  border-top: 1px solid var(--paper-deep);
+  padding-top: 10px;
+}
+.ssp .round-summary-player .table-strip {
+  background: rgba(0, 0, 0, 0.04);
+  padding: 6px;
+  border-radius: 6px;
+  min-height: 90px;
+}
 
 .ssp .round-summary table {
   width: 100%;
@@ -284,6 +375,47 @@
 .ssp .round-summary td.num, .ssp .round-summary th.num { text-align: right; }
 
 .ssp .round-summary tr.forfeit td { color: var(--danger); }
+/* Single-cell forfeit indicator — used for the Bonus column on STOP rounds
+ * where the bonus is shown for reference but doesn't count toward total. */
+.ssp .round-summary td.forfeit-cell { color: var(--danger); }
+
+/* Match stats — same cream surface as the round summary so the recharts
+ * dark-ink labels/grid render readable against a light background. */
+.ssp .ssp-stats {
+  background: var(--paper-cream);
+  color: var(--paper-ink);
+  padding: 18px 22px;
+  border-radius: 12px;
+  max-width: 720px;
+  margin: 18px auto 0;
+}
+.ssp .ssp-stats h2 { margin: 0 0 12px; color: var(--paper-ink); }
+.ssp .ssp-stats h3 {
+  margin: 18px 0 8px;
+  font-size: 14px;
+  color: var(--paper-ink);
+  border-bottom: 1px solid var(--paper-deep);
+  padding-bottom: 4px;
+}
+.ssp .ssp-stats table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 6px 0 8px;
+  font-size: 13px;
+  color: var(--paper-ink);
+}
+.ssp .ssp-stats th,
+.ssp .ssp-stats td {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--paper-deep);
+  text-align: left;
+}
+.ssp .ssp-stats td.num,
+.ssp .ssp-stats th.num { text-align: right; }
+/* Make sure recharts tooltips + legend text inherit dark ink. */
+.ssp .ssp-stats .recharts-default-tooltip { color: var(--paper-ink) !important; }
+.ssp .ssp-stats .recharts-legend-item-text { color: var(--paper-ink) !important; }
+.ssp .ssp-stats .recharts-cartesian-axis-tick-value { fill: var(--paper-ink); }
 
 .ssp .gameover-banner {
   background: var(--yellow);
@@ -296,23 +428,184 @@
   margin-bottom: 12px;
 }
 
+/* LAST CHANCE announcement banner. Full-board overlay that fades in for a
+ * couple of seconds when somebody calls LAST CHANCE, so the player can't
+ * miss it. */
+.ssp-lastchance-banner {
+  position: absolute;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, rgba(255, 90, 80, 0.55) 0%, rgba(0,0,0,0) 70%);
+  animation: ssp-lc-fade 2500ms ease-out forwards;
+}
+
+.ssp-lastchance-card {
+  text-align: center;
+  padding: 22px 38px;
+  background: rgba(0, 0, 0, 0.85);
+  border: 3px solid #ff7070;
+  border-radius: 18px;
+  box-shadow: 0 0 40px rgba(255,90,80,0.7), inset 0 0 24px rgba(255,90,80,0.3);
+  transform: scale(0.7) rotate(-3deg);
+  animation: ssp-lc-pop 900ms cubic-bezier(0.2, 1.4, 0.3, 1) forwards,
+             ssp-lc-shake 350ms 250ms ease-in-out;
+}
+
+.ssp-lastchance-eyebrow {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 4px;
+  color: #ffd56b;
+  text-shadow: 0 0 12px rgba(255, 213, 107, 0.9);
+  margin-bottom: 4px;
+  animation: ssp-lc-pulse 600ms infinite alternate;
+}
+.ssp-lastchance-name {
+  font-size: 38px;
+  font-weight: 900;
+  letter-spacing: 1px;
+  margin: 6px 0 4px;
+  text-shadow: 0 0 14px rgba(255,255,255,0.6);
+}
+.ssp-lastchance-sub {
+  font-size: 14px;
+  color: rgba(255,255,255,0.85);
+  font-style: italic;
+}
+
+@keyframes ssp-lc-fade {
+  0%   { opacity: 0; }
+  10%  { opacity: 1; }
+  85%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes ssp-lc-pop {
+  0%   { transform: scale(0.3) rotate(-12deg); opacity: 0; }
+  60%  { transform: scale(1.15) rotate(2deg);  opacity: 1; }
+  100% { transform: scale(1) rotate(-1deg);    opacity: 1; }
+}
+@keyframes ssp-lc-shake {
+  0%, 100% { transform: scale(1) rotate(-1deg); }
+  25%      { transform: scale(1.02) rotate(2deg); }
+  50%      { transform: scale(1.02) rotate(-2deg); }
+  75%      { transform: scale(1.02) rotate(1deg); }
+}
+@keyframes ssp-lc-pulse {
+  from { text-shadow: 0 0 12px rgba(255, 213, 107, 0.9); }
+  to   { text-shadow: 0 0 22px rgba(255, 213, 107, 1), 0 0 6px #fff; }
+}
+
+/* Crab two-step popup: after the player clicks a discard pile, this overlay
+ * appears at the bottom-center of the board (same place as the pending-draw
+ * popup) showing the full contents of the chosen pile. Keeps the deck + the
+ * other pile visible up top instead of slapping a giant inline panel into
+ * the hand area. */
+.ssp .crab-overlay {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  z-index: 30;
+  background: rgba(0,0,0,0.9);
+  border: 2px dashed var(--yellow);
+  padding: 12px 16px;
+  border-radius: 12px;
+  box-shadow: 0 -4px 20px rgba(0,0,0,0.6);
+  min-width: 260px;
+  max-width: 88%;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.ssp .crab-overlay .cards {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .ssp .pending-draw {
   display: flex;
   gap: 12px;
-  background: rgba(0,0,0,0.4);
+  background: rgba(0,0,0,0.9);
   border: 2px dashed var(--yellow);
-  padding: 14px;
+  padding: 10px 14px;
   border-radius: 12px;
   align-items: center;
   justify-content: center;
+  /* Float at the bottom-center of the board so the deck + discard piles up
+   * top stay fully visible — the player needs to see the pile tops while
+   * deciding which of the two drawn cards to discard there. */
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  z-index: 30;
+  box-shadow: 0 -4px 20px rgba(0,0,0,0.6);
+  min-width: 260px;
 }
 
 .ssp .target-info {
   display: flex;
   justify-content: space-between;
+  align-items: center;
   font-size: 13px;
   color: rgba(255,255,255,0.85);
   margin-bottom: 6px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.ssp .match-progress {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+.ssp .match-progress-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+}
+.ssp .match-progress-pill .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.ssp .match-progress-pill strong { color: #fff; }
+.ssp .match-progress-pill .muted { color: rgba(255, 255, 255, 0.55); }
+
+/* Per-color count strip on the local player's hand header. */
+.ssp-color-strip {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 500;
+}
+.ssp-color-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  padding: 1px 7px 1px 4px;
+  color: rgba(255, 255, 255, 0.95);
+}
+.ssp-color-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.4);
 }
 
 .ssp-event-banner {
@@ -440,6 +733,14 @@
   font-size: 12px;
   color: var(--fg);
   flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* When the sidebar body hosts a Feed, the feed (not the body) owns scrolling
+ * so the chat input stays pinned. Disable body scroll in that case. */
+.ssp-sidebar-body:has(.ssp-feed) {
+  overflow: hidden;
 }
 .ssp-sidebar-body h4 {
   margin: 8px 0 4px;
@@ -465,7 +766,7 @@
 /* Game log */
 .ssp-log {
   display: flex;
-  flex-direction: column-reverse;
+  flex-direction: column;
   gap: 4px;
 }
 .ssp-log-entry {
@@ -475,13 +776,36 @@
   line-height: 1.4;
   color: var(--fg);
 }
+
+/* Combined History + Chat feed */
+.ssp-feed {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  gap: 8px;
+}
+.ssp-feed-thread {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-right: 2px;
+}
+.ssp-feed .ssp-chat-input {
+  flex-shrink: 0;
+}
 .ssp-log-entry.round-end { background: rgba(106, 160, 255, 0.15); font-weight: 600; }
 .ssp-log-entry.match-end { background: rgba(244, 210, 104, 0.2); font-weight: 700; }
 .ssp-log-entry .who {
   font-weight: 600;
   color: var(--accent);
 }
-.ssp-log-entry.system .who { color: var(--warning); }
+/* System rows (round-end, match-end, event reveals) always use the warning
+   hue. Per-player names override the color inline via seat.color. */
+.ssp-log-entry.system .who { color: var(--warning) !important; }
 
 /* Chat */
 .ssp-chat-thread {
@@ -535,6 +859,16 @@
   color: rgba(255,255,255,0.75);
   text-align: center;
   margin-top: 2px;
+}
+/* Reserved-height "action hint" slot under deck/pile widgets. Always present
+ * so adding/removing a hint never reflows the row — eyes were getting
+ * scrolled around the board on every subPhase tick. */
+.ssp .center .label.hint {
+  font-size: 11px;
+  color: #f4d268;
+  min-height: 1.2em;
+  white-space: nowrap;
+  /* Inherit visibility from text — &nbsp; placeholder keeps height. */
 }
 
 /* Keep-from-draw chooser inline near the deck */

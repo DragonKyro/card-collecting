@@ -42,24 +42,51 @@ export function countBy<T extends string>(items: T[]): Record<T, number> {
  * count toward color groups (they are real cards, just not their referenced
  * family).
  */
-export function mermaidColorBonus(cards: SspCard[]): number {
+/** Mermaid claims (counted as CARD POINTS in our display): for each mermaid
+ *  held, claim the largest unclaimed NON-WHITE color group. White is reserved
+ *  for mermaids themselves (handled separately by the LAST CHANCE special
+ *  color bonus when applicable). Two mermaids claim two DISTINCT groups —
+ *  the second mermaid cannot claim the same color again. */
+export function mermaidColorBonus(cards: SspCard[], opts: { forceMinMermaids?: number } = {}): number {
   let mermaidCount = 0;
   const byColor: Record<SspColor, number> = {
     white: 0, yellow: 0, green: 0, pink: 0, purple: 0,
-    lightblue: 0, darkblue: 0, black: 0, gray: 0,
+    teal: 0, darkblue: 0, black: 0, gray: 0, orange: 0, tan: 0,
   };
   for (const c of cards) {
     byColor[c.color] += 1;
     if (c.family === 'mermaid') mermaidCount += 1;
   }
-  if (mermaidCount === 0) return 0;
+  const effective = Math.max(mermaidCount, opts.forceMinMermaids ?? 0);
+  if (effective === 0) return 0;
 
-  const groups = Object.values(byColor).sort((a, b) => b - a);
+  const groups: number[] = [];
+  for (const [color, n] of Object.entries(byColor)) {
+    if (color === 'white') continue;
+    if (n > 0) groups.push(n);
+  }
+  groups.sort((a, b) => b - a);
   let bonus = 0;
-  for (let i = 0; i < mermaidCount && i < groups.length; i++) {
+  for (let i = 0; i < effective && i < groups.length; i++) {
     bonus += groups[i];
   }
   return bonus;
+}
+
+/** "Special color bonus" per the rulebook: 1 point per card of the color the
+ *  player has most of (their single largest color group, including white).
+ *  Earned by every player when the round ended via LAST CHANCE; not earned
+ *  on STOP / deck-empty / mermaid-win. Computed independently of the mermaid
+ *  claims that go into the card-points column. */
+export function specialColorBonus(cards: SspCard[]): number {
+  const byColor: Record<SspColor, number> = {
+    white: 0, yellow: 0, green: 0, pink: 0, purple: 0,
+    teal: 0, darkblue: 0, black: 0, gray: 0, orange: 0, tan: 0,
+  };
+  for (const c of cards) byColor[c.color] += 1;
+  let best = 0;
+  for (const n of Object.values(byColor)) if (n > best) best = n;
+  return best;
 }
 
 /** Opts for cards-with-trio-cancel + per-player event holdings. */
@@ -70,6 +97,13 @@ export interface CardPointsOpts {
   trioCancelledIds?: Set<number>;
   /** Trio groups owned by this player; each scores a flat 3 pts. */
   trios?: number;
+  // ---- Extra Pepper event scoring overrides ----
+  /** Dance of the Shells: each shell scores 2 pts; skip the shell collector set. */
+  shellPerCard?: boolean;
+  /** The Kraken: each octopus scores 1 pt; skip the octopus collector set. */
+  octopusPerCard?: boolean;
+  /** Tornado: mermaids contribute 0 pts (but the instant-win at 4 still fires). */
+  mermaidsScoreZero?: boolean;
 }
 
 /** Sum of point values from the cards themselves (no color bonus). */
@@ -118,12 +152,18 @@ export function cardPoints(cards: SspCard[], opts: CardPointsOpts = {}): number 
   // Collectors. Seahorse is a wildcard collector — figure out which collector
   // gains the most from one additional card and apply it (rulebook: must have
   // at least one card of that collector; capped at that set's max payout).
+  // Extra Pepper overrides: Dance of the Shells skips the shell collector and
+  // scores each shell flat 2 pts; The Kraken skips the octopus collector and
+  // scores each octopus 1 pt. The seahorse wildcard still considers all four
+  // collectors (it gets included in the set normally where active).
   const collectorCounts = {
     shell: familyCounts.shell ?? 0,
     octopus: familyCounts.octopus ?? 0,
     penguin: familyCounts.penguin ?? 0,
     sailor: familyCounts.sailor ?? 0,
   };
+  const shellPerCard = opts.shellPerCard === true;
+  const octopusPerCard = opts.octopusPerCard === true;
   const seahorse = familyCounts.seahorse ?? 0;
   if (seahorse > 0) {
     // Pick the collector family where +1 card yields the biggest score gain
@@ -131,6 +171,10 @@ export function cardPoints(cards: SspCard[], opts: CardPointsOpts = {}): number 
     let bestGain = 0;
     let bestFam: keyof typeof collectorCounts | null = null;
     for (const fam of ['shell', 'octopus', 'penguin', 'sailor'] as const) {
+      // Skip collectors whose per-card override is in effect — Seahorse isn't
+      // a "shell" in those modes either.
+      if (fam === 'shell' && shellPerCard) continue;
+      if (fam === 'octopus' && octopusPerCard) continue;
       const baseline = collectorPoints(fam, collectorCounts[fam]);
       const augmented = collectorCounts[fam] >= 1
         ? collectorPoints(fam, collectorCounts[fam] + 1)
@@ -145,8 +189,10 @@ export function cardPoints(cards: SspCard[], opts: CardPointsOpts = {}): number 
     void bestFam;
   }
 
-  total += collectorPoints('shell', collectorCounts.shell);
-  total += collectorPoints('octopus', collectorCounts.octopus);
+  if (shellPerCard) total += 2 * collectorCounts.shell;
+  else total += collectorPoints('shell', collectorCounts.shell);
+  if (octopusPerCard) total += collectorCounts.octopus;
+  else total += collectorPoints('octopus', collectorCounts.octopus);
   total += collectorPoints('penguin', collectorCounts.penguin);
   total += collectorPoints('sailor', collectorCounts.sailor);
 
@@ -161,19 +207,49 @@ export function cardPoints(cards: SspCard[], opts: CardPointsOpts = {}): number 
 }
 
 export interface TotalScoreOpts extends CardPointsOpts {
-  /** Calm Waters event: double the mermaid color bonus. */
+  /** Calm Waters (legacy) event: double the mermaid color bonus. */
   doubleColorBonus?: boolean;
+  /** Round ended via LAST CHANCE → every player earns the special color bonus
+   *  (1 point per card of their most-frequent color). On STOP / deck-empty /
+   *  mermaid-win the bonus column is 0. */
+  lastChanceColorBonus?: boolean;
 }
 
-/** Sum card points + mermaid color bonus across all of a player's cards. */
+/** Score breakdown displayed on the round-end summary.
+ *  - `cardPoints` = full card scoring: duos + collectors + multipliers + trios
+ *    + mermaid claims (each mermaid claims its largest unclaimed non-white
+ *    color group). This is the score used to determine who wins the round.
+ *  - `colorBonus` = the rulebook's "special color bonus": 1 point per card of
+ *    the player's most-frequent color (any color, including white). EARNED
+ *    ONLY ON LAST CHANCE — both the caller and the opponents get this; on
+ *    STOP / deck-empty / mermaid-win the bonus is 0.
+ *  - `total` = sum of the two.
+ *
+ *  The LAST CHANCE forfeit (whichever side loses the bet) gets only the
+ *  `colorBonus` column for that round; that logic lives in the reducer.
+ */
 export function totalScore(
   handAndTable: SspCard[],
   opts: TotalScoreOpts = {},
 ): { cardPoints: number; colorBonus: number; total: number } {
   const cp = cardPoints(handAndTable, opts);
-  let cb = mermaidColorBonus(handAndTable);
-  if (opts.doubleColorBonus) cb *= 2;
-  return { cardPoints: cp, colorBonus: cb, total: cp + cb };
+  if (opts.mermaidsScoreZero) {
+    return { cardPoints: cp, colorBonus: 0, total: cp };
+  }
+  let claims = mermaidColorBonus(handAndTable, { forceMinMermaids: 0 });
+  if (opts.doubleColorBonus) claims *= 2;
+  const cards = cp + claims;
+  // The special color bonus is always computed (displayed) but only counts
+  // toward total when LAST CHANCE was called. Callers that just need the
+  // tentative score (e.g. STOP-threshold checks) leave lastChanceColorBonus
+  // off → bonus is shown × in the round summary and excluded from total.
+  const bonus = specialColorBonus(handAndTable);
+  const counts = !!opts.lastChanceColorBonus;
+  return {
+    cardPoints: cards,
+    colorBonus: bonus,
+    total: cards + (counts ? bonus : 0),
+  };
 }
 
 /** Convenience — combined hand + table for a player. */

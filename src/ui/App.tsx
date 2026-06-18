@@ -28,15 +28,25 @@ export default function App() {
             {GAMES.map((g) => {
               const Thumb = g.Thumbnail;
               return (
-                <div key={g.id} className="game-card" onClick={() => setScreen({ kind: 'lobby', gameId: g.id })}>
+                <div
+                  key={g.id}
+                  className="game-card"
+                  onClick={() => setScreen({ kind: 'lobby', gameId: g.id })}
+                  title={g.tagline}
+                >
                   {Thumb && (
                     <div className="game-card-art">
                       <Thumb />
                     </div>
                   )}
-                  <h3>{g.name}</h3>
-                  <p>{g.tagline}</p>
-                  <div className="player-range">{g.minPlayers}–{g.maxPlayers} players</div>
+                  <div className="game-card-meta">
+                    <h3>{g.name}</h3>
+                    <span className="player-range">
+                      {g.minPlayers === g.maxPlayers
+                        ? `${g.minPlayers}p`
+                        : `${g.minPlayers}–${g.maxPlayers}p`}
+                    </span>
+                  </div>
                 </div>
               );
             })}
