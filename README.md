@@ -1,5 +1,7 @@
 # card-collecting
 
+**▶ Play it live: <https://dragonkyro.github.io/card-collecting/>**
+
 A multi-game web app for **card-collecting games** where the objective is to maximize points in your own hand while minimizing points in your opponents'. Hosted on GitHub Pages, no backend, peer-to-peer multiplayer via WebRTC.
 
 Shipping targets:
