@@ -70,6 +70,42 @@ describe('AI driver', () => {
     expect(a!.type).toBe('playPair');
   });
 
+  it('discards to the pile that buries a top the opponent has been collecting', () => {
+    // Setup: AI 'a' is at awaitingKeep with a drawn pair. Opponent 'b' has
+    // visibly taken 3 shells from discards already (their knownTaken profile),
+    // so the AI should AVOID discarding a card that helps shell-builders AND
+    // prefer to BURY the pile whose top is a shell.
+    let s = freshAIState();
+    s.subPhase = 'awaitingKeep';
+    s.activePlayerId = 'a';
+    // Pile 0 top = shell (juicy for opponent b), pile 1 top = boat (less so).
+    s.discards[0] = [{ id: 1001, family: 'shell', color: 'yellow' }];
+    s.discards[1] = [{ id: 1002, family: 'boat', color: 'darkblue' }];
+    // Pending draw: keep a shell, discard a sailor (which a shell-builder
+    // doesn't directly want).
+    s.pendingDraw = [
+      { id: 2001, family: 'shell', color: 'pink' },
+      { id: 2002, family: 'sailor', color: 'tan' },
+    ];
+    // Build opponent profile via log entries — 'b' grabbed 3 shells from
+    // discards previously.
+    s.log = [
+      { seq: 1, round: 1, kind: 'drawDiscard', playerId: 'b', pile: 0, family: 'shell' },
+      { seq: 2, round: 1, kind: 'drawDiscard', playerId: 'b', pile: 0, family: 'shell' },
+      { seq: 3, round: 1, kind: 'drawDiscard', playerId: 'b', pile: 0, family: 'shell' },
+    ];
+    s.logSeq = 3;
+    const a = chooseAIAction(s, 'a') as SspAction | null;
+    expect(a).not.toBeNull();
+    expect(a!.type).toBe('keepFromDraw');
+    if (a && a.type === 'keepFromDraw') {
+      // Should keep the shell (index 0).
+      expect(a.keepIndex).toBe(0);
+      // And bury the shell pile (pile 0) by discarding the sailor onto it.
+      expect(a.discardToPile).toBe(0);
+    }
+  });
+
   it('returns nextRound when at roundEnd', () => {
     let s = freshAIState();
     s.subPhase = 'roundEnd';
@@ -79,8 +115,8 @@ describe('AI driver', () => {
       endedByPlayerId: 'a',
       lastChanceWon: null,
       perPlayer: [
-        { playerId: 'a', cardPoints: 8, colorBonus: 1, total: 9, forfeitCards: false },
-        { playerId: 'b', cardPoints: 4, colorBonus: 0, total: 4, forfeitCards: false },
+        { playerId: 'a', cardPoints: 8, colorBonus: 1, total: 9, forfeitCards: false, forfeitBonus: false },
+        { playerId: 'b', cardPoints: 4, colorBonus: 0, total: 4, forfeitCards: false, forfeitBonus: false },
       ],
     };
     const a = chooseAIAction(s, 'a') as SspAction | null;

@@ -42,6 +42,11 @@ export function countBy<T extends string>(items: T[]): Record<T, number> {
  * count toward color groups (they are real cards, just not their referenced
  * family).
  */
+/** Mermaid claims (counted as CARD POINTS in our display): for each mermaid
+ *  held, claim the largest unclaimed NON-WHITE color group. White is reserved
+ *  for mermaids themselves (handled separately by the LAST CHANCE special
+ *  color bonus when applicable). Two mermaids claim two DISTINCT groups —
+ *  the second mermaid cannot claim the same color again. */
 export function mermaidColorBonus(cards: SspCard[], opts: { forceMinMermaids?: number } = {}): number {
   let mermaidCount = 0;
   const byColor: Record<SspColor, number> = {
@@ -52,18 +57,36 @@ export function mermaidColorBonus(cards: SspCard[], opts: { forceMinMermaids?: n
     byColor[c.color] += 1;
     if (c.family === 'mermaid') mermaidCount += 1;
   }
-  // LAST CHANCE rule: every player claims their largest color group as a bonus
-  // regardless of mermaid count. Caller passes forceMinMermaids: 1 to enforce
-  // this (and the bonus stacks normally if the player actually has mermaids).
   const effective = Math.max(mermaidCount, opts.forceMinMermaids ?? 0);
   if (effective === 0) return 0;
 
-  const groups = Object.values(byColor).sort((a, b) => b - a);
+  const groups: number[] = [];
+  for (const [color, n] of Object.entries(byColor)) {
+    if (color === 'white') continue;
+    if (n > 0) groups.push(n);
+  }
+  groups.sort((a, b) => b - a);
   let bonus = 0;
   for (let i = 0; i < effective && i < groups.length; i++) {
     bonus += groups[i];
   }
   return bonus;
+}
+
+/** "Special color bonus" per the rulebook: 1 point per card of the color the
+ *  player has most of (their single largest color group, including white).
+ *  Earned by every player when the round ended via LAST CHANCE; not earned
+ *  on STOP / deck-empty / mermaid-win. Computed independently of the mermaid
+ *  claims that go into the card-points column. */
+export function specialColorBonus(cards: SspCard[]): number {
+  const byColor: Record<SspColor, number> = {
+    white: 0, yellow: 0, green: 0, pink: 0, purple: 0,
+    teal: 0, darkblue: 0, black: 0, gray: 0, orange: 0, tan: 0,
+  };
+  for (const c of cards) byColor[c.color] += 1;
+  let best = 0;
+  for (const n of Object.values(byColor)) if (n > best) best = n;
+  return best;
 }
 
 /** Opts for cards-with-trio-cancel + per-player event holdings. */
@@ -184,28 +207,49 @@ export function cardPoints(cards: SspCard[], opts: CardPointsOpts = {}): number 
 }
 
 export interface TotalScoreOpts extends CardPointsOpts {
-  /** Calm Waters event: double the mermaid color bonus. */
+  /** Calm Waters (legacy) event: double the mermaid color bonus. */
   doubleColorBonus?: boolean;
-  /** LAST CHANCE rule: every player scores at least one largest-color group
-   *  bonus regardless of mermaid count. Set to true when round ended via
-   *  LAST CHANCE. Stacks: 2 mermaids still score 2 groups. */
+  /** Round ended via LAST CHANCE → every player earns the special color bonus
+   *  (1 point per card of their most-frequent color). On STOP / deck-empty /
+   *  mermaid-win the bonus column is 0. */
   lastChanceColorBonus?: boolean;
 }
 
-/** Sum card points + mermaid color bonus across all of a player's cards. */
+/** Score breakdown displayed on the round-end summary.
+ *  - `cardPoints` = full card scoring: duos + collectors + multipliers + trios
+ *    + mermaid claims (each mermaid claims its largest unclaimed non-white
+ *    color group). This is the score used to determine who wins the round.
+ *  - `colorBonus` = the rulebook's "special color bonus": 1 point per card of
+ *    the player's most-frequent color (any color, including white). EARNED
+ *    ONLY ON LAST CHANCE — both the caller and the opponents get this; on
+ *    STOP / deck-empty / mermaid-win the bonus is 0.
+ *  - `total` = sum of the two.
+ *
+ *  The LAST CHANCE forfeit (whichever side loses the bet) gets only the
+ *  `colorBonus` column for that round; that logic lives in the reducer.
+ */
 export function totalScore(
   handAndTable: SspCard[],
   opts: TotalScoreOpts = {},
 ): { cardPoints: number; colorBonus: number; total: number } {
   const cp = cardPoints(handAndTable, opts);
-  // Tornado: mermaids contribute nothing — no color bonus at all.
-  let cb = opts.mermaidsScoreZero
-    ? 0
-    : mermaidColorBonus(handAndTable, {
-        forceMinMermaids: opts.lastChanceColorBonus ? 1 : 0,
-      });
-  if (opts.doubleColorBonus) cb *= 2;
-  return { cardPoints: cp, colorBonus: cb, total: cp + cb };
+  if (opts.mermaidsScoreZero) {
+    return { cardPoints: cp, colorBonus: 0, total: cp };
+  }
+  let claims = mermaidColorBonus(handAndTable, { forceMinMermaids: 0 });
+  if (opts.doubleColorBonus) claims *= 2;
+  const cards = cp + claims;
+  // The special color bonus is always computed (displayed) but only counts
+  // toward total when LAST CHANCE was called. Callers that just need the
+  // tentative score (e.g. STOP-threshold checks) leave lastChanceColorBonus
+  // off → bonus is shown × in the round summary and excluded from total.
+  const bonus = specialColorBonus(handAndTable);
+  const counts = !!opts.lastChanceColorBonus;
+  return {
+    cardPoints: cards,
+    colorBonus: bonus,
+    total: cards + (counts ? bonus : 0),
+  };
 }
 
 /** Convenience — combined hand + table for a player. */

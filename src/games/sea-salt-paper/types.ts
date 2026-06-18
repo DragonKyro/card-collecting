@@ -86,6 +86,10 @@ export interface SspPlayerRoundScore {
   total: number;
   /** True when this player's card points were forfeit because they lost a LAST CHANCE bet. */
   forfeitCards: boolean;
+  /** True when the color bonus is shown for reference but does NOT count
+   *  toward the round total. Happens on STOP / deck-empty / mermaid-win,
+   *  where the special color bonus is only earned on LAST CHANCE. */
+  forfeitBonus: boolean;
 }
 
 export interface SspRoundSummary {

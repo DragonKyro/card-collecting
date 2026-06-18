@@ -35,8 +35,7 @@ import type {
 } from './types';
 import { buildShuffledDeck, isMultiplierFamily, isCollectorFamily } from './cards';
 import {
-  allCards, cardPoints, isValidDuoPair, isValidStarfishTrio,
-  mermaidColorBonus, tentativeScore,
+  allCards, isValidDuoPair, isValidStarfishTrio, tentativeScore, totalScore,
 } from './scoring';
 import {
   EVENT_BY_ID, currentEvent, eventAppliesTo,
@@ -123,19 +122,18 @@ function scoreRound(state: SspState, summaryKind: SspRoundSummary['endedBy'], en
   // Compute baseline scores. Per-player scoring opts pull in starfish trios
   // and any active event-driven scoring overrides (Dance of Shells, Kraken,
   // Tornado). LAST CHANCE: every player gets at least one largest-color-group
-  // bonus regardless of mermaid count.
+  // claim regardless of mermaid count.
+  //
+  // Display split:
+  //   cardPoints column = duo/collector/multiplier/trio scoring + mermaid claims
+  //   colorBonus column = number of WHITE cards held (== mermaid count)
+  // The two together equal the round's total points.
   const isLastChance = summaryKind === 'lastChance';
   const baseScores = state.players.map((p) => {
     const cards = allCards(p.hand, p.table);
-    const opts = scoringOptsFor(state, p);
-    const cp = cardPoints(cards, opts);
-    // Tornado: mermaids contribute 0 — both the family score (already 0 in
-    // base) and the color bonus. Per-player check because the event may be
-    // held by a single player after the round it was revealed.
-    const cb = opts.mermaidsScoreZero
-      ? 0
-      : mermaidColorBonus(cards, { forceMinMermaids: isLastChance ? 1 : 0 });
-    return { p, cardPoints: cp, colorBonus: cb };
+    const opts = { ...scoringOptsFor(state, p), lastChanceColorBonus: isLastChance };
+    const breakdown = totalScore(cards, opts);
+    return { p, cardPoints: breakdown.cardPoints, colorBonus: breakdown.colorBonus };
   });
 
   let forfeitCallerId: PlayerId | null = null;
@@ -163,8 +161,10 @@ function scoreRound(state: SspState, summaryKind: SspRoundSummary['endedBy'], en
 
   const perPlayer: SspPlayerRoundScore[] = baseScores.map(({ p, cardPoints: cp, colorBonus: cb }) => {
     let forfeitCards = false;
+    let forfeitBonus = false;
     let total: number;
     if (summaryKind === 'lastChance' && endedBy) {
+      // LAST CHANCE: bonus column always counts (both bet winner and loser).
       if (lastChanceWon) {
         if (p.id === endedBy) {
           total = cp + cb;
@@ -181,7 +181,11 @@ function scoreRound(state: SspState, summaryKind: SspRoundSummary['endedBy'], en
         }
       }
     } else {
-      total = cp + cb;
+      // STOP / deck-empty / mermaid-win: the special color bonus is shown for
+      // reference (so the player can see what they would have got) but does
+      // NOT contribute to the round total.
+      forfeitBonus = true;
+      total = cp;
     }
     return {
       playerId: p.id,
@@ -189,6 +193,7 @@ function scoreRound(state: SspState, summaryKind: SspRoundSummary['endedBy'], en
       colorBonus: cb,
       total,
       forfeitCards,
+      forfeitBonus,
     };
   });
 

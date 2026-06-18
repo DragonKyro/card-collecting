@@ -32,7 +32,6 @@ export function CardView({ card, size = 'normal', selectable, selected, onClick,
     <div className={cls} onClick={onClick} ref={flipRef}>
       <div className="ribbon">
         <span className="pts">{ribbonValue(card.family)}</span>
-        <span className="fam">{shortName(card.family)}</span>
       </div>
       <div className="color-bar" />
       <div className="art">
@@ -52,27 +51,6 @@ export function CardView({ card, size = 'normal', selectable, selected, onClick,
 
 export function FaceDownCard({ size = 'normal' }: { size?: 'normal' | 'small' }) {
   return <div className={`card facedown ${size === 'small' ? 'small' : ''}`} />;
-}
-
-function shortName(family: SspCardFamily): string {
-  switch (family) {
-    case 'penguinColony': return 'COLNY';
-    case 'lighthouse': return 'L.HSE';
-    case 'shoal': return 'SHOAL';
-    case 'captain': return 'CAPT';
-    case 'mermaid': return 'MERM';
-    case 'swimmer': return 'SWIM';
-    case 'octopus': return 'OCTO';
-    case 'penguin': return 'PNGN';
-    case 'sailor': return 'SAIL';
-    case 'shark': return 'SHRK';
-    case 'jellyfish': return 'JELLY';
-    case 'lobster': return 'LOBST';
-    case 'starfish': return 'STAR';
-    case 'seahorse': return 'SHRSE';
-    case 'crabBasket': return 'CRABS';
-    default: return family.slice(0, 4).toUpperCase();
-  }
 }
 
 function ribbonValue(family: SspCardFamily): string {

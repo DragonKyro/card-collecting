@@ -66,28 +66,20 @@ export function SspFlipProvider({ children }: { children: ReactNode }) {
       const prevZone = state.lastZone.get(id);
       if (prevZone === nowZone) continue; // no movement between zones
 
-      // Pick the source rect, in priority order:
-      //   1. The card's own last-known rect (best fidelity — accounts for
-      //      its actual previous location like a specific pile slot).
-      //   2. The last rect of the previous zone's anchor (e.g. the pile the
-      //      card was sitting on top of).
-      //   3. The current rect of the previous zone's anchor (re-entry).
-      //   4. The anchor of the CURRENT zone — this is the case for a card
-      //      with no recorded history (e.g. the card UNDERNEATH the one just
-      //      taken off a pile, which was hidden until the top was removed).
-      //      Using its own current zone produces dx=dy=0 → no animation.
-      //   5. Last-resort: the deck anchor.
+      // Pick the source rect. We will ONLY animate when the card has a
+      // recorded prior position, OR we have a concrete prior-zone anchor
+      // rect. If we know nothing about the card's past, do NOT invent a
+      // deck-flight animation — that produces phantom "card flew from deck"
+      // moves for cards that simply appeared (e.g. AI drew, overlay closed
+      // with a different visible card, etc.).
       let source: DOMRect | undefined;
       const ownRect = state.lastCardRect.get(id);
       const lastPrevAnchor = prevZone ? state.lastAnchorRect.get(prevZone) : undefined;
       const curPrevAnchor = prevZone ? anchorRects.get(prevZone) : undefined;
-      const curNowAnchor = anchorRects.get(nowZone);
-      const deckAnchor = anchorRects.get('deck');
       if (ownRect) source = ownRect;
       else if (lastPrevAnchor) source = lastPrevAnchor;
       else if (curPrevAnchor) source = curPrevAnchor;
-      else if (curNowAnchor) source = curNowAnchor;
-      else source = deckAnchor;
+      // No third-fallback: cards with no past silently mount in place.
       if (!source) continue;
       const dx = source.left - next.left;
       const dy = source.top - next.top;

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { GameUiBundle } from '@/core/module';
 import type { PlayerId, Seat } from '@/core/types';
 import type {
@@ -11,6 +11,7 @@ import { EVENT_BY_ID, ALL_EVENT_IDS } from './events';
 import { Sidebar } from './Sidebar';
 import { RulesBook, RulesHero, RulesGrid, RulesTile } from '@/ui/RulesBook';
 import { SspFlipProvider, useFlipAnchor } from './cardFlip';
+import { OpponentMoveAnim } from './OpponentMoveAnim';
 import './ssp.css';
 
 function LobbyConfig({ config, seats, onChange }: { config: SspConfig; seats: Seat[]; onChange: (c: SspConfig) => void }) {
@@ -467,9 +468,11 @@ function GameView({
 
   return (
     <SspFlipProvider>
+    <>
     <div className="ssp-layout">
       <div className="ssp">
         <div className="board">
+          <LastChanceBanner state={state} />
           <div className="target-info">
             <span>Round {state.round}</span>
             <span>{state.deck.length} cards left in deck</span>
@@ -539,7 +542,7 @@ function GameView({
           )}
 
           {me ? (
-            <div className="hand-area">
+            <div className="hand-area" data-anchor="hand-me">
               <h3>
                 <span>{getSeat(state, me.id)?.name ?? 'You'} — {myTentative} pt{myTentative === 1 ? '' : 's'}</span>
                 <ColorCountStrip cards={[...me.hand, ...me.table]} />
@@ -645,6 +648,8 @@ function GameView({
 
       <Sidebar state={state} mySeatName={mySeatName} localPlayerId={localPlayerId} />
     </div>
+    <OpponentMoveAnim state={state} localPlayerId={localPlayerId} />
+    </>
     </SspFlipProvider>
   );
 }
@@ -675,6 +680,7 @@ function CenterStrip({
     <div className="center">
       <div
         ref={deckAnchorRef}
+        data-anchor="deck"
         className={`deck-stack ${canDraw && state.deck.length >= 2 ? 'clickable' : ''}`}
         onClick={canDraw && state.deck.length >= 2 ? onDeckClick : undefined}
         title={canDraw ? 'Click to draw two from the deck' : ''}
@@ -746,6 +752,7 @@ function PileSlot({
   return (
     <div
       ref={anchorRef}
+      data-anchor={`pile-${i}`}
       className={`pile ${pile.length === 0 ? 'empty' : ''} ${clickable ? 'clickable' : ''} ${highlight ? 'target-discard' : ''}`}
       onClick={clickable ? () => onPileClick(i) : undefined}
       title={titleText}
@@ -759,6 +766,38 @@ function PileSlot({
 
 /** Shows a per-color tally of the local player's cards (hand + table).
  *  Useful for planning mermaid bonuses and color diversity at a glance. */
+/** Big celebratory overlay that fires when somebody calls LAST CHANCE. Listens
+ *  for transitions of `state.lastChanceFrom` from null to a player id, then
+ *  fades a full-board banner in for ~2.5s with the caller's name. */
+function LastChanceBanner({ state }: { state: SspState }) {
+  const callerId = state.lastChanceFrom;
+  const [show, setShow] = useState<PlayerId | null>(null);
+  const lastSeen = useRef<PlayerId | null>(null);
+  useEffect(() => {
+    if (callerId && lastSeen.current !== callerId) {
+      lastSeen.current = callerId;
+      setShow(callerId);
+      const t = setTimeout(() => setShow(null), 2500);
+      return () => clearTimeout(t);
+    }
+    if (!callerId) lastSeen.current = null;
+  }, [callerId]);
+
+  if (!show) return null;
+  const seat = state.seats.find((s) => s.id === show);
+  return (
+    <div className="ssp-lastchance-banner" role="alert">
+      <div className="ssp-lastchance-card">
+        <div className="ssp-lastchance-eyebrow">⚡ LAST CHANCE ⚡</div>
+        <div className="ssp-lastchance-name" style={{ color: seat?.color ?? '#fff' }}>
+          {seat?.name ?? show}
+        </div>
+        <div className="ssp-lastchance-sub">called the round — one more turn for everyone!</div>
+      </div>
+    </div>
+  );
+}
+
 function ColorCountStrip({ cards }: { cards: SspCard[] }) {
   const order: { color: SspColor; label: string; swatch: string }[] = [
     { color: 'darkblue', label: 'DBlue', swatch: 'var(--darkblue)' },
@@ -936,7 +975,7 @@ function PlayerStrip({ player, seat, isActive, reveal }: {
     trios: player.trios?.length ?? 0,
   });
   return (
-    <div className={`player-strip ${isActive ? 'active' : ''}`}>
+    <div className={`player-strip ${isActive ? 'active' : ''}`} data-anchor={`hand-${player.id}`}>
       <header>
         <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <span style={{ width: 10, height: 10, background: seat?.color ?? '#888', borderRadius: 2 }} />
@@ -995,7 +1034,7 @@ function RoundSummary({ state, dispatch }: { state: SspState; dispatch: (a: SspA
               <tr key={row.playerId} className={row.forfeitCards ? 'forfeit' : ''}>
                 <td>{nameOf(state, row.playerId)}</td>
                 <td className="num">{row.forfeitCards ? `(${row.cardPoints} ✕)` : row.cardPoints}</td>
-                <td className="num">{row.colorBonus}</td>
+                <td className={`num ${row.forfeitBonus ? 'forfeit-cell' : ''}`}>{row.forfeitBonus ? `(${row.colorBonus} ✕)` : row.colorBonus}</td>
                 <td className="num"><strong>{row.total}</strong></td>
                 <td className="num">{p.matchScore}</td>
               </tr>
