@@ -23,11 +23,7 @@ jobs:
         with:
           node-version: 20
           cache: npm
-      # `npm install` (not `npm ci`) so the lock file can be slightly stale
-      # vs package.json (we added recharts after the last "clean" lock and
-      # can't regenerate it locally because the dev box can only reach the
-      # DRW Artifactory registry, not npmjs.org).
-      - run: npm install --no-audit --no-fund
+      - run: npm ci
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
         with:

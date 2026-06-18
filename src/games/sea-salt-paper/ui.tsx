@@ -12,12 +12,6 @@ import { Sidebar } from './Sidebar';
 import { RulesBook, RulesHero, RulesGrid, RulesTile } from '@/ui/RulesBook';
 import { SspFlipProvider, useFlipAnchor } from './cardFlip';
 import { OpponentMoveAnim } from './OpponentMoveAnim';
-import {
-  ResponsiveContainer,
-  LineChart, Line,
-  BarChart, Bar, Cell as BarFill,
-  XAxis, YAxis, CartesianGrid, Tooltip, Legend,
-} from 'recharts';
 import './ssp.css';
 
 function LobbyConfig({ config, seats, onChange }: { config: SspConfig; seats: Seat[]; onChange: (c: SspConfig) => void }) {
@@ -1246,40 +1240,59 @@ function CumulativeChart({ cumulative, playerIds, colorOf, nameById }: {
   nameById: (pid: PlayerId) => string;
 }) {
   const rounds = (cumulative[playerIds[0]] ?? [0]).length - 1;
-  // Recharts wants an array of { round, [playerName1]: v, [playerName2]: v }
-  const data = Array.from({ length: rounds + 1 }, (_, r) => {
-    const row: Record<string, number | string> = { round: r === 0 ? 'Start' : `R${r}` };
-    for (const pid of playerIds) {
-      row[nameById(pid)] = cumulative[pid][r];
-    }
-    return row;
-  });
+  const maxScore = Math.max(1, ...playerIds.flatMap((pid) => cumulative[pid]));
+  const W = 640;
+  const H = 260;
+  const padL = 38;
+  const padR = 18;
+  const padT = 14;
+  const padB = 30;
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+  const x = (r: number) => padL + (rounds === 0 ? 0 : (r / rounds) * innerW);
+  const y = (v: number) => padT + innerH - (v / maxScore) * innerH;
+  const gridLines = [0, 0.25, 0.5, 0.75, 1];
+  const ink = 'rgba(28, 26, 46, 0.7)';
+  const inkLight = 'rgba(28, 26, 46, 0.12)';
   return (
-    <div style={{ width: '100%', height: 260, marginBottom: 8 }}>
-      <ResponsiveContainer>
-        <LineChart data={data} margin={{ top: 12, right: 18, left: 0, bottom: 4 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="rgba(28, 26, 46, 0.12)" />
-          <XAxis dataKey="round" stroke="rgba(28, 26, 46, 0.7)" fontSize={12} />
-          <YAxis stroke="rgba(28, 26, 46, 0.7)" fontSize={12} />
-          <Tooltip
-            contentStyle={{ background: '#fbf6ea', border: '1px solid #d6c5a0', borderRadius: 6, fontSize: 12, color: '#1c1a2e' }}
-            labelStyle={{ fontWeight: 600 }}
-          />
-          <Legend wrapperStyle={{ fontSize: 12, paddingTop: 4 }} />
-          {playerIds.map((pid) => (
-            <Line
-              key={pid}
-              type="monotone"
-              dataKey={nameById(pid)}
-              stroke={colorOf(pid)}
-              strokeWidth={2.5}
-              dot={{ r: 4, fill: colorOf(pid), strokeWidth: 0 }}
-              activeDot={{ r: 6 }}
-              isAnimationActive={false}
-            />
-          ))}
-        </LineChart>
-      </ResponsiveContainer>
+    <div style={{ marginBottom: 12 }}>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ maxWidth: '100%', height: 'auto', display: 'block' }}>
+        {gridLines.map((f) => (
+          <line key={`g-${f}`} x1={padL} y1={padT + f * innerH} x2={W - padR} y2={padT + f * innerH}
+                stroke={inkLight} strokeDasharray="3 3" />
+        ))}
+        {gridLines.map((f) => (
+          <text key={`yl-${f}`} x={padL - 8} y={padT + (1 - f) * innerH + 4}
+                fontSize={11} textAnchor="end" fill={ink}>
+            {Math.round(f * maxScore)}
+          </text>
+        ))}
+        {Array.from({ length: rounds + 1 }, (_, r) => (
+          <text key={`xl-${r}`} x={x(r)} y={H - 10} fontSize={11} textAnchor="middle" fill={ink}>
+            {r === 0 ? 'Start' : `R${r}`}
+          </text>
+        ))}
+        {playerIds.map((pid) => {
+          const series = cumulative[pid];
+          const points = series.map((v, r) => `${x(r)},${y(v)}`).join(' ');
+          return (
+            <g key={pid}>
+              <polyline points={points} fill="none" stroke={colorOf(pid)} strokeWidth={2.5} strokeLinejoin="round" />
+              {series.map((v, r) => (
+                <circle key={r} cx={x(r)} cy={y(v)} r={3.5} fill={colorOf(pid)} />
+              ))}
+            </g>
+          );
+        })}
+      </svg>
+      <div style={{ display: 'flex', gap: 14, marginTop: 4, flexWrap: 'wrap', justifyContent: 'center', fontSize: 12, color: 'var(--paper-ink)' }}>
+        {playerIds.map((pid) => (
+          <span key={pid}>
+            <span style={{ display: 'inline-block', width: 12, height: 12, background: colorOf(pid), borderRadius: 2, marginRight: 4, verticalAlign: 'middle' }} />
+            {nameById(pid)}
+          </span>
+        ))}
+      </div>
     </div>
   );
 }
@@ -1289,52 +1302,84 @@ function PerRoundBars({ data, colorOf, nameById }: {
   colorOf: (pid: PlayerId) => string;
   nameById: (pid: PlayerId) => string;
 }) {
-  // Recharts wants one row per X-axis tick. Build one row per (round × player)
-  // so each bar represents a player's per-round score split into "cards" and
-  // "bonus" stacked segments.
   const playerIds = data[0]?.bars.map((b) => b.pid) ?? [];
+  // Flatten to one bar per (round × player) so each player has a visible bar
+  // per round. Stack Cards (full opacity) + Bonus (55% opacity).
   const rows = data.flatMap((d) =>
     d.bars.map((b) => ({
-      label: `R${d.round}\n${nameById(b.pid)}`,
+      round: d.round,
+      pid: b.pid,
       cards: b.forfeitCards ? 0 : b.cards,
       bonus: b.forfeitBonus ? 0 : b.bonus,
-      pid: b.pid,
       total: b.total,
     }))
   );
+  const maxV = Math.max(1, ...rows.map((r) => r.cards + r.bonus));
+  const W = 640;
+  const H = 260;
+  const padL = 38;
+  const padR = 14;
+  const padT = 14;
+  const padB = 46;
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+  const barW = Math.max(8, innerW / rows.length * 0.7);
+  const slotW = rows.length > 0 ? innerW / rows.length : 0;
+  const ink = 'rgba(28, 26, 46, 0.7)';
+  const inkLight = 'rgba(28, 26, 46, 0.12)';
+  const yScale = (v: number) => (v / maxV) * innerH;
+  const gridLines = [0, 0.25, 0.5, 0.75, 1];
   return (
-    <div style={{ width: '100%', height: 240, marginBottom: 8 }}>
-      <ResponsiveContainer>
-        <BarChart data={rows} margin={{ top: 12, right: 18, left: 0, bottom: 24 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="rgba(28, 26, 46, 0.12)" />
-          <XAxis dataKey="label" stroke="rgba(28, 26, 46, 0.7)" fontSize={11} interval={0}
-                 tickFormatter={(v: string) => v.replace('\n', ' · ')} />
-          <YAxis stroke="rgba(28, 26, 46, 0.7)" fontSize={12} />
-          <Tooltip
-            contentStyle={{ background: '#fbf6ea', border: '1px solid #d6c5a0', borderRadius: 6, fontSize: 12, color: '#1c1a2e' }}
-            labelStyle={{ fontWeight: 600 }}
-            formatter={(value, name) => [`${value} pts`, name === 'cards' ? 'Cards' : 'Bonus']}
-          />
-          <Legend wrapperStyle={{ fontSize: 12, paddingTop: 4 }} formatter={(v: string) => v === 'cards' ? 'Cards' : 'Bonus'} />
-          <Bar dataKey="cards" stackId="s" isAnimationActive={false}>
-            {rows.map((r, i) => (
-              <BarFill key={i} fill={colorOf(r.pid)} fillOpacity={1} />
-            ))}
-          </Bar>
-          <Bar dataKey="bonus" stackId="s" isAnimationActive={false}>
-            {rows.map((r, i) => (
-              <BarFill key={i} fill={colorOf(r.pid)} fillOpacity={0.55} />
-            ))}
-          </Bar>
-        </BarChart>
-      </ResponsiveContainer>
-      <div style={{ display: 'flex', gap: 14, marginTop: 4, flexWrap: 'wrap', justifyContent: 'center', fontSize: 12 }}>
+    <div style={{ marginBottom: 12 }}>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ maxWidth: '100%', height: 'auto', display: 'block' }}>
+        {gridLines.map((f) => (
+          <line key={`g-${f}`} x1={padL} y1={padT + f * innerH} x2={W - padR} y2={padT + f * innerH}
+                stroke={inkLight} strokeDasharray="3 3" />
+        ))}
+        {gridLines.map((f) => (
+          <text key={`yl-${f}`} x={padL - 8} y={padT + (1 - f) * innerH + 4}
+                fontSize={11} textAnchor="end" fill={ink}>
+            {Math.round(f * maxV)}
+          </text>
+        ))}
+        {rows.map((r, i) => {
+          const cx = padL + i * slotW + slotW / 2;
+          const cardsH = yScale(r.cards);
+          const bonusH = yScale(r.bonus);
+          const cardsY = padT + innerH - cardsH;
+          const bonusY = cardsY - bonusH;
+          return (
+            <g key={i}>
+              <rect x={cx - barW / 2} y={cardsY} width={barW} height={cardsH}
+                    fill={colorOf(r.pid)} />
+              <rect x={cx - barW / 2} y={bonusY} width={barW} height={bonusH}
+                    fill={colorOf(r.pid)} fillOpacity={0.55} />
+              <text x={cx} y={padT + innerH + 14} fontSize={10} textAnchor="middle" fill={ink}>
+                R{r.round}
+              </text>
+              <text x={cx} y={padT + innerH + 26} fontSize={9} textAnchor="middle" fill={colorOf(r.pid)} fontWeight={600}>
+                {nameById(r.pid).slice(0, 6)}
+              </text>
+              {r.cards + r.bonus > 0 && (
+                <text x={cx} y={bonusY - 3} fontSize={10} textAnchor="middle" fill={ink} fontWeight={600}>
+                  {r.total}
+                </text>
+              )}
+            </g>
+          );
+        })}
+      </svg>
+      <div style={{ display: 'flex', gap: 14, marginTop: 4, flexWrap: 'wrap', justifyContent: 'center', fontSize: 12, color: 'var(--paper-ink)' }}>
         {playerIds.map((pid) => (
-          <span key={pid} style={{ color: 'var(--paper-ink)' }}>
+          <span key={pid}>
             <span style={{ display: 'inline-block', width: 12, height: 12, background: colorOf(pid), borderRadius: 2, marginRight: 4, verticalAlign: 'middle' }} />
             {nameById(pid)}
           </span>
         ))}
+        <span style={{ color: ink, fontStyle: 'italic' }}>
+          <span style={{ display: 'inline-block', width: 12, height: 12, background: 'currentColor', opacity: 0.55, borderRadius: 2, marginRight: 4, verticalAlign: 'middle' }} />
+          paler = color bonus
+        </span>
       </div>
     </div>
   );
