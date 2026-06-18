@@ -15,7 +15,6 @@
     "noImplicitOverride": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "types": ["vitest/globals"],
     "paths": {
       "@/*": ["./src/*"]
     }
