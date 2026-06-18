@@ -51,7 +51,7 @@ function LobbyConfig({ config, seats, onChange }: { config: SushiGoConfig; seats
           Reset to default menu
         </button>
         <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
-          Pick 1 nigiri + 1 roll + 3 appetizers + 3 specials + 1 dessert.
+          Pick 1 nigiri + 1 roll + 3 appetizers + 2 specials + 1 dessert.
         </span>
       </div>
       {CATEGORIES_ORDERED.map((cat) => (
@@ -71,7 +71,6 @@ function LobbyConfig({ config, seats, onChange }: { config: SushiGoConfig; seats
                   title={KIND_INFO[k].rule}
                 >
                   <strong>{KIND_INFO[k].label}</strong>
-                  <span className="rule">{KIND_INFO[k].rule}</span>
                 </button>
               );
             })}
@@ -132,14 +131,14 @@ function Rules() {
               <h3>Setup</h3>
               <p>
                 Build a menu of exactly <strong>8 kinds</strong>:
-                1 nigiri set + 1 roll + 3 appetizers + 3 specials + 1 dessert.
+                1 nigiri set + 1 roll + 3 appetizers + 2 specials + 1 dessert.
                 The default menu mirrors the original Sushi Go! base game.
               </p>
             </>
           ),
         },
         {
-          title: 'Specials',
+          title: 'Abilities',
           body: (
             <>
               <RulesGrid cols={2}>
@@ -158,44 +157,48 @@ function Rules() {
           ),
         },
         {
-          title: 'Nigiri &amp; Rolls',
+          title: 'Nigiri',
           body: (
             <>
-              <h3>Nigiri</h3>
               <table className="tight">
                 <thead><tr><th>Kind</th><th className="num">Count</th><th>Rule</th></tr></thead>
                 <tbody>{cardRows('nigiri')}</tbody>
               </table>
               <p className="muted">Nigiri is a single kind with 3 variants: egg ×4, salmon ×5, squid ×5.</p>
-              <h3>Rolls</h3>
-              <table className="tight">
-                <thead><tr><th>Kind</th><th className="num">Count</th><th>Rule</th></tr></thead>
-                <tbody>{cardRows('roll')}</tbody>
-              </table>
             </>
+          ),
+        },
+        {
+          title: 'Rolls',
+          body: (
+            <table className="tight">
+              <thead><tr><th>Kind</th><th className="num">Count</th><th>Rule</th></tr></thead>
+              <tbody>{cardRows('roll')}</tbody>
+            </table>
           ),
         },
         {
           title: 'Appetizers',
           body: (
-            <>
-              <table className="tight">
-                <thead><tr><th>Kind</th><th className="num">Count</th><th>Rule</th></tr></thead>
-                <tbody>{cardRows('appetizer')}</tbody>
-              </table>
-            </>
+            <table className="tight">
+              <thead><tr><th>Kind</th><th className="num">Count</th><th>Rule</th></tr></thead>
+              <tbody>{cardRows('appetizer')}</tbody>
+            </table>
           ),
         },
         {
-          title: 'Specials &amp; Desserts',
+          title: 'Specials',
+          body: (
+            <table className="tight">
+              <thead><tr><th>Kind</th><th className="num">Count</th><th>Rule</th></tr></thead>
+              <tbody>{cardRows('special')}</tbody>
+            </table>
+          ),
+        },
+        {
+          title: 'Desserts',
           body: (
             <>
-              <h3>Specials</h3>
-              <table className="tight">
-                <thead><tr><th>Kind</th><th className="num">Count</th><th>Rule</th></tr></thead>
-                <tbody>{cardRows('special')}</tbody>
-              </table>
-              <h3>Desserts</h3>
               <table className="tight">
                 <thead><tr><th>Kind</th><th className="num">Count</th><th>Rule</th></tr></thead>
                 <tbody>{cardRows('dessert')}</tbody>

@@ -421,14 +421,15 @@ function biggestOpponentScore(state: SspState, meId: PlayerId): number {
   return max;
 }
 
-/** Biggest opponent TOTAL score (cards + color bonus). Used for LAST CHANCE
- *  bet evaluation since the bet compares totals, not just card points. */
-function biggestOpponentTotal(state: SspState, meId: PlayerId): number {
+/** Biggest opponent CARD-POINTS score (including mermaid claims, excluding
+ *  the special color bonus). Used for LAST CHANCE bet evaluation since the
+ *  bet compares card points only — the color bonus is paid to everyone. */
+function biggestOpponentCardScore(state: SspState, meId: PlayerId): number {
   let max = 0;
   for (const p of state.players) {
     if (p.id === meId) continue;
-    const total = totalScore([...p.hand, ...p.table]).total;
-    max = Math.max(max, total);
+    const sc = totalScore([...p.hand, ...p.table]);
+    max = Math.max(max, sc.cardPoints);
   }
   return max;
 }
@@ -546,17 +547,16 @@ export function chooseAIAction(state: SspState, playerId: PlayerId): SspAction |
           return { type: 'stop' };
         }
 
-        // LAST CHANCE bet evaluation: the bet is on TOTAL points (cards +
-        // mermaid color bonus), not card points alone. We win the bet if our
-        // total stays ≥ every opponent's total after they take one more turn.
-        const myTotal = totalScore([...me.hand, ...me.table]).total;
-        const oppMaxTotal = biggestOpponentTotal(state, me.id);
+        // LAST CHANCE bet evaluation: the bet compares CARD POINTS only (the
+        // special color bonus is paid to every player regardless of the bet).
+        // We win the bet if our card total stays ≥ every opponent's card
+        // total after they take one more turn. Ties go to the caller.
+        const myCards = totalScore([...me.hand, ...me.table]).cardPoints;
+        const oppMaxCards = biggestOpponentCardScore(state, me.id);
         // After their last turn each opponent could gain ~expectedUnseenDraw
-        // worth of card value (one draw + possibly a free pair). Be moderately
-        // pessimistic: 1.2× expected draw.
-        const expectedOpponentTotalAfter = oppMaxTotal + 1.2 * expectedUnseenDrawValue(me, know);
-        const betWinMargin = myTotal - expectedOpponentTotalAfter;
-        // Bonus when our match lead is small (we need more aggressive plays).
+        // worth of card value. Be moderately pessimistic: 1.2× expected draw.
+        const expectedOpponentCardsAfter = oppMaxCards + 1.2 * expectedUnseenDrawValue(me, know);
+        const betWinMargin = myCards - expectedOpponentCardsAfter;
         const aggressionBoost = myMatchLeadAfter < 0 ? 2 : 0;
         if (betWinMargin + aggressionBoost >= 2 && myMatchLeadAfter > -10) {
           return { type: 'lastChance' };

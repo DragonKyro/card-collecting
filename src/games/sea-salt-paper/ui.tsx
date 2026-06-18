@@ -12,6 +12,12 @@ import { Sidebar } from './Sidebar';
 import { RulesBook, RulesHero, RulesGrid, RulesTile } from '@/ui/RulesBook';
 import { SspFlipProvider, useFlipAnchor } from './cardFlip';
 import { OpponentMoveAnim } from './OpponentMoveAnim';
+import {
+  ResponsiveContainer,
+  LineChart, Line,
+  BarChart, Bar, Cell as BarFill,
+  XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+} from 'recharts';
 import './ssp.css';
 
 function LobbyConfig({ config, seats, onChange }: { config: SspConfig; seats: Seat[]; onChange: (c: SspConfig) => void }) {
@@ -1093,7 +1099,290 @@ function GameOver({ state }: { state: SspState }) {
           </tbody>
         </table>
       </div>
+      <MatchStats state={state} />
     </div>
+  );
+}
+
+function MatchStats({ state }: { state: SspState }) {
+  const rounds = state.roundHistory ?? [];
+  if (rounds.length === 0) return null;
+
+  // Cumulative score per player per round.
+  const playerIds = state.players.map((p) => p.id);
+  const colorOf = (pid: PlayerId) => state.seats.find((s) => s.id === pid)?.color ?? '#888';
+  const nameById = (pid: PlayerId) => state.seats.find((s) => s.id === pid)?.name ?? pid;
+  const cumulative: Record<PlayerId, number[]> = {};
+  for (const pid of playerIds) cumulative[pid] = [0];
+  for (const r of rounds) {
+    for (const pid of playerIds) {
+      const row = r.perPlayer.find((x) => x.playerId === pid);
+      const prev = cumulative[pid][cumulative[pid].length - 1];
+      cumulative[pid].push(prev + (row?.total ?? 0));
+    }
+  }
+
+  // Per-round per-player STACKED bars (cards + bonus).
+  const perRoundBreakdown = rounds.map((r) => ({
+    round: r.round,
+    bars: r.perPlayer.map((pp) => ({
+      pid: pp.playerId,
+      cards: pp.cardPoints,
+      bonus: pp.colorBonus,
+      total: pp.total,
+      forfeitCards: pp.forfeitCards,
+      forfeitBonus: pp.forfeitBonus,
+    })),
+  }));
+
+  // STOP vs LAST CHANCE history.
+  const endingTypes = rounds.map((r) => ({
+    round: r.round,
+    kind: r.endedBy,
+    by: r.endedByPlayerId,
+    won: r.lastChanceWon,
+  }));
+
+  // Card-type breakdown per player at MATCH END.
+  const breakdownByType: Record<PlayerId, { duos: number; collectors: number; multipliers: number; mermaids: number; other: number }> = {};
+  for (const p of state.players) {
+    const all = [...p.hand, ...p.table];
+    let duos = 0, coll = 0, mult = 0, mer = 0, other = 0;
+    for (const c of all) {
+      const cat = FAMILY[c.family]?.category;
+      if (cat === 'duo') duos++;
+      else if (cat === 'collector') coll++;
+      else if (cat === 'multiplier') mult++;
+      else if (cat === 'mermaid') mer++;
+      else other++;
+    }
+    breakdownByType[p.id] = { duos, collectors: coll, multipliers: mult, mermaids: mer, other };
+  }
+
+  // Color distribution at match end vs deck distribution.
+  const deckColorCounts: Record<string, number> = {};
+  for (const family of FAMILY_ORDER) {
+    const palette = FAMILY_COLORS[family];
+    for (const c of palette) deckColorCounts[c] = (deckColorCounts[c] ?? 0) + 1;
+  }
+  const colorBreakdown: Record<PlayerId, Record<string, number>> = {};
+  for (const p of state.players) {
+    const all = [...p.hand, ...p.table];
+    const tally: Record<string, number> = {};
+    for (const c of all) tally[c.color] = (tally[c.color] ?? 0) + 1;
+    colorBreakdown[p.id] = tally;
+  }
+
+  return (
+    <div className="ssp-stats">
+      <h2 style={{ margin: '22px 0 8px' }}>📊 Match stats</h2>
+
+      <h3>Cumulative score</h3>
+      <CumulativeChart cumulative={cumulative} playerIds={playerIds} colorOf={colorOf} nameById={nameById} />
+
+      <h3>Per-round breakdown</h3>
+      <PerRoundBars data={perRoundBreakdown} colorOf={colorOf} nameById={nameById} />
+
+      <h3>Round endings</h3>
+      <table>
+        <thead>
+          <tr><th>Round</th><th>How it ended</th><th>By</th><th>Result</th></tr>
+        </thead>
+        <tbody>
+          {endingTypes.map((e) => (
+            <tr key={e.round}>
+              <td>R{e.round}</td>
+              <td>
+                {e.kind === 'stop' && <span style={{ color: '#2ecc71', fontWeight: 700 }}>STOP</span>}
+                {e.kind === 'lastChance' && <span style={{ color: '#e0584f', fontWeight: 700 }}>LAST CHANCE</span>}
+                {e.kind === 'deckEmpty' && <span style={{ color: '#888' }}>Deck empty</span>}
+                {e.kind === 'mermaid' && <span style={{ color: '#f4d268', fontWeight: 700 }}>4 mermaids</span>}
+              </td>
+              <td>{e.by ? <span style={{ color: colorOf(e.by), fontWeight: 600 }}>{nameById(e.by)}</span> : '—'}</td>
+              <td>
+                {e.kind === 'lastChance'
+                  ? (e.won ? 'Bet won' : 'Bet lost')
+                  : '—'}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <h3>Final tableau by card category</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Player</th>
+            <th className="num">Duos</th>
+            <th className="num">Collectors</th>
+            <th className="num">Multipliers</th>
+            <th className="num">Mermaids</th>
+          </tr>
+        </thead>
+        <tbody>
+          {state.players.map((p) => (
+            <tr key={p.id}>
+              <td><span style={{ color: colorOf(p.id), fontWeight: 600 }}>{nameById(p.id)}</span></td>
+              <td className="num">{breakdownByType[p.id].duos}</td>
+              <td className="num">{breakdownByType[p.id].collectors}</td>
+              <td className="num">{breakdownByType[p.id].multipliers}</td>
+              <td className="num">{breakdownByType[p.id].mermaids}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <h3>Color groups in final tableau</h3>
+      <ColorGroupsTable colorBreakdown={colorBreakdown} state={state} colorOf={colorOf} nameById={nameById} deckColorCounts={deckColorCounts} />
+    </div>
+  );
+}
+
+function CumulativeChart({ cumulative, playerIds, colorOf, nameById }: {
+  cumulative: Record<PlayerId, number[]>;
+  playerIds: PlayerId[];
+  colorOf: (pid: PlayerId) => string;
+  nameById: (pid: PlayerId) => string;
+}) {
+  const rounds = (cumulative[playerIds[0]] ?? [0]).length - 1;
+  // Recharts wants an array of { round, [playerName1]: v, [playerName2]: v }
+  const data = Array.from({ length: rounds + 1 }, (_, r) => {
+    const row: Record<string, number | string> = { round: r === 0 ? 'Start' : `R${r}` };
+    for (const pid of playerIds) {
+      row[nameById(pid)] = cumulative[pid][r];
+    }
+    return row;
+  });
+  return (
+    <div style={{ width: '100%', height: 260, marginBottom: 8 }}>
+      <ResponsiveContainer>
+        <LineChart data={data} margin={{ top: 12, right: 18, left: 0, bottom: 4 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="rgba(28, 26, 46, 0.12)" />
+          <XAxis dataKey="round" stroke="rgba(28, 26, 46, 0.7)" fontSize={12} />
+          <YAxis stroke="rgba(28, 26, 46, 0.7)" fontSize={12} />
+          <Tooltip
+            contentStyle={{ background: '#fbf6ea', border: '1px solid #d6c5a0', borderRadius: 6, fontSize: 12, color: '#1c1a2e' }}
+            labelStyle={{ fontWeight: 600 }}
+          />
+          <Legend wrapperStyle={{ fontSize: 12, paddingTop: 4 }} />
+          {playerIds.map((pid) => (
+            <Line
+              key={pid}
+              type="monotone"
+              dataKey={nameById(pid)}
+              stroke={colorOf(pid)}
+              strokeWidth={2.5}
+              dot={{ r: 4, fill: colorOf(pid), strokeWidth: 0 }}
+              activeDot={{ r: 6 }}
+              isAnimationActive={false}
+            />
+          ))}
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function PerRoundBars({ data, colorOf, nameById }: {
+  data: Array<{ round: number; bars: Array<{ pid: PlayerId; cards: number; bonus: number; total: number; forfeitCards: boolean; forfeitBonus: boolean }> }>;
+  colorOf: (pid: PlayerId) => string;
+  nameById: (pid: PlayerId) => string;
+}) {
+  // Recharts wants one row per X-axis tick. Build one row per (round × player)
+  // so each bar represents a player's per-round score split into "cards" and
+  // "bonus" stacked segments.
+  const playerIds = data[0]?.bars.map((b) => b.pid) ?? [];
+  const rows = data.flatMap((d) =>
+    d.bars.map((b) => ({
+      label: `R${d.round}\n${nameById(b.pid)}`,
+      cards: b.forfeitCards ? 0 : b.cards,
+      bonus: b.forfeitBonus ? 0 : b.bonus,
+      pid: b.pid,
+      total: b.total,
+    }))
+  );
+  return (
+    <div style={{ width: '100%', height: 240, marginBottom: 8 }}>
+      <ResponsiveContainer>
+        <BarChart data={rows} margin={{ top: 12, right: 18, left: 0, bottom: 24 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="rgba(28, 26, 46, 0.12)" />
+          <XAxis dataKey="label" stroke="rgba(28, 26, 46, 0.7)" fontSize={11} interval={0}
+                 tickFormatter={(v: string) => v.replace('\n', ' · ')} />
+          <YAxis stroke="rgba(28, 26, 46, 0.7)" fontSize={12} />
+          <Tooltip
+            contentStyle={{ background: '#fbf6ea', border: '1px solid #d6c5a0', borderRadius: 6, fontSize: 12, color: '#1c1a2e' }}
+            labelStyle={{ fontWeight: 600 }}
+            formatter={(value, name) => [`${value} pts`, name === 'cards' ? 'Cards' : 'Bonus']}
+          />
+          <Legend wrapperStyle={{ fontSize: 12, paddingTop: 4 }} formatter={(v: string) => v === 'cards' ? 'Cards' : 'Bonus'} />
+          <Bar dataKey="cards" stackId="s" isAnimationActive={false}>
+            {rows.map((r, i) => (
+              <BarFill key={i} fill={colorOf(r.pid)} fillOpacity={1} />
+            ))}
+          </Bar>
+          <Bar dataKey="bonus" stackId="s" isAnimationActive={false}>
+            {rows.map((r, i) => (
+              <BarFill key={i} fill={colorOf(r.pid)} fillOpacity={0.55} />
+            ))}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+      <div style={{ display: 'flex', gap: 14, marginTop: 4, flexWrap: 'wrap', justifyContent: 'center', fontSize: 12 }}>
+        {playerIds.map((pid) => (
+          <span key={pid} style={{ color: 'var(--paper-ink)' }}>
+            <span style={{ display: 'inline-block', width: 12, height: 12, background: colorOf(pid), borderRadius: 2, marginRight: 4, verticalAlign: 'middle' }} />
+            {nameById(pid)}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+
+function ColorGroupsTable({ colorBreakdown, state, colorOf, nameById, deckColorCounts }: {
+  colorBreakdown: Record<PlayerId, Record<string, number>>;
+  state: SspState;
+  colorOf: (pid: PlayerId) => string;
+  nameById: (pid: PlayerId) => string;
+  deckColorCounts: Record<string, number>;
+}) {
+  const allColors = Object.keys(deckColorCounts).sort((a, b) => deckColorCounts[b] - deckColorCounts[a]);
+  return (
+    <table className="tight">
+      <thead>
+        <tr>
+          <th>Player</th>
+          {allColors.map((c) => (
+            <th key={c} className="num" title={c}>
+              <span style={{
+                display: 'inline-block', width: 12, height: 12, borderRadius: 3,
+                background: `var(--${c}, #888)`, border: '1px solid rgba(0,0,0,0.25)',
+              }} />
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {state.players.map((p) => (
+          <tr key={p.id}>
+            <td><span style={{ color: colorOf(p.id), fontWeight: 600 }}>{nameById(p.id)}</span></td>
+            {allColors.map((c) => (
+              <td key={c} className="num" style={{ color: (colorBreakdown[p.id][c] ?? 0) === 0 ? 'rgba(0,0,0,0.25)' : 'inherit' }}>
+                {colorBreakdown[p.id][c] || 0}
+              </td>
+            ))}
+          </tr>
+        ))}
+        <tr style={{ borderTop: '2px solid rgba(0,0,0,0.15)' }}>
+          <td style={{ fontStyle: 'italic', opacity: 0.65 }}>Deck total</td>
+          {allColors.map((c) => (
+            <td key={c} className="num" style={{ fontStyle: 'italic', opacity: 0.55 }}>{deckColorCounts[c]}</td>
+          ))}
+        </tr>
+      </tbody>
+    </table>
   );
 }
 

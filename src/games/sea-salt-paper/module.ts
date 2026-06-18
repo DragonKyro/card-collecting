@@ -49,6 +49,7 @@ export const seaSaltPaperModule: GameModule<SspState, SspAction, SspConfig> = {
       lastChanceFrom: null,
       lastChanceRemaining: [],
       lastRoundSummary: null,
+      roundHistory: [],
       mermaidWinnerId: null,
       pendingLobsterPick: [],
       nextTurnLockedPlayerId: null,

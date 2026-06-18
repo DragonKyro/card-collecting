@@ -1,7 +1,7 @@
 // Sushi Go! Party — types.
 //
 // A "menu" is the set of 8 card kinds chosen in the lobby:
-//   1 nigiri set + 1 roll + 3 appetizers + 3 specials + 1 dessert.
+//   1 nigiri set + 1 roll + 3 appetizers + 2 specials + 1 dessert.
 // The chosen menu drives deck composition only; turn flow is identical across
 // menus.
 //
@@ -36,7 +36,7 @@ export interface SushiGoCard {
 }
 
 export interface SushiGoConfig {
-  /** Exactly 8 unique kinds: 1 nigiri + 1 roll + 3 appetizers + 3 specials + 1 dessert. */
+  /** Exactly 8 unique kinds: 1 nigiri + 1 roll + 3 appetizers + 2 specials + 1 dessert. */
   menu: SushiGoCardKind[];
   /** Number of rounds (party = 3; configurable 1-5 for sanity testing). */
   rounds: number;

@@ -379,6 +379,44 @@
  * where the bonus is shown for reference but doesn't count toward total. */
 .ssp .round-summary td.forfeit-cell { color: var(--danger); }
 
+/* Match stats — same cream surface as the round summary so the recharts
+ * dark-ink labels/grid render readable against a light background. */
+.ssp .ssp-stats {
+  background: var(--paper-cream);
+  color: var(--paper-ink);
+  padding: 18px 22px;
+  border-radius: 12px;
+  max-width: 720px;
+  margin: 18px auto 0;
+}
+.ssp .ssp-stats h2 { margin: 0 0 12px; color: var(--paper-ink); }
+.ssp .ssp-stats h3 {
+  margin: 18px 0 8px;
+  font-size: 14px;
+  color: var(--paper-ink);
+  border-bottom: 1px solid var(--paper-deep);
+  padding-bottom: 4px;
+}
+.ssp .ssp-stats table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 6px 0 8px;
+  font-size: 13px;
+  color: var(--paper-ink);
+}
+.ssp .ssp-stats th,
+.ssp .ssp-stats td {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--paper-deep);
+  text-align: left;
+}
+.ssp .ssp-stats td.num,
+.ssp .ssp-stats th.num { text-align: right; }
+/* Make sure recharts tooltips + legend text inherit dark ink. */
+.ssp .ssp-stats .recharts-default-tooltip { color: var(--paper-ink) !important; }
+.ssp .ssp-stats .recharts-legend-item-text { color: var(--paper-ink) !important; }
+.ssp .ssp-stats .recharts-cartesian-axis-tick-value { fill: var(--paper-ink); }
+
 .ssp .gameover-banner {
   background: var(--yellow);
   color: var(--paper-ink);

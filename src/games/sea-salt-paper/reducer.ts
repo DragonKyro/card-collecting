@@ -140,20 +140,19 @@ function scoreRound(state: SspState, summaryKind: SspRoundSummary['endedBy'], en
   if (summaryKind === 'lastChance' && endedBy) {
     const caller = baseScores.find((s) => s.p.id === endedBy)!;
     const others = baseScores.filter((s) => s.p.id !== endedBy);
-    // Rulebook: the LAST CHANCE bet compares TOTAL round points (cards + the
-    // mermaid color bonus), not card points in isolation. The bonus is part
-    // of the score the caller is betting will still lead after the last
-    // go-around — so the comparison has to include it.
-    const callerTotal = caller.cardPoints + caller.colorBonus;
-    const opponentMaxTotal = others.length
-      ? Math.max(...others.map((s) => s.cardPoints + s.colorBonus))
+    // Rulebook: the LAST CHANCE bet compares CARD POINTS only (including
+    // mermaid claims). The special color bonus is independent — every player
+    // earns it on LAST CHANCE regardless of who wins the bet.
+    // Ties go to the caller (caller wins if their card total >= every
+    // opponent's card total).
+    const callerCards = caller.cardPoints;
+    const opponentMaxCards = others.length
+      ? Math.max(...others.map((s) => s.cardPoints))
       : 0;
-    if (callerTotal >= opponentMaxTotal) {
-      // Bet won: caller gets cards + bonus, opponents only get color bonus.
+    if (callerCards >= opponentMaxCards) {
       lastChanceWon = true;
       forfeitCallerId = null;
     } else {
-      // Bet lost: caller forfeits cards (color bonus only). Opponents score normally.
       lastChanceWon = false;
       forfeitCallerId = endedBy;
     }
@@ -218,6 +217,8 @@ function endRound(state: SspState, endedBy: SspRoundSummary['endedBy'], endedByP
   const summary = scoreRound(state, endedBy, endedByPlayerId);
   commitRoundScores(state, summary);
   state.lastRoundSummary = summary;
+  if (!state.roundHistory) state.roundHistory = [];
+  state.roundHistory.push(summary);
   state.subPhase = 'roundEnd';
   state.lastChanceFrom = null;
   state.lastChanceRemaining = [];

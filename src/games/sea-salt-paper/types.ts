@@ -189,6 +189,10 @@ export interface SspState {
   lastChanceRemaining: PlayerId[];
   /** Last round's score breakdown, shown on the round-end screen. */
   lastRoundSummary: SspRoundSummary | null;
+  /** Per-round summary history for the entire match, used by the post-match
+   *  stats screen (cumulative score graph, STOP/LAST CHANCE history, etc.).
+   *  Appended every time a round ends. */
+  roundHistory: SspRoundSummary[];
   /** Set when someone collected 4 mermaids (or 3 with Three Mermaids event) — game ends instantly. */
   mermaidWinnerId: PlayerId | null;
   /** Buffer of 5 cards while the lobster+crab ability is being resolved (Salt). */

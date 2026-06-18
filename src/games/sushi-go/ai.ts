@@ -81,14 +81,20 @@ function probSeeKind(know: Knowledge, kind: SushiGoCardKind): number {
 void defaultHandSize;
 
 /** Hypothetical: re-score the round as if `player` had the given extra card(s) on table.
- *  Returns the marginal point delta for that player. */
+ *  Returns the marginal point delta for that player.
+ *
+ *  Important: majority-style scoring (maki, temaki, uramaki, pudding) is
+ *  computed FROM CURRENT BOARD STATE — which over-credits cards early in the
+ *  round when opponents haven't yet picked their share. The caller should
+ *  discount those categories via `majorityRealismDiscount`, which scales
+ *  majority-share contributions by how much of the round has actually played
+ *  out. Today the AI's pickValue does that. */
 function marginalForCard(
   state: SushiGoState,
   me: SushiGoPlayer,
   card: SushiGoCard,
 ): number {
   const before = scorePlayer(state, me);
-  // Simulate adding the card to the END of my table (preserves wasabi-before-nigiri).
   const myCopy = clonePlayer(me);
   myCopy.table = [...myCopy.table, card];
   const others = state.players.filter((p) => p.id !== me.id).map(clonePlayer);
@@ -97,6 +103,26 @@ function marginalForCard(
   const after = totalRoundScore(sc[myCopy.id]);
   return after - before;
 }
+
+/** Fraction of the round that has played out — used to taper down the
+ *  rewards of majority-share scoring. 0.0 = first pick of the round (huge
+ *  opportunity for opponents to catch up); 1.0 = the round just ended (the
+ *  marginal reward is real). */
+function roundProgressFraction(me: SushiGoPlayer, state: SushiGoState): number {
+  const total = state.players.reduce((sum, p) => sum + p.hand.length + p.table.length, 0);
+  if (total <= 0) return 1;
+  // Cards already played = table totals. Cards still in hands = picks remaining.
+  const inHand = state.players.reduce((sum, p) => sum + p.hand.length, 0);
+  const played = total - inHand;
+  void me;
+  return Math.max(0, Math.min(1, played / total));
+}
+
+/** Categories whose marginal is computed via the "you have most icons NOW"
+ *  rule. These need to be discounted because opponents WILL still pick more. */
+const MAJORITY_KINDS: Set<SushiGoCardKind> = new Set([
+  'maki', 'temaki', 'uramaki',
+]);
 
 function scorePlayer(state: SushiGoState, me: SushiGoPlayer): number {
   const sc = scoreRound(state.players);
@@ -133,6 +159,11 @@ function swingValue(state: SushiGoState, me: SushiGoPlayer, card: SushiGoCard, k
     }
     case 'nigiri': {
       const base = nigiriPoints(card.variant);
+      // Nigiri scores its raw value immediately AND is the highest guaranteed
+      // per-card score in the menu. Give it a small extra preference so the
+      // AI takes a squid (3 pts) over a maki-3 of similar marginal value.
+      // Squid → +0.8, salmon → +0.3, egg → +0.1.
+      v += Math.max(0, base - 1) * 0.4;
       const pendingWasabi = me.table.filter(
         (c, i, arr) => c.kind === 'wasabi' && !arr.slice(i + 1).some((d) => d.kind === 'nigiri'),
       ).length;
@@ -170,6 +201,9 @@ function swingValue(state: SushiGoState, me: SushiGoPlayer, card: SushiGoCard, k
       break;
     }
     case 'maki': {
+      // Maki marginal scoring is computed in pickValue via marginalForCard
+      // and discounted by round progress. The remaining swing component is
+      // ONLY the "are we close to a tie-break" bonus, which is small.
       const myIcons = me.table
         .filter((c) => c.kind === 'maki')
         .reduce((s, c) => s + Number(c.variant ?? 1), 0);
@@ -182,10 +216,8 @@ function swingValue(state: SushiGoState, me: SushiGoPlayer, card: SushiGoCard, k
           ),
       );
       const icons = Number(card.variant ?? 1);
-      // Higher icon cards are stronger in the maki race.
-      if (myIcons < oppMax) v += icons * 0.7; // catching up
-      else if (myIcons - oppMax < icons) v += icons * 0.4; // about to grab lead
-      else v += icons * 0.2;
+      // Light boost ONLY when this card flips us from behind into lead.
+      if (myIcons < oppMax && myIcons + icons >= oppMax) v += 1.0;
       break;
     }
     case 'temaki': {
@@ -250,19 +282,22 @@ function swingValue(state: SushiGoState, me: SushiGoPlayer, card: SushiGoCard, k
       break;
     }
     case 'pudding': {
-      // 3+ players only — fight for most and avoid fewest.
+      // 2-player: +6 for most, NO −6 penalty. So pudding is purely upside —
+      // we want to be the leader. 3+ player: also avoid being the fewest.
+      const mine = me.dessertPile.filter((c) => c.kind === 'pudding').length;
+      const oppPuddings = state.players
+        .filter((p) => p.id !== me.id)
+        .map((p) => p.dessertPile.filter((c) => c.kind === 'pudding').length);
+      const oppMax = oppPuddings.length ? Math.max(...oppPuddings) : 0;
+      const oppMin = oppPuddings.length ? Math.min(...oppPuddings) : 0;
       if (state.players.length >= 3) {
-        const mine = me.dessertPile.filter((c) => c.kind === 'pudding').length;
-        const oppPuddings = state.players
-          .filter((p) => p.id !== me.id)
-          .map((p) => p.dessertPile.filter((c) => c.kind === 'pudding').length);
-        const oppMax = oppPuddings.length ? Math.max(...oppPuddings) : 0;
-        const oppMin = oppPuddings.length ? Math.min(...oppPuddings) : 0;
         if (mine <= oppMin) v += 2;
         else if (mine < oppMax) v += 1.5;
         else v += 0.8;
       } else {
-        v -= 2; // 2-player: pudding is dead weight
+        // 2-player: lead = +6, behind = 0. Always worth a point or two.
+        if (mine <= oppMax) v += 1.5; // catching up matters
+        else v += 0.5;                 // already leading
       }
       break;
     }
@@ -349,12 +384,29 @@ function approxCardValue(c: SushiGoCard): number {
   }
 }
 
-/** Compute the total expected value of picking `card` from the AI's hand. */
+/** Compute the total expected value of picking `card` from the AI's hand.
+ *
+ *  Maki / temaki / uramaki are majority-share scoring — playing them is only
+ *  worth the FRACTION of the round we've already pinned down, because
+ *  opponents will still pick competing icons. We linearly discount the
+ *  marginal-from-scoring for those kinds by round progress.
+ *
+ *  Nigiri (esp. squid) and sashimi/tempura/dumpling are flat-rate scoring —
+ *  no opponent can undo a played squad nigiri's 3 pts. Those get their full
+ *  marginal value AND their swing component. */
 function pickValue(state: SushiGoState, me: SushiGoPlayer, card: SushiGoCard, know: Knowledge): number {
   const marg = marginalForCard(state, me, card);
   const sw = swingValue(state, me, card, know);
-  // Combine: marginal-from-scoring + heuristic swing (forward-looking).
-  return marg + sw;
+  let adjustedMarg = marg;
+  if (MAJORITY_KINDS.has(card.kind)) {
+    const progress = roundProgressFraction(me, state);
+    // Discount majority-share by what's NOT yet locked in. At the start of the
+    // round we count only 30% of the apparent marginal; once we're 80% through
+    // we count 86% of it. Floor at 0.2 so we don't completely ignore them.
+    const factor = 0.2 + 0.8 * progress;
+    adjustedMarg = marg * factor;
+  }
+  return adjustedMarg + sw;
 }
 
 /** Pick the best card(s) from the AI's hand. Returns array of 1 or 2 cardIds. */
