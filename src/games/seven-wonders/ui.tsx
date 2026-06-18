@@ -14,6 +14,7 @@ import {
 } from './resources';
 import { getActiveExpansions, getAllExpansions } from './expansions/registry';
 import { BilkisButton } from './expansions/leaders/ui';
+import { RulesBook, RulesHero, RulesGrid, RulesTile } from '@/ui/RulesBook';
 import './seven-wonders.css';
 
 const ALL_EXPANSIONS: Array<{ id: SwExpansionId; label: string; desc: string; implemented: boolean }> = [
@@ -49,12 +50,7 @@ function LobbyConfig({ config, seats, onChange }: { config: SwConfig; seats: Sea
 
   return (
     <div className="game-config sw-lobby">
-      <p style={{ fontSize: 13, color: 'var(--fg-muted)', marginTop: 0 }}>
-        3 ages, simultaneous draft. Pick your wonder side (A or B) or let it be random.
-        Expansions are listed here but none are implemented yet — toggling them has no effect.
-      </p>
-
-      <h4 style={{ margin: '12px 0 4px' }}>Wonders</h4>
+      <h4 style={{ margin: '0 0 4px' }}>Wonders</h4>
       <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
         <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
           <input type="radio" checked={config.wonderAssignment === 'random'} onChange={() => setAssignment('random')} />
@@ -136,11 +132,101 @@ function LobbyConfig({ config, seats, onChange }: { config: SwConfig; seats: Sea
             </div>
           );
         })}
-      <p style={{ fontSize: 11, color: 'var(--fg-muted)', marginTop: 12 }}>
-        Player count is taken from the seat list ({seats.length} seat{seats.length === 1 ? '' : 's'}).
-        7 Wonders supports 3–7 players.
-      </p>
     </div>
+  );
+}
+
+function Rules() {
+  return (
+    <RulesBook
+      pages={[
+        {
+          title: 'Overview',
+          body: (
+            <>
+              <RulesHero
+                title="7 Wonders"
+                subtitle="Draft your way through 3 Ages. Build a civilization."
+                accent="linear-gradient(135deg, #8b6f3a 0%, #d4a85a 100%)"
+              />
+              <h3>Each tick</h3>
+              <RulesGrid cols={3}>
+                <RulesTile icon="🏛️" label="Build" hint="Pay the card's cost from your production + neighbor purchases. Chain-build for free if pre-req is met." accent="#9ed27c" />
+                <RulesTile icon="⛏️" label="Bury" hint="Slip it under your next wonder stage. Pay the stage's cost; gain its effect." accent="#6aa0ff" />
+                <RulesTile icon="🪙" label="Discard" hint="Discard for 3 coins. Always legal." accent="#f4d268" />
+              </RulesGrid>
+              <h3>Hand rotation</h3>
+              <p>
+                After every simultaneous pick, hands rotate one seat. Ages I &amp;
+                III pass <strong>clockwise</strong>, Age II passes
+                <strong> counter-clockwise</strong>. Each Age is 6 picks; the 7th
+                card of each hand is discarded (unless Halicarnassus / Solomon
+                can recover it).
+              </p>
+            </>
+          ),
+        },
+        {
+          title: 'Military &amp; trade',
+          body: (
+            <>
+              <h3>End-of-age military</h3>
+              <p>Shields are compared with BOTH neighbors. Winner gains a victory token; loser gains a −1 defeat token.</p>
+              <table className="tight">
+                <thead><tr><th>Age</th><th className="num">Win</th><th className="num">Loss</th></tr></thead>
+                <tbody>
+                  <tr><td>Age I</td><td className="num">+1</td><td className="num">−1</td></tr>
+                  <tr><td>Age II</td><td className="num">+3</td><td className="num">−1</td></tr>
+                  <tr><td>Age III</td><td className="num">+5</td><td className="num">−1</td></tr>
+                </tbody>
+              </table>
+              <h3>Resource trading</h3>
+              <RulesGrid cols={2}>
+                <RulesTile icon="🪙" label="2 coins / unit" hint="Buy a missing resource from either neighbor. Coins go to that neighbor." accent="#f4d268" />
+                <RulesTile icon="🛒" label="1 coin / unit" hint="If you've built the matching trade-discount card (e.g. East/West Trading Post)." accent="#9ed27c" />
+              </RulesGrid>
+            </>
+          ),
+        },
+        {
+          title: 'Scoring',
+          body: (
+            <>
+              <h3>Final scoring (after Age III)</h3>
+              <RulesGrid cols={2}>
+                <RulesTile icon="⚔️" label="Military" hint="Sum of victory + defeat tokens." accent="#ff7070" />
+                <RulesTile icon="🪙" label="Coins" hint="1 VP per 3 coins." accent="#f4d268" />
+                <RulesTile icon="🏛️" label="Wonder stages" hint="Face value of every built stage." accent="#c9a47c" />
+                <RulesTile icon="📘" label="Civilian (blue)" hint="Face value VP." accent="#6aa0ff" />
+                <RulesTile icon="🛍️" label="Commercial (yellow)" hint="End-of-game effects only." accent="#e8a04a" />
+                <RulesTile icon="🎭" label="Guilds (purple)" hint="End-of-game effects (lots of conditional VP)." accent="#b984c9" />
+                <RulesTile icon="🔬" label="Science (green)" hint="t² + c² + g² + 7 · min(t,c,g). Wild symbols pick highest." accent="#9ed27c" />
+              </RulesGrid>
+            </>
+          ),
+        },
+        {
+          title: 'Expansions',
+          body: (
+            <>
+              <RulesGrid cols={2}>
+                <RulesTile icon="👑" label="Leaders" hint="Draft 4 leaders pre-Age I; play one per Age." accent="#b984c9" />
+                <RulesTile icon="🏙️" label="Cities" hint="+9 black cards per Age. Debt + diplomacy mechanics." accent="#2a2a36" />
+                <RulesTile icon="🗼" label="Babel" hint="+5 orange cards per Age. 3 Babel scoring rules. Central Tower NOT modeled." accent="#e8a04a" />
+                <RulesTile icon="⚓" label="Armada" hint="+5 navy cards per Age. Naval combat NOT modeled." accent="#1c5f9e" />
+                <RulesTile icon="🏗️" label="Edifice" hint="3 cooperative project tiles. Build a wonder stage in the matching Age to contribute." accent="#c2c8cc" />
+              </RulesGrid>
+              <h3>Deck sizing</h3>
+              <p className="muted">
+                Each Age deals <strong>playerCount × 7</strong> cards. Age III is
+                base cards + guilds (playerCount + 2 guilds shown). Expansion
+                cards are mixed into each Age's pool when active.
+              </p>
+            </>
+          ),
+        },
+      ]}
+    />
   );
 }
 
@@ -844,4 +930,5 @@ void productionFor;
 export const bundle: GameUiBundle<SwState, SwAction, SwConfig> = {
   LobbyConfig,
   GameView,
+  Rules,
 };

@@ -261,11 +261,12 @@ function valueDuoPair(state: SspState, me: SspPlayer, pair: [SspCard, SspCard], 
     v += bestVis;
   }
   if (families.has('shark') && families.has('swimmer')) {
-    // steal random from another player — average their hand value
+    // steal random from another player — average their hand value.
+    // The LAST CHANCE caller is protected, so skip them.
     let bestOpponentAvg = 0;
     for (const op of state.players) {
       if (op.id === me.id || op.hand.length === 0) continue;
-      // We don't know opponents' hands. Use weighted unseen pool as estimate.
+      if (state.lastChanceFrom === op.id) continue;
       const avg = expectedUnseenDrawValue(me, know);
       if (avg > bestOpponentAvg) bestOpponentAvg = avg;
     }
@@ -290,8 +291,12 @@ export function chooseAIAction(state: SspState, playerId: PlayerId): SspAction |
   const me = state.players.find((p) => p.id === playerId);
   if (!me) return null;
 
-  // Only the active player acts (except round-end advance, which any player can trigger).
+  // Round-end pause: when at least one human seat exists, leave the
+  // "Next round →" click to them so they have time to read the score. In
+  // all-AI matches, any AI advances after a tick so the demo keeps moving.
   if (state.subPhase === 'roundEnd') {
+    const hasHuman = state.seats.some((s) => !s.isAI);
+    if (hasHuman) return null;
     return { type: 'nextRound' };
   }
 
@@ -344,16 +349,31 @@ export function chooseAIAction(state: SspState, playerId: PlayerId): SspAction |
       }
 
       // 2. Decide stop / lastChance / pass.
+      // If another player has already called LAST CHANCE, we're on the final
+      // forced go-around: stop/lastChance are illegal, only pass is allowed.
+      // The reducer enforces this; if the AI ever returns one of those here,
+      // the dispatch throws and the AI driver freezes.
+      if (state.lastChanceFrom !== null) {
+        return { type: 'pass' };
+      }
+
       const myScore = tentativeScore(me.hand, me.table);
       const oppMax = biggestOpponentScore(state, me.id);
       const matchTarget = state.config.targetScore;
       const myLeadAfter = (me.matchScore + myScore) - Math.max(...state.players.filter((p) => p.id !== me.id).map((p) => p.matchScore));
 
-      // If reaching 4 mermaids is impossible but we already have great pile of points, stop.
-      if (myScore >= STOP_THRESHOLD) {
+      // Per-player STOP/LAST-CHANCE threshold — raised to 10 under Treasure
+      // Chest (round event or held). Diodon Fish forbids STOP entirely.
+      const myEvent = state.event?.current;
+      const hasEvent = (id: 'treasureChest' | 'diodonFish') =>
+        (me.heldEvents ?? []).includes(id) || myEvent === id;
+      const stopThreshold = hasEvent('treasureChest') ? 10 : STOP_THRESHOLD;
+      const canStop = !hasEvent('diodonFish');
+
+      if (myScore >= stopThreshold) {
         const wouldFinishMatch = (me.matchScore + myScore) >= matchTarget;
         const safeLead = myScore - oppMax >= 4;
-        if (wouldFinishMatch || safeLead) {
+        if (canStop && (wouldFinishMatch || safeLead)) {
           return { type: 'stop' };
         }
         // LAST CHANCE bet: only if we have clearly better cards than the next-best opponent.
@@ -365,10 +385,8 @@ export function chooseAIAction(state: SspState, playerId: PlayerId): SspAction |
         if (cardsOnly - opponentCards >= 6 && myLeadAfter >= 0) {
           return { type: 'lastChance' };
         }
-        // Otherwise pass — risk being beaten if opponents catch up.
-        // But if we're way behind on matchScore, take any positive STOP rather than stagnate.
         const trailing = state.players.some((p) => p.id !== me.id && p.matchScore > me.matchScore + 5);
-        if (trailing && myScore >= STOP_THRESHOLD + 2) {
+        if (canStop && trailing && myScore >= stopThreshold + 2) {
           return { type: 'stop' };
         }
         return { type: 'pass' };
@@ -400,10 +418,12 @@ export function chooseAIAction(state: SspState, playerId: PlayerId): SspAction |
 
     case 'awaitingSharkSteal': {
       // Steal from the opponent with the largest hand (most cards = highest expected value).
+      // Skip the LAST CHANCE caller — they're protected.
       let best: PlayerId | null = null;
       let bestSize = -1;
       for (const op of state.players) {
         if (op.id === me.id) continue;
+        if (state.lastChanceFrom === op.id) continue;
         if (op.hand.length > bestSize) {
           bestSize = op.hand.length;
           best = op.id;
@@ -411,6 +431,19 @@ export function chooseAIAction(state: SspState, playerId: PlayerId): SspAction |
       }
       if (!best || bestSize <= 0) return null;
       return { type: 'sharkSteal', targetPlayerId: best };
+    }
+
+    case 'awaitingLobsterPick': {
+      // Salt expansion: pick the most valuable of the 5 revealed cards.
+      const pool = state.pendingLobsterPick ?? [];
+      if (pool.length === 0) return null;
+      let best = pool[0];
+      let bestV = marginalValue(me, best.family, know);
+      for (let i = 1; i < pool.length; i++) {
+        const v = marginalValue(me, pool[i].family, know);
+        if (v > bestV) { bestV = v; best = pool[i]; }
+      }
+      return { type: 'lobsterPick', cardId: best.id };
     }
 
     default:

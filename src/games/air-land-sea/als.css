@@ -301,6 +301,13 @@
   padding: 10px;
   overflow-y: auto;
   font-size: 12px;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.als-sidebar-body:has(.als-feed) {
+  overflow: hidden;
 }
 .als-cheat-row {
   display: grid;
@@ -328,17 +335,27 @@
 .als-log-entry.match-end { font-weight: 600; }
 .als-log-entry .who { font-weight: 600; }
 
-.als-chat-thread {
-  height: 200px;
-  overflow-y: auto;
-  background: rgba(0,0,0,0.2);
-  padding: 6px;
-  border-radius: 4px;
-  margin-bottom: 6px;
-}
 .als-chat-msg { font-size: 12px; }
 .als-chat-msg .who { font-weight: 600; color: var(--als-accent); }
 .als-chat-input { display: flex; gap: 6px; }
+
+.als-feed {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  gap: 8px;
+}
+.als-feed-thread {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-right: 2px;
+}
+.als-feed .als-chat-input { flex-shrink: 0; }
 .als-chat-input input { flex: 1; }
 
 /* Lobby theater picker */

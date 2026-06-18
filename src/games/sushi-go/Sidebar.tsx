@@ -1,7 +1,7 @@
 // Right-side panel: Cheatsheet showing the in-play menu with current-round
 // frequencies + History + Chat. Mirrors the Sea Salt & Paper sidebar shape.
 
-import { useEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { create } from 'zustand';
 import type { SushiGoState, SushiGoLogEntry, SushiGoCardKind } from './types';
 import { KIND_INFO } from './cards';
@@ -19,21 +19,15 @@ export const useSushiGoChat = create<ChatStore>((set) => ({
   clear: () => set({ msgs: [] }),
 }));
 
-type Tab = 'cheat' | 'log' | 'chat';
-
 export function Sidebar({ state, mySeatName }: { state: SushiGoState; mySeatName: string }) {
-  const [tab, setTab] = useState<Tab>('cheat');
+  void Cheatsheet; // retained for future use
   return (
     <div className="ssp-sidebar">
       <div className="ssp-sidebar-tabs">
-        <button className={tab === 'cheat' ? 'active' : ''} onClick={() => setTab('cheat')}>Menu</button>
-        <button className={tab === 'log' ? 'active' : ''} onClick={() => setTab('log')}>History</button>
-        <button className={tab === 'chat' ? 'active' : ''} onClick={() => setTab('chat')}>Chat</button>
+        <button className="active" disabled>History &amp; Chat</button>
       </div>
       <div className="ssp-sidebar-body">
-        {tab === 'cheat' && <Cheatsheet state={state} />}
-        {tab === 'log' && <History state={state} />}
-        {tab === 'chat' && <Chat mySeatName={mySeatName} />}
+        <Feed state={state} mySeatName={mySeatName} />
       </div>
     </div>
   );
@@ -122,66 +116,42 @@ function categoryLabel(cat: string): string {
   }
 }
 
-function History({ state }: { state: SushiGoState }) {
+function Feed({ state, mySeatName }: { state: SushiGoState; mySeatName: string }) {
   const log = state.log ?? [];
-  if (log.length === 0) return <p style={{ color: 'var(--fg-muted)' }}>No moves yet.</p>;
-  return (
-    <div className="ssp-log">
-      {log.map((e) => (
-        <LogLine key={e.seq} entry={e} state={state} />
-      ))}
-    </div>
-  );
-}
-
-function LogLine({ entry, state }: { entry: SushiGoLogEntry; state: SushiGoState }) {
-  const name = (id: PlayerId | null) => (id ? (state.seats.find((s) => s.id === id)?.name ?? id) : 'System');
-  let cls = 'ssp-log-entry';
-  let body: React.ReactNode = null;
-  switch (entry.kind) {
-    case 'pickSubmitted':
-      body = (<><span className="who">{name(entry.playerId)}</span> submitted a pick.</>);
-      break;
-    case 'pickRevealed': {
-      const names = entry.cards.map((c) => KIND_INFO[c.kind].label).join(' + ');
-      body = (<><span className="who">{name(entry.playerId)}</span> played <strong>{names}</strong>.</>);
-      break;
-    }
-    case 'roundEnd':
-      cls += ' round-end system';
-      body = (<><span className="who">Round {entry.round} ended</span> — scores tallied.</>);
-      break;
-    case 'matchEnd':
-      cls += ' match-end system';
-      body = (<><span className="who">Match over</span> — {name(entry.winnerId)} wins!</>);
-      break;
-  }
-  return <div className={cls}>{body}</div>;
-}
-
-function Chat({ mySeatName }: { mySeatName: string }) {
   const msgs = useSushiGoChat((s) => s.msgs);
   const add = useSushiGoChat((s) => s.add);
   const [text, setText] = useState('');
   const threadRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (threadRef.current) threadRef.current.scrollTop = threadRef.current.scrollHeight;
-  }, [msgs.length]);
+  type FeedItem =
+    | { kind: 'log'; key: string; sortKey: number; entry: SushiGoLogEntry }
+    | { kind: 'chat'; key: string; sortKey: number; msg: typeof msgs[number] };
+  const items: FeedItem[] = [
+    ...log.map((e) => ({ kind: 'log' as const, key: `l-${e.seq}`, sortKey: e.seq * 10, entry: e })),
+    ...msgs.map((m) => ({ kind: 'chat' as const, key: `c-${m.id}`, sortKey: m.at * 10 + 1, msg: m })),
+  ].sort((a, b) => a.sortKey - b.sortKey);
+  useLayoutEffect(() => {
+    const el = threadRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [items.length, log.length, msgs.length]);
   function send() {
     const t = text.trim();
     if (!t) return;
-    add({ who: mySeatName || 'You', text: t, at: msgs.length });
+    add({ who: mySeatName || 'You', text: t, at: log.length + msgs.length });
     setText('');
   }
   return (
-    <div>
-      <div className="ssp-chat-thread" ref={threadRef}>
-        {msgs.length === 0 && <p style={{ color: 'var(--fg-muted)' }}>No messages yet. Online multiplayer chat coming with WebRTC.</p>}
-        {msgs.map((m) => (
-          <div key={m.id} className="ssp-chat-msg">
-            <span className="who">{m.who}:</span>
-            {m.text}
-          </div>
+    <div className="ssp-feed">
+      <div className="ssp-feed-thread" ref={threadRef}>
+        {items.length === 0 && (
+          <p style={{ color: 'var(--fg-muted)' }}>No moves yet — chat or play to fill this feed.</p>
+        )}
+        {items.map((it) => (
+          it.kind === 'log'
+            ? <LogLine key={it.key} entry={it.entry} state={state} />
+            : <div key={it.key} className="ssp-chat-msg">
+                <span className="who">{it.msg.who}:</span> {it.msg.text}
+              </div>
         ))}
       </div>
       <div className="ssp-chat-input">
@@ -196,3 +166,33 @@ function Chat({ mySeatName }: { mySeatName: string }) {
     </div>
   );
 }
+
+function LogLine({ entry, state }: { entry: SushiGoLogEntry; state: SushiGoState }) {
+  const name = (id: PlayerId | null) => {
+    if (!id) return <span className="who">System</span>;
+    const seat = state.seats.find((s) => s.id === id);
+    return <span className="who" style={{ color: seat?.color ?? undefined }}>{seat?.name ?? id}</span>;
+  };
+  let cls = 'ssp-log-entry';
+  let body: React.ReactNode = null;
+  switch (entry.kind) {
+    case 'pickSubmitted':
+      body = (<>{name(entry.playerId)} submitted a pick.</>);
+      break;
+    case 'pickRevealed': {
+      const names = entry.cards.map((c) => KIND_INFO[c.kind].label).join(' + ');
+      body = (<>{name(entry.playerId)} played <strong>{names}</strong>.</>);
+      break;
+    }
+    case 'roundEnd':
+      cls += ' round-end system';
+      body = (<><span className="who">Round {entry.round} ended</span> — scores tallied.</>);
+      break;
+    case 'matchEnd':
+      cls += ' match-end system';
+      body = (<><span className="who">Match over</span> — {name(entry.winnerId)} wins!</>);
+      break;
+  }
+  return <div className={cls}>{body}</div>;
+}
+

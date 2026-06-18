@@ -16,8 +16,11 @@ interface GameStore {
   state: GameStateShape | null;
   /** Identity of the local human seat (null for spectator / pre-lobby). */
   localPlayerId: PlayerId | null;
+  /** Original config + seats stashed on game start, so "Play Again" can
+   *  recreate a fresh match with the same lineup but a new seed. */
+  matchConfig: unknown;
 
-  loadGame(module: AnyGameModule, initialState: GameStateShape, localPlayerId: PlayerId | null): void;
+  loadGame(module: AnyGameModule, initialState: GameStateShape, localPlayerId: PlayerId | null, matchConfig?: unknown): void;
   dispatch(action: unknown): void;
   applyLocal(action: unknown): void;
   clear(): void;
@@ -30,9 +33,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
   module: null,
   state: null,
   localPlayerId: null,
+  matchConfig: undefined,
   _broadcast: null,
 
-  loadGame: (module, state, localPlayerId) => set({ module, state, localPlayerId }),
+  loadGame: (module, state, localPlayerId, matchConfig) =>
+    set({ module, state, localPlayerId, matchConfig }),
 
   dispatch: (action) => {
     const { module, state, _broadcast } = get();
@@ -49,7 +54,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set({ state: next });
   },
 
-  clear: () => set({ module: null, state: null, localPlayerId: null }),
+  clear: () => set({ module: null, state: null, localPlayerId: null, matchConfig: undefined }),
 
   registerBroadcastHandler: (fn) => set({ _broadcast: fn }),
 }));

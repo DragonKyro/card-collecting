@@ -397,7 +397,12 @@ function chooseBestPick(state: SushiGoState, me: SushiGoPlayer): number[] {
 
 export function chooseAIAction(state: SushiGoState, playerId: PlayerId): SushiGoAction | null {
   if (state.phase !== 'playing') return null;
+  // Round-end pause: when at least one human seat exists, leave the
+  // "Next round →" click to them so they have time to read the score. In
+  // all-AI matches, any AI advances after a tick so the demo keeps moving.
   if (state.subPhase === 'roundEnd') {
+    const hasHuman = state.seats.some((s) => !s.isAI);
+    if (hasHuman) return null;
     return { type: 'nextRound' };
   }
   if (state.subPhase !== 'selecting') return null;

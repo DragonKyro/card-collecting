@@ -85,6 +85,10 @@ export interface GameUiBundle<S, A, C> {
     localPlayerId: PlayerId | null;
     dispatch: (action: A) => void;
   }>;
+  /** Optional rules-and-references panel. When present, the lobby renders a
+   *  "Rules" button that opens this in a modal. Should cover gameplay summary
+   *  and any reference tables (card frequencies, scoring tables, etc.). */
+  Rules?: React.ComponentType;
 }
 
 export type AnyGameModule = GameModule<GameStateShape, unknown, unknown>;

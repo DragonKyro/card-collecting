@@ -1,13 +1,15 @@
 // Sea Salt & Paper — types.
 //
-// 58-card deck:
+// 58-card base deck (66 with Extra Salt):
 //   Duo:        crab x9, boat x8, fish x7, shark x5, swimmer x5  (34)
 //   Collector:  shell x6, octopus x5, penguin x3, sailor x2      (16)
 //   Multiplier: lighthouse, shoal, penguinColony, captain (x1)    (4)
 //   Mermaid:    x4                                                (4)
+//   Extra Salt: jellyfish x2, lobster x1, starfish x3, seahorse x1, crabBasket x1 (+8)
 //
-// Each card carries one of 9 colors (white reserved for mermaids); the color
-// bonus counts the most-frequent color group per mermaid held.
+// Each card carries one of 11 colors per the published distribution chart
+// (white reserved for the 4 mermaids); the color bonus counts the most-
+// frequent color group per mermaid held.
 
 import type { Seat, PlayerId, GamePhase } from '@/core/types';
 import type { RngState } from '@/core/rng';
@@ -22,9 +24,14 @@ export type SspCardFamily =
   // config.expansions.extraSalt is true.
   | 'jellyfish' | 'lobster' | 'starfish' | 'seahorse' | 'crabBasket';
 
+// Color palette taken from the official rulebook chart:
+//   Dark Blue, Teal, Black, Yellow, Green, Purple, Grey, White, Orange, Pink, Tan
+// (`white` is reserved for mermaids; the others are spread across the deck per
+// the published distribution table.)
 export type SspColor =
   | 'white' | 'yellow' | 'green' | 'pink' | 'purple'
-  | 'lightblue' | 'darkblue' | 'black' | 'gray';
+  | 'teal' | 'darkblue' | 'black' | 'gray'
+  | 'orange' | 'tan';
 
 export interface SspCard {
   id: number;
@@ -90,22 +97,39 @@ export interface SspRoundSummary {
   perPlayer: SspPlayerRoundScore[];
 }
 
-/** Stable identifiers for Extra Pepper event cards. Each id maps to a card with
- *  a discrete rule effect handled in scoring + reducer. */
+/** Stable identifiers for the 12 Extra Pepper event cards from the official
+ *  rulebook. Each event applies to ALL players for the round it's revealed,
+ *  then at round end is awarded to either the leader (+) or the laggard (-)
+ *  who keeps it (and its rule applies only to them) until they no longer
+ *  qualify, at which point it's discarded. */
 export type SspEventId =
-  | 'threeMermaids'   // +, single-player: holder wins instantly at 3 mermaids
-  | 'stopAtFive'      // +, single-player: holder can STOP / LAST CHANCE at 5+ (instead of 7+)
-  | 'angelfish'       // global: if both discard tops share color, current player draws 1 for free at turn end
-  | 'stormySeas'      // -, single-player: holder may not call LAST CHANCE
-  | 'calmWaters'      // global: mermaid color bonus doubled this round
-  | 'pepperBurn';     // -, single-player: holder loses 2 pts at round end
+  // CHANGE EFFECTS OF DUO
+  | 'hermitCrab'        // -, crab pair takes one card from EACH discard pile
+  | 'sunfish'           // -, fish pair adds the first 2 cards from the deck
+  | 'waterRodeo'        // -, swimmer pair = swap a card with opponent; shark pair = steal a pair from opponent tableau
+  // CHANGE THE POINT VALUE
+  | 'danceOfShells'     // -, each shell scores 2 pts (instead of the collector set)
+  | 'kraken'            // -, each octopus scores 1 pt (instead of the collector set)
+  | 'tornado'           // +, mermaids score 0; instant win at 4 mermaids still applies
+  // CHANGE A RULE
+  | 'danceOfMermaids'   // -, 3 mermaids = instant win (was: threeMermaids)
+  | 'treasureChest'     // +, must reach 10 pts to call STOP / LAST CHANCE (instead of 7)
+  | 'diodonFish'        // +, may not call STOP — must call LAST CHANCE to end the round
+  // ADD A NEW RULE
+  | 'angelfish'         // -, end of turn: if both discard tops share a color, current player takes one
+  | 'dolphins'          // -, when player discards a collector card, draw the top of the deck for free
+  | 'coralReef';        // -, may stash a shell face-down — immune to attacks but worth 0 pts (NOT modeled in v1)
 
 /** Display-friendly metadata; see events.ts for the canonical table. */
 export interface SspEventCard {
   id: SspEventId;
   name: string;
-  /** '+' goes to the round leader; '−' goes to the laggard; 'global' applies to all. */
-  sign: '+' | '-' | 'global';
+  /** Every event is awarded to a player at round end:
+   *   '+' goes to the round leader,
+   *   '-' goes to the laggard.
+   *  No "global, discarded after the round" sign exists in the rulebook —
+   *  every event has a persistent holder. */
+  sign: '+' | '-';
   rule: string;
 }
 

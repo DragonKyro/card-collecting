@@ -36,7 +36,11 @@ export default function App() {
                   )}
                   <h3>{g.name}</h3>
                   <p>{g.tagline}</p>
-                  <div className="player-range">{g.minPlayers}–{g.maxPlayers} players</div>
+                  <div className="player-range">
+                    {g.minPlayers === g.maxPlayers
+                      ? `${g.minPlayers} players`
+                      : `${g.minPlayers}–${g.maxPlayers} players`}
+                  </div>
                 </div>
               );
             })}

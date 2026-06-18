@@ -11,6 +11,8 @@ import { useEffect, useRef, useState } from 'react';
 import { useGameStore } from '@/store/gameStore';
 import { useNetworkStore } from '@/store/networkStore';
 import type { GameUiBundle, GameStateShape } from '@/core/module';
+import type { Seat } from '@/core/types';
+import { randomSeed } from '@/core/rng';
 import { ChatPanel } from './ChatPanel';
 
 interface Props {
@@ -25,6 +27,7 @@ export function GameHost({ onExit }: Props) {
   const role = useNetworkStore((s) => s.role);
   const roomCode = useNetworkStore((s) => s.roomCode);
   const [bundle, setBundle] = useState<GameUiBundle<GameStateShape, unknown, unknown> | null>(null);
+  const [rulesOpen, setRulesOpen] = useState(false);
   const tickingRef = useRef(false);
 
   useEffect(() => {
@@ -79,6 +82,31 @@ export function GameHost({ onExit }: Props) {
   // accidental click can't mutate local-only state.
   const effectiveDispatch = role === 'spectator' ? () => {} : dispatch;
 
+  const RulesComponent = bundle?.Rules;
+  const isGameOver = state.phase === 'gameOver';
+  // In online matches only the host re-rolls a new game; guests just wait for
+  // the host's `start` broadcast (the existing channel handler reloads the
+  // gameStore on their end). In solo / hot-seat anyone can hit Play Again.
+  const canPlayAgain = isGameOver && (role === 'solo' || role === 'host');
+
+  function playAgain() {
+    if (!canPlayAgain) return;
+    const cur = useGameStore.getState();
+    if (!cur.module || !cur.matchConfig) {
+      alert('Cannot replay — original match config not available.');
+      return;
+    }
+    const cfg = cur.matchConfig as { config: unknown; seats: Seat[] };
+    const seed = randomSeed();
+    const initial = cur.module.createInitialState(cfg.config, seed, cfg.seats);
+    cur.loadGame(cur.module, initial, cur.localPlayerId, cfg);
+    if (role === 'host') {
+      // Re-broadcast to keep guests in sync.
+      const seatUuids = cfg.seats.map((s) => s.id);
+      useNetworkStore.getState().broadcastStart(initial, seatUuids);
+    }
+  }
+
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 12 }}>
@@ -89,6 +117,12 @@ export function GameHost({ onExit }: Props) {
               <span className={`net-dot net-dot-${role}`} />
               {role} · room <code>{roomCode}</code>
             </span>
+          )}
+          {canPlayAgain && (
+            <button onClick={playAgain}>🔁 Play again</button>
+          )}
+          {RulesComponent && (
+            <button className="secondary" onClick={() => setRulesOpen(true)}>📖 Rules</button>
           )}
           <button
             className="secondary"
@@ -108,6 +142,19 @@ export function GameHost({ onExit }: Props) {
         <p>Loading…</p>
       )}
       {role !== 'solo' && <ChatPanel />}
+      {rulesOpen && RulesComponent && (
+        <div className="rules-modal-backdrop" onClick={() => setRulesOpen(false)}>
+          <div className="rules-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="rules-modal-header">
+              <h3>{module.name} — Rules</h3>
+              <button className="secondary" onClick={() => setRulesOpen(false)}>Close</button>
+            </div>
+            <div className="rules-modal-body">
+              <RulesComponent />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
