@@ -35,7 +35,7 @@ import type {
 } from './types';
 import { buildShuffledDeck, isMultiplierFamily, isCollectorFamily } from './cards';
 import {
-  allCards, isValidDuoPair, isValidStarfishTrio, tentativeScore, totalScore,
+  allCards, categoryBreakdown, isValidDuoPair, isValidStarfishTrio, tentativeScore, totalScore,
 } from './scoring';
 import {
   EVENT_BY_ID, currentEvent, eventAppliesTo,
@@ -133,7 +133,14 @@ function scoreRound(state: SspState, summaryKind: SspRoundSummary['endedBy'], en
     const cards = allCards(p.hand, p.table);
     const opts = { ...scoringOptsFor(state, p), lastChanceColorBonus: isLastChance };
     const breakdown = totalScore(cards, opts);
-    return { p, cardPoints: breakdown.cardPoints, colorBonus: breakdown.colorBonus };
+    const cats = categoryBreakdown(cards, opts);
+    return {
+      p,
+      cardPoints: breakdown.cardPoints,
+      colorBonus: breakdown.colorBonus,
+      breakdown: cats,
+      cardCount: cards.length,
+    };
   });
 
   let forfeitCallerId: PlayerId | null = null;
@@ -158,7 +165,7 @@ function scoreRound(state: SspState, summaryKind: SspRoundSummary['endedBy'], en
     }
   }
 
-  const perPlayer: SspPlayerRoundScore[] = baseScores.map(({ p, cardPoints: cp, colorBonus: cb }) => {
+  const perPlayer: SspPlayerRoundScore[] = baseScores.map(({ p, cardPoints: cp, colorBonus: cb, breakdown: cats, cardCount }) => {
     let forfeitCards = false;
     let forfeitBonus = false;
     let total: number;
@@ -193,6 +200,8 @@ function scoreRound(state: SspState, summaryKind: SspRoundSummary['endedBy'], en
       total,
       forfeitCards,
       forfeitBonus,
+      breakdown: cats,
+      cardCount,
     };
   });
 
@@ -282,9 +291,14 @@ function startNewRound(state: SspState): void {
     p.trios = [];
     p.roundScore = 0;
   }
-  // First player rotates round to round.
-  const lastStarter = state.activePlayerId ?? state.players[0].id;
-  state.activePlayerId = nextSeatId(state, lastStarter);
+  // First player rotates round to round per rulebook ("the starting player
+  // passes the deck to their left"). Rotation is from LAST ROUND'S STARTER
+  // — NOT whoever happened to end the round — so an efficient AI doesn't
+  // keep stealing the first-player slot.
+  const lastStarter = state.currentRoundStarterId ?? state.activePlayerId ?? state.players[0].id;
+  const newStarter = nextSeatId(state, lastStarter);
+  state.currentRoundStarterId = newStarter;
+  state.activePlayerId = newStarter;
 
   // Pepper: reveal the next event card. If the deck is empty (12 rounds used —
   // unlikely in a match), the round simply has no event.
@@ -320,21 +334,57 @@ function lookupEventSign(id: SspEventId): '+' | '-' {
   return EVENT_BY_ID[id].sign;
 }
 
+/** Decide the match winner among everyone who crossed the target.
+ *  Returns null when the result is a TRUE tie — same matchScore AND same
+ *  mermaid count — so the caller can play an extra round. Otherwise returns
+ *  the winning player id.
+ *
+ *  Tiebreakers (in order):
+ *    1. Highest matchScore.
+ *    2. Most mermaids on the table at end of the deciding round.
+ *  If both are equal, return null → another round is played.
+ */
+function decideWinner(state: SspState): { winnerId: PlayerId | null; tied: PlayerId[] } {
+  // All candidates who hit the target — others are eliminated from the final
+  // race (the rulebook's "first to target" is a trigger, but anyone else who
+  // ALSO crossed in the same round is still in the running).
+  const candidates = state.players.filter((p) => p.matchScore >= state.config.targetScore);
+  if (candidates.length === 0) return { winnerId: null, tied: [] };
+
+  // Tier 1: top matchScore.
+  const topScore = Math.max(...candidates.map((p) => p.matchScore));
+  const topByScore = candidates.filter((p) => p.matchScore === topScore);
+  if (topByScore.length === 1) return { winnerId: topByScore[0].id, tied: [] };
+
+  // Tier 2: most mermaids (count from the player's tableau at this moment).
+  const mermaidsOf = (p: SspPlayer): number =>
+    p.table.filter((c) => c.family === 'mermaid').length
+    + p.hand.filter((c) => c.family === 'mermaid').length;
+  const topMermaids = Math.max(...topByScore.map(mermaidsOf));
+  const topByMermaids = topByScore.filter((p) => mermaidsOf(p) === topMermaids);
+  if (topByMermaids.length === 1) return { winnerId: topByMermaids[0].id, tied: [] };
+
+  // True tie — both score and mermaid count equal across multiple players.
+  return { winnerId: null, tied: topByMermaids.map((p) => p.id) };
+}
+
 function gameOverIfReached(state: SspState): void {
-  // Pick the player with the highest matchScore among any that have crossed the
-  // target — ties go to the first player in seat order.
-  let winner: SspPlayer | null = null;
-  for (const p of state.players) {
-    if (p.matchScore >= state.config.targetScore) {
-      if (!winner || p.matchScore > winner.matchScore) winner = p;
-    }
+  const { winnerId, tied } = decideWinner(state);
+  if (winnerId) {
+    state.phase = 'gameOver';
+    state.subPhase = 'gameOver';
+    state.finalScores = {};
+    for (const p of state.players) state.finalScores[p.id] = p.matchScore;
+    pushLog(state, { kind: 'matchEnd', winnerId });
+    return;
   }
-  if (!winner) return;
-  state.phase = 'gameOver';
-  state.subPhase = 'gameOver';
-  state.finalScores = {};
-  for (const p of state.players) state.finalScores[p.id] = p.matchScore;
-  pushLog(state, { kind: 'matchEnd', winnerId: winner.id });
+  if (tied.length >= 2) {
+    // Per rulebook: play another round to break the tie. Stay in 'roundEnd'
+    // (the round summary view) but flag the tie so the UI can announce it,
+    // and DO NOT mark phase=gameOver — nextRound will fall through to
+    // startNewRound on the next dispatch.
+    state.tieBreakerPlayers = tied;
+  }
 }
 
 function advanceTurnAfterEndChoice(state: SspState): void {
@@ -764,10 +814,17 @@ export function applyAction(state: SspState, action: SspAction): SspState {
 
     case 'nextRound': {
       if (s.subPhase !== 'roundEnd') throw new Error('nextRound: wrong subPhase');
-      // Match end check first.
+      // If anyone hit the target, try to decide a winner. Two outcomes:
+      //   - clean winner → gameOverIfReached flips phase to 'gameOver'.
+      //   - true tie → it sets tieBreakerPlayers; we fall through to start
+      //                 another round.
       if (s.players.some((p) => p.matchScore >= s.config.targetScore)) {
         gameOverIfReached(s);
-        return s;
+        if (s.phase === 'gameOver') return s;
+        // tie → continue to startNewRound below.
+      } else {
+        // No tie pending — clear the flag in case it lingered from a prior tie.
+        s.tieBreakerPlayers = undefined;
       }
       startNewRound(s);
       return s;
@@ -782,6 +839,7 @@ export function setupNewMatch(state: SspState): void {
   state.round = 1;
   // Active player should be the first seat at match start.
   state.activePlayerId = state.players[0]?.id ?? null;
+  state.currentRoundStarterId = state.players[0]?.id ?? null;
 }
 
 /** Returns true if the active player can call STOP / LAST CHANCE. */

@@ -90,6 +90,20 @@ export interface SspPlayerRoundScore {
    *  toward the round total. Happens on STOP / deck-empty / mermaid-win,
    *  where the special color bonus is only earned on LAST CHANCE. */
   forfeitBonus: boolean;
+  /** Per-category point breakdown for analytics. The sum of the categories
+   *  equals cardPoints + colorBonus (before any forfeit). Optional for legacy
+   *  matches that pre-date this field. */
+  breakdown?: {
+    duos: number;
+    sets: number;
+    multipliers: number;
+    trios: number;
+    mermaidClaim: number;
+    colorBonus: number;
+  };
+  /** Number of cards on the player's hand+table at scoring time. Used for
+   *  cumulative-cards / avg-pts-per-card analytics. Optional for legacy. */
+  cardCount?: number;
 }
 
 export interface SspRoundSummary {
@@ -185,6 +199,12 @@ export interface SspState {
   subPhase: SspSubPhase;
   /** Who called LAST CHANCE this round, if anyone. */
   lastChanceFrom: PlayerId | null;
+  /** Seat that STARTED the current round (i.e. the player who took the first
+   *  turn). Rotates round-to-round per rulebook ("dealer passes to the left"):
+   *  starter(round N+1) = nextSeat(starter(round N)). Tracked separately from
+   *  activePlayerId so the rotation isn't biased by who ENDED the round.
+   *  Optional for legacy state. */
+  currentRoundStarterId?: PlayerId | null;
   /** Seats still to take their final turn after LAST CHANCE was called (in order). */
   lastChanceRemaining: PlayerId[];
   /** Last round's score breakdown, shown on the round-end screen. */
@@ -203,6 +223,11 @@ export interface SspState {
   nextTurnLockedPlayerId?: PlayerId | null;
   /** Extra Pepper event-deck state, null when expansion disabled. */
   event?: SspEventDeckState | null;
+  /** When 2+ players reach the target score in the same round AND tie on
+   *  every tiebreaker (score, then mermaid count), the rulebook calls for
+   *  another round. Set on the round-end transition; cleared when the tie
+   *  is broken in a subsequent round. */
+  tieBreakerPlayers?: PlayerId[];
   /** Append-only game log shown in the history sidebar. */
   log: SspLogEntry[];
   /** Monotonic sequence used as the key for log entries. */

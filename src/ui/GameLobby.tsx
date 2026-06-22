@@ -21,7 +21,32 @@ import { useNetworkStore } from '@/store/networkStore';
 import { getOrCreateUuid } from '@/net/identity';
 import type { LobbyState } from '@/net/types';
 
-const COLORS = ['#ff7070', '#6aa0ff', '#7fd47f', '#ffb84d', '#c98aff', '#67d4d4', '#ff90c8', '#e0e0e0'];
+// Catan-inspired palette: 14 distinguishable colors players can choose from.
+// Hex values mirror the Catan project's PLAYER_COLOR_HEX so the same seat color
+// reads the same across both apps.
+const COLORS: readonly string[] = [
+  '#e64a4a', // red
+  '#3a6ec9', // blue
+  '#f37025', // orange
+  '#f0f0f0', // white
+  '#8a47c4', // purple
+  '#e85a9c', // pink
+  '#1abc9c', // teal
+  '#f5b223', // gold
+  '#6dc960', // lime
+  '#6e4a2c', // brown
+  '#4a4a4a', // black
+  '#2e7d3a', // forest
+  '#c89fe8', // lavender
+  '#7e2a2a', // maroon
+];
+const COLOR_LABELS: Record<string, string> = {
+  '#e64a4a': 'Red',     '#3a6ec9': 'Blue',     '#f37025': 'Orange',
+  '#f0f0f0': 'White',   '#8a47c4': 'Purple',   '#e85a9c': 'Pink',
+  '#1abc9c': 'Teal',    '#f5b223': 'Gold',     '#6dc960': 'Lime',
+  '#6e4a2c': 'Brown',   '#4a4a4a': 'Black',    '#2e7d3a': 'Forest',
+  '#c89fe8': 'Lavender','#7e2a2a': 'Maroon',
+};
 
 interface Props {
   module: AnyGameModule;
@@ -190,7 +215,12 @@ export function GameLobby({ module, onBack, onStart }: Props) {
             const assignedToConnectedPeer = isOnline && peers[s.id] !== undefined;
             return (
               <div key={s.id} className="seat-row">
-                <span className="swatch" style={{ background: s.color }} />
+                <ColorSwatchPicker
+                  value={s.color}
+                  takenBy={Object.fromEntries(seats.filter((x) => x.id !== s.id).map((x) => [x.color, x.name]))}
+                  disabled={!isHostEditable}
+                  onChange={(newColor) => updateSeat(s.id, { color: newColor })}
+                />
                 <input
                   value={s.name}
                   onChange={(e) => updateSeat(s.id, { name: e.target.value })}
@@ -386,5 +416,75 @@ function ChatInput({ onSend }: { onSend: (s: string) => void }) {
       <input value={v} onChange={(e) => setV(e.target.value)} placeholder="Chat…" maxLength={200} style={{ flex: 1 }} />
       <button type="submit" disabled={!v.trim()}>Send</button>
     </form>
+  );
+}
+
+/** Clickable seat-color picker. Shows the current swatch; clicking opens a
+ *  small popover grid of the 14 palette colors. Colors already used by OTHER
+ *  seats are dimmed + show a tooltip indicating which seat took them. */
+function ColorSwatchPicker({ value, takenBy, disabled, onChange }: {
+  value: string;
+  takenBy: Record<string, string>;
+  disabled?: boolean;
+  onChange: (c: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span style={{ position: 'relative', display: 'inline-flex' }}>
+      <button
+        type="button"
+        className="swatch swatch-button"
+        onClick={() => !disabled && setOpen((v) => !v)}
+        disabled={disabled}
+        title={COLOR_LABELS[value] ?? value}
+        style={{
+          background: value,
+          width: 18, height: 18, borderRadius: 3, border: '1px solid rgba(0,0,0,0.25)',
+          padding: 0, cursor: disabled ? 'default' : 'pointer',
+        }}
+      />
+      {open && !disabled && (
+        <>
+          <div
+            onClick={() => setOpen(false)}
+            style={{ position: 'fixed', inset: 0, zIndex: 10 }}
+          />
+          <div
+            style={{
+              position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 11,
+              background: 'var(--bg-elevated, #1e1c2e)',
+              border: '1px solid rgba(255,255,255,0.15)',
+              borderRadius: 6,
+              padding: 6,
+              boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+              display: 'grid',
+              gridTemplateColumns: 'repeat(7, 22px)',
+              gap: 4,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {COLORS.map((c) => {
+              const taken = takenBy[c];
+              return (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => { onChange(c); setOpen(false); }}
+                  title={taken ? `${COLOR_LABELS[c]} — taken by ${taken}` : COLOR_LABELS[c]}
+                  disabled={!!taken}
+                  style={{
+                    width: 22, height: 22, borderRadius: 3, padding: 0,
+                    background: c,
+                    border: c === value ? '2px solid #fff' : '1px solid rgba(0,0,0,0.25)',
+                    cursor: taken ? 'not-allowed' : 'pointer',
+                    opacity: taken ? 0.3 : 1,
+                  }}
+                />
+              );
+            })}
+          </div>
+        </>
+      )}
+    </span>
   );
 }
