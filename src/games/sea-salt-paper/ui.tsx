@@ -13,6 +13,7 @@ import { RulesBook, RulesHero, RulesGrid, RulesTile } from '@/ui/RulesBook';
 import { SspFlipProvider, useFlipAnchor } from './cardFlip';
 import { OpponentMoveAnim } from './OpponentMoveAnim';
 import { PlotlyChart } from './PlotlyChart';
+import { useSspTiming, formatElapsed } from './timingStore';
 import type { Data as PlotData } from 'plotly.js';
 import './ssp.css';
 
@@ -343,6 +344,21 @@ function GameView({
     setCrabPickPile(null);
   }, [state.activePlayerId, state.subPhase, state.round]);
 
+  // Timing: reset on fresh match (round 1, no log yet), then credit gaps to
+  // whichever seat was previously active on every active-player change. Lives
+  // in a local zustand store (out of replicated state) so wall-clock ticks
+  // don't churn the reducer.
+  useEffect(() => {
+    if (state.round === 1 && (state.log?.length ?? 0) <= 2) {
+      useSspTiming.getState().resetForMatch();
+    }
+    // run only when round resets to 1 — i.e., a new match was loaded.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.round === 1 ? 'reset' : 'live']);
+  useEffect(() => {
+    useSspTiming.getState().onActiveChanged(state.activePlayerId);
+  }, [state.activePlayerId]);
+
   const isLocalActive = localPlayerId !== null && state.activePlayerId === localPlayerId;
   const me = state.players.find((p) => p.id === localPlayerId) ?? null;
 
@@ -505,6 +521,7 @@ function GameView({
           <div className="target-info">
             <span>Round {state.round}</span>
             <span>{state.deck.length} cards left in deck</span>
+            <GameClock isOver={false} />
             <span className="match-progress">
               {state.players.map((p) => {
                 const seat = getSeat(state, p.id);
@@ -1121,31 +1138,8 @@ function GameOver({ state }: { state: SspState }) {
   // matchScore for any legacy state without a matchEnd log.
   const matchEnd = (state.log ?? []).filter((e) => e.kind === 'matchEnd').slice(-1)[0];
   const winnerId = (matchEnd && matchEnd.kind === 'matchEnd') ? matchEnd.winnerId : sorted[0]?.id ?? null;
-  const winnerSeat = winnerId ? state.seats.find((s) => s.id === winnerId) : null;
-  const winnerScore = winnerId ? state.players.find((p) => p.id === winnerId)?.matchScore : null;
-  const tieWasBroken = !state.mermaidWinnerId
-    && sorted.length >= 2
-    && sorted[0].matchScore === sorted[1].matchScore
-    && winnerId != null;
-  const reason = state.mermaidWinnerId
-    ? `collected 4 mermaids — instant win!`
-    : tieWasBroken
-      ? `wins ${winnerScore}–${sorted[1].matchScore} on the mermaid tiebreaker`
-      : `reached ${state.config.targetScore} points`;
   return (
     <div className="ssp">
-      <div className="ssp-winner-banner" style={{
-        background: winnerSeat
-          ? `linear-gradient(135deg, ${winnerSeat.color}cc 0%, ${winnerSeat.color}66 100%)`
-          : undefined,
-      }}>
-        <div className="ssp-winner-trophy" aria-hidden="true">🏆</div>
-        <div className="ssp-winner-eyebrow">Match winner</div>
-        <div className="ssp-winner-name" style={{ color: winnerSeat?.color ?? undefined }}>
-          {nameOf(state, winnerId)}
-        </div>
-        <div className="ssp-winner-sub">{reason}</div>
-      </div>
       <div className="round-summary">
         <h2>Final scores</h2>
         <table>
@@ -1186,6 +1180,7 @@ function MatchStats({ state }: { state: SspState }) {
   const colorOf = (pid: PlayerId) => state.seats.find((s) => s.id === pid)?.color ?? '#888';
   const nameById = (pid: PlayerId) => state.seats.find((s) => s.id === pid)?.name ?? pid;
   const extraSalt = !!state.config.expansions?.extraSalt;
+  const timingPerPlayer = useSspTiming((s) => s.perPlayer);
 
   // Cumulative score across rounds — used for the cumulative-score line chart.
   const cumulativeScore: Record<PlayerId, number[]> = {};
@@ -1419,7 +1414,12 @@ function MatchStats({ state }: { state: SspState }) {
     })),
   ];
 
-  const colorKeys = (Object.keys(deckColorPct) as SspColor[]).filter((c) => deckColorPct[c] > 0);
+  // Sort colors by deck frequency descending — most common at top of the
+  // horizontal bar chart, rarest at bottom. Auto-reversed y-axis means the
+  // visual order matches the slice order.
+  const colorKeys = (Object.keys(deckColorPct) as SspColor[])
+    .filter((c) => deckColorPct[c] > 0)
+    .sort((a, b) => deckColorPct[b] - deckColorPct[a]);
   const colorLabels = colorKeys.map((c) => c);
   const colorTraces: PlotData[] = [
     {
@@ -1440,6 +1440,16 @@ function MatchStats({ state }: { state: SspState }) {
     })),
   ];
 
+  // Time per player — single bar chart, total seconds per seat.
+  const timeBarTrace: PlotData = {
+    type: 'bar',
+    name: 'Seconds',
+    x: playerIds.map((pid) => nameById(pid)),
+    y: playerIds.map((pid) => Math.round((timingPerPlayer[pid] ?? 0) / 1000)),
+    marker: { color: playerIds.map((pid) => colorOf(pid)) },
+    hovertemplate: '%{x}: %{y}s<extra></extra>',
+  };
+
   // Pie data for round endings.
   const endingPieTrace: PlotData = {
     type: 'pie',
@@ -1451,91 +1461,120 @@ function MatchStats({ state }: { state: SspState }) {
     sort: false,
   };
 
+  // Tab layout: one chart per tab, mirrors catan's MatchGraph navigation. Tab
+  // state is local component state — switching doesn't re-fetch any data.
+  type StatsTab =
+    | 'score' | 'cardsCum' | 'cardsRound' | 'ptsPerCard' | 'category'
+    | 'family' | 'color' | 'endings' | 'time';
+  const TABS: Array<{ key: StatsTab; label: string }> = [
+    { key: 'score',       label: 'Score' },
+    { key: 'cardsCum',    label: 'Cards (cum)' },
+    { key: 'cardsRound',  label: 'Cards / rd' },
+    { key: 'ptsPerCard',  label: 'Pts / card' },
+    { key: 'category',    label: 'Categories' },
+    { key: 'family',      label: 'Family %' },
+    { key: 'color',       label: 'Color %' },
+    { key: 'endings',     label: 'Endings' },
+    { key: 'time',        label: 'Time' },
+  ];
   return (
-    <div className="ssp-stats">
-      <h2 style={{ margin: '22px 0 8px' }}>📊 Match stats</h2>
-
-      <h3>Cumulative score</h3>
-      <PlotlyChart
-        data={cumulativeScoreTraces}
-        layout={{
-          xaxis: { title: { text: 'Round' } },
-          yaxis: { title: { text: 'Points' }, rangemode: 'tozero' },
-        }}
-      />
-
-      <h3>Cumulative cards collected</h3>
-      <PlotlyChart
-        data={cumulativeCardsTraces}
-        layout={{
-          xaxis: { title: { text: 'Round' } },
-          yaxis: { title: { text: 'Cards' }, rangemode: 'tozero' },
-        }}
-      />
-
-      <h3>Cards collected per round</h3>
-      <PlotlyChart
-        data={cardsPerRoundTraces}
-        layout={{
-          barmode: 'group',
-          bargap: 0.2,
-          bargroupgap: 0.08,
-          xaxis: { title: { text: 'Round' } },
-          yaxis: { title: { text: 'Cards' }, rangemode: 'tozero' },
-        }}
-      />
-
-      <h3>Avg points per card (per round)</h3>
-      <PlotlyChart
-        data={avgPtPerCardTraces}
-        layout={{
-          barmode: 'group',
-          bargap: 0.2,
-          bargroupgap: 0.08,
-          xaxis: { title: { text: 'Round' } },
-          yaxis: { title: { text: 'pts / card' }, rangemode: 'tozero' },
-        }}
-      />
-
-      <h3>Category breakdown by round</h3>
-      <CategoryBreakdownChart
-        data={playerCategoryByRound}
-        playerIds={playerIds}
-        nameById={nameById}
-        colorOf={colorOf}
-        roundLabels={roundLabels}
-      />
-
-      <h3>Family frequency vs deck (%)</h3>
-      <PlotlyChart
-        data={familyTraces}
-        layout={{
-          barmode: 'group',
-          bargap: 0.55,
-          bargroupgap: 0.12,
-          xaxis: { title: { text: '% of tableau' }, ticksuffix: '%' },
-          yaxis: { autorange: 'reversed', automargin: true },
-          hovermode: 'y unified',
-        }}
-        style={{ height: Math.max(480, familyKeys.length * 52) }}
-      />
-
-      <h3>Color frequency vs deck (%)</h3>
-      <PlotlyChart
-        data={colorTraces}
-        layout={{
-          barmode: 'group',
-          bargap: 0.55,
-          bargroupgap: 0.12,
-          xaxis: { title: { text: '% of tableau' }, ticksuffix: '%' },
-          yaxis: { autorange: 'reversed', automargin: true },
-          hovermode: 'y unified',
-        }}
-        style={{ height: Math.max(480, colorKeys.length * 52) }}
-      />
-
-      <h3>Round endings</h3>
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(260px, 360px) 1fr', gap: 16, alignItems: 'start' }}>
+    <MatchStatsTabs tabs={TABS}>
+      {(active) => (
+        <>
+          {active === 'score' && (
+            <PlotlyChart
+              data={cumulativeScoreTraces}
+              layout={{
+                xaxis: { title: { text: 'Round' } },
+                yaxis: { title: { text: 'Points' }, rangemode: 'tozero' },
+              }}
+            />
+          )}
+          {active === 'cardsCum' && (
+            <PlotlyChart
+              data={cumulativeCardsTraces}
+              layout={{
+                xaxis: { title: { text: 'Round' } },
+                yaxis: { title: { text: 'Cards' }, rangemode: 'tozero' },
+              }}
+            />
+          )}
+          {active === 'cardsRound' && (
+            <PlotlyChart
+              data={cardsPerRoundTraces}
+              layout={{
+                barmode: 'group',
+                bargap: 0.2,
+                bargroupgap: 0.08,
+                xaxis: { title: { text: 'Round' } },
+                yaxis: { title: { text: 'Cards' }, rangemode: 'tozero' },
+              }}
+            />
+          )}
+          {active === 'ptsPerCard' && (
+            <PlotlyChart
+              data={avgPtPerCardTraces}
+              layout={{
+                barmode: 'group',
+                bargap: 0.2,
+                bargroupgap: 0.08,
+                xaxis: { title: { text: 'Round' } },
+                yaxis: { title: { text: 'pts / card' }, rangemode: 'tozero' },
+              }}
+            />
+          )}
+          {active === 'category' && (
+            <CategoryBreakdownChart
+              data={playerCategoryByRound}
+              playerIds={playerIds}
+              nameById={nameById}
+              colorOf={colorOf}
+              roundLabels={roundLabels}
+            />
+          )}
+          {active === 'family' && (
+            <PlotlyChart
+              data={familyTraces}
+              layout={{
+                barmode: 'group',
+                bargap: 0.55,
+                bargroupgap: 0.12,
+                xaxis: { title: { text: '% of tableau' }, ticksuffix: '%' },
+                yaxis: { autorange: 'reversed', automargin: true },
+                hovermode: 'y unified',
+              }}
+              style={{ height: Math.max(480, familyKeys.length * 52) }}
+            />
+          )}
+          {active === 'color' && (
+            <PlotlyChart
+              data={colorTraces}
+              layout={{
+                barmode: 'group',
+                bargap: 0.55,
+                bargroupgap: 0.12,
+                xaxis: { title: { text: '% of tableau' }, ticksuffix: '%' },
+                yaxis: { autorange: 'reversed', automargin: true },
+                hovermode: 'y unified',
+              }}
+              style={{ height: Math.max(480, colorKeys.length * 52) }}
+            />
+          )}
+          {active === 'time' && (
+            <PlotlyChart
+              data={[timeBarTrace]}
+              layout={{
+                xaxis: { title: { text: 'Player' } },
+                yaxis: { title: { text: 'Seconds spent' }, rangemode: 'tozero' },
+                showlegend: false,
+                hovermode: 'closest',
+                bargap: 0.3,
+              }}
+              style={{ height: 320 }}
+            />
+          )}
+          {active === 'endings' && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(260px, 360px) 1fr', gap: 16, alignItems: 'start' }}>
         <PlotlyChart
           data={[endingPieTrace]}
           layout={{
@@ -1571,6 +1610,38 @@ function MatchStats({ state }: { state: SspState }) {
           </tbody>
         </table>
       </div>
+          )}
+        </>
+      )}
+    </MatchStatsTabs>
+  );
+}
+
+/** Tabbed wrapper for the match-stats charts. Mirrors catan's MatchGraph
+ *  navigation — tabs across the top, one chart per tab below. Tabs scroll
+ *  horizontally on narrow widths so the layout stays single-row. */
+function MatchStatsTabs<T extends string>({ tabs, children }: {
+  tabs: Array<{ key: T; label: string }>;
+  children: (active: T) => React.ReactNode;
+}) {
+  const [active, setActive] = useState<T>(tabs[0].key);
+  return (
+    <div className="ssp-stats">
+      <h2 style={{ margin: '22px 0 8px' }}>📊 Match stats</h2>
+      <div className="ssp-stats-tabs" role="tablist">
+        {tabs.map((t) => (
+          <button
+            key={t.key}
+            role="tab"
+            aria-selected={active === t.key}
+            className={active === t.key ? 'active' : ''}
+            onClick={() => setActive(t.key)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <div className="ssp-stats-panel">{children(active)}</div>
     </div>
   );
 }
@@ -1646,6 +1717,24 @@ function CategoryBreakdownChart({ data, playerIds, nameById, colorOf, roundLabel
   );
 }
 
+
+/** Live wall-clock since the match started. Freezes once `isOver` is true so
+ *  the final time stays visible. Updates once a second. */
+function GameClock({ isOver }: { isOver: boolean }) {
+  const matchStartedAt = useSspTiming((s) => s.matchStartedAt);
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (isOver) return;
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [isOver]);
+  const elapsed = Math.max(0, now - matchStartedAt);
+  return (
+    <span title={isOver ? 'Final game time' : 'Time since match start'} style={{ fontVariantNumeric: 'tabular-nums' }}>
+      ⏱ {formatElapsed(elapsed)}
+    </span>
+  );
+}
 
 function findHandPairs(hand: SspCard[]): Array<[SspCard, SspCard]> {
   const out: Array<[SspCard, SspCard]> = [];

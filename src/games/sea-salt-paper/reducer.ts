@@ -71,8 +71,22 @@ function scoringOptsFor(state: SspState, p: SspPlayer) {
   };
 }
 
-function clone<T>(x: T): T {
-  return JSON.parse(JSON.stringify(x));
+/** Deep-clone the state for an action. We detach `state.log` first because
+ *  it's append-only and grows linearly with the match — deep-cloning it on
+ *  every reducer call dominated CPU by late rounds (round 5+ noticeably
+ *  slowed the AI driver). The clone gets a SHALLOW-copied log array so
+ *  pushes against the returned state don't mutate the input's log either. */
+function clone(x: SspState): SspState {
+  const log = x.log;
+  // Temporarily null out the log so JSON serialization skips it.
+  (x as { log: SspLogEntry[] | undefined }).log = undefined as unknown as SspLogEntry[];
+  const out = JSON.parse(JSON.stringify(x)) as SspState;
+  (x as { log: SspLogEntry[] }).log = log;
+  // Shallow-copy the log: entry objects are immutable (only ever pushed, never
+  // mutated), so sharing the entry references is safe; the array itself must
+  // be a new instance so pushLog on `out` doesn't append to the input array.
+  out.log = log ? log.slice() : [];
+  return out;
 }
 
 function nextSeatId(state: SspState, fromId: PlayerId): PlayerId {

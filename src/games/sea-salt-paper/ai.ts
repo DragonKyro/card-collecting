@@ -136,15 +136,18 @@ function buildKnowledge(state: SspState, meId: PlayerId): Knowledge {
   // count those colors as seen even though the card has left the pile and
   // returned to a private hand. They're known facts and shouldn't be double-
   // counted in unseen tallies.
-  for (const e of state.log ?? []) {
+  //
+  // IMPORTANT: scope the log walk to the CURRENT round only. Cards acquired
+  // in prior rounds were shuffled back into the deck at round start and are
+  // no longer in any hand. Walking the full log (a) double-counts those cards
+  // (the deck is fresh) and (b) scales with game length, which is the dominant
+  // cost of the AI's per-action time by round 5+.
+  const currentRound = state.round;
+  const currentLog = (state.log ?? []).filter((e) => e.round === currentRound);
+  for (const e of currentLog) {
     if (e.kind !== 'drawDiscard' && e.kind !== 'crabPick'
         && e.kind !== 'sharkSteal' && e.kind !== 'lobsterPick'
         && e.kind !== 'angelfishDraw') continue;
-    // We can't easily look up the color without snapshotting at log-time; we
-    // approximate by accounting the family (color isn't on the log entry) and
-    // leave color out of "known opponent holdings" for now. The unseen-color
-    // pool already excludes the family count, so this is a small approximation
-    // error in favor of slight overweighting of opponent-held colors.
     seenByFamily[(e as { family: SspCardFamily }).family] += 1;
   }
 
@@ -172,7 +175,9 @@ function buildKnowledge(state: SspState, meId: PlayerId): Knowledge {
       discardPullsByFamily: {},
     });
   }
-  for (const e of state.log ?? []) {
+  // Same scoping as above — opponent profile reflects what they're holding
+  // THIS round, not cumulative cards across the whole match.
+  for (const e of currentLog) {
     const fam = familyFromLogEntry(e);
     if (!fam) continue;
     const pid = (e as { playerId?: PlayerId }).playerId;

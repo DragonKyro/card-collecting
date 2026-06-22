@@ -125,7 +125,12 @@ export function OpponentMoveAnim({ state, localPlayerId }: { state: SspState; lo
     }, maxLifetime);
 
     return () => { for (const t of flipTimers) clearTimeout(t); };
-  }, [state.logSeq, state, localPlayerId]);
+    // `state` is intentionally NOT in the deps — `state.logSeq` already fires
+    // on every dispatch (and that's what gates new-entry discovery). Including
+    // `state` re-runs the effect on identity changes that aren't log-related
+    // and re-walks the (growing) log every time.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.logSeq, localPlayerId]);
 
   if (ghosts.length === 0) return null;
 

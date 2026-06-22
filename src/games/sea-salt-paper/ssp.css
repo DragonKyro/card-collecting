@@ -431,6 +431,36 @@
 .ssp .ssp-stats td.num,
 .ssp .ssp-stats th.num { text-align: right; }
 /* Make sure recharts tooltips + legend text inherit dark ink. */
+/* Tabbed pagination of post-match charts. One chart per tab; horizontally
+   scrolling tab bar keeps the layout single-row on narrow widths. */
+.ssp .ssp-stats-tabs {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--paper-deep);
+  margin-bottom: 12px;
+  padding-bottom: 0;
+}
+.ssp .ssp-stats-tabs button {
+  background: transparent;
+  border: none;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--paper-ink);
+  opacity: 0.6;
+  cursor: pointer;
+  border-bottom: 3px solid transparent;
+  margin-bottom: -1px;
+  white-space: nowrap;
+}
+.ssp .ssp-stats-tabs button:hover { opacity: 0.85; }
+.ssp .ssp-stats-tabs button.active {
+  opacity: 1;
+  border-bottom-color: var(--paper-ink);
+}
+.ssp .ssp-stats-panel { min-height: 360px; }
+
 .ssp .ssp-stats .recharts-default-tooltip { color: var(--paper-ink) !important; }
 .ssp .ssp-stats .recharts-legend-item-text { color: var(--paper-ink) !important; }
 .ssp .ssp-stats .recharts-cartesian-axis-tick-value { fill: var(--paper-ink); }
