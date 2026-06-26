@@ -26,10 +26,7 @@ jobs:
       # `npm install` (NOT `npm ci`) — the committed lockfile carries DRW
       # Artifactory URLs from Kyle's local environment; CI uses public
       # npmjs.org via the project `.npmrc` and re-resolves the tree.
-      # `--no-audit --no-fund` skip optional post-install work that's known
-      # to trip Node's "Exit handler never called!" bug when installing
-      # heavy native-addon trees (plotly, etc.).
-      - run: npm install --no-audit --no-fund
+      - run: npm install
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
         with:

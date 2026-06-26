@@ -12,9 +12,8 @@ import { Sidebar } from './Sidebar';
 import { RulesBook, RulesHero, RulesGrid, RulesTile } from '@/ui/RulesBook';
 import { SspFlipProvider, useFlipAnchor } from './cardFlip';
 import { OpponentMoveAnim } from './OpponentMoveAnim';
-import { PlotlyChart } from './PlotlyChart';
+import { MultiLine, GroupedBar, StackedBar, HBarGrouped, Pie } from './SvgCharts';
 import { useSspTiming, formatElapsed } from './timingStore';
-import type { Data as PlotData } from 'plotly.js';
 import './ssp.css';
 
 function LobbyConfig({ config, seats, onChange }: { config: SspConfig; seats: Seat[]; onChange: (c: SspConfig) => void }) {
@@ -1352,114 +1351,62 @@ function MatchStats({ state }: { state: SspState }) {
   const cumulativeRoundLabels = ['Start', ...rounds.map((r) => `R${r.round}`)];
   const roundLabels = rounds.map((r) => `R${r.round}`);
 
-  // Pre-build Plotly trace data so each chart's JSX is just a render call.
-  const cumulativeScoreTraces: PlotData[] = playerIds.map((pid) => ({
-    type: 'scatter', mode: 'lines+markers',
-    name: nameById(pid),
-    x: cumulativeRoundLabels,
-    y: cumulativeScore[pid],
-    line: { color: colorOf(pid), width: 2.5 },
-    marker: { color: colorOf(pid), size: 7 },
-    hovertemplate: '%{y} pts<extra>%{fullData.name}</extra>',
+  // Pre-build series for the SVG chart components.
+  const playerSeries = (extract: (pid: PlayerId) => number[]) => playerIds.map((pid) => ({
+    id: pid,
+    label: nameById(pid),
+    color: colorOf(pid),
+    values: extract(pid),
   }));
-  const cumulativeCardsTraces: PlotData[] = playerIds.map((pid) => ({
-    type: 'scatter', mode: 'lines+markers',
-    name: nameById(pid),
-    x: cumulativeRoundLabels,
-    y: cumulativeCards[pid],
-    line: { color: colorOf(pid), width: 2.5 },
-    marker: { color: colorOf(pid), size: 7 },
-    hovertemplate: '%{y} cards<extra>%{fullData.name}</extra>',
-  }));
-  // Avg pts/card as a grouped bar chart — one bar per (round × player).
-  const avgPtPerCardTraces: PlotData[] = playerIds.map((pid) => ({
-    type: 'bar',
-    name: nameById(pid),
-    x: roundLabels,
-    y: avgPtPerCard[pid].map((v) => Number(v.toFixed(3))),
-    marker: { color: colorOf(pid) },
-    hovertemplate: '%{y:.2f} pts/card<extra>%{fullData.name}</extra>',
-  }));
+  const cumulativeScoreSeries = playerSeries((pid) => cumulativeScore[pid]);
+  const cumulativeCardsSeries = playerSeries((pid) => cumulativeCards[pid]);
+  const avgPtPerCardSeries = playerSeries((pid) => avgPtPerCard[pid].map((v) => Number(v.toFixed(2))));
+  const cardsPerRoundSeries = playerSeries((pid) =>
+    rounds.map((r) => r.perPlayer.find((x) => x.playerId === pid)?.cardCount ?? 0));
 
-  // Cards collected PER ROUND (not cumulative) — grouped bars.
-  const cardsPerRoundTraces: PlotData[] = playerIds.map((pid) => ({
-    type: 'bar',
-    name: nameById(pid),
-    x: roundLabels,
-    y: rounds.map((r) => r.perPlayer.find((x) => x.playerId === pid)?.cardCount ?? 0),
-    marker: { color: colorOf(pid) },
-    hovertemplate: '%{y} cards<extra>%{fullData.name}</extra>',
-  }));
-
-  // Family / color frequency — grouped horizontal bars. To get separation
-  // between cards/colors we explicitly set bargroupgap.
+  // Family frequency — horizontal grouped bars with Deck baseline as one
+  // of the series.
   const familyKeys = FAMILY_ORDER.filter((f) => extraSalt || FAMILY[f].expansion !== 'extraSalt');
   const familyLabels = familyKeys.map((k) => FAMILY[k].label);
-  const familyTraces: PlotData[] = [
-    {
-      type: 'bar', orientation: 'h',
-      name: 'Deck',
-      x: familyKeys.map((k) => deckFamilyPct[k]),
-      y: familyLabels,
-      marker: { color: '#888', pattern: { shape: '/', size: 4, solidity: 0.4 } as never },
-      hovertemplate: '%{x:.1f}%<extra>Deck</extra>',
-    },
-    ...playerIds.map((pid): PlotData => ({
-      type: 'bar', orientation: 'h',
-      name: nameById(pid),
-      x: familyKeys.map((k) => playerFamilyPct[pid][k]),
-      y: familyLabels,
-      marker: { color: colorOf(pid) },
-      hovertemplate: '%{x:.1f}%<extra>%{fullData.name}</extra>',
+  const familySeries = [
+    { id: 'deck', label: 'Deck', color: '#888',
+      values: familyKeys.map((k) => deckFamilyPct[k]) },
+    ...playerIds.map((pid) => ({
+      id: pid,
+      label: nameById(pid),
+      color: colorOf(pid),
+      values: familyKeys.map((k) => playerFamilyPct[pid][k]),
     })),
   ];
 
-  // Sort colors by deck frequency descending — most common at top of the
-  // horizontal bar chart, rarest at bottom. Auto-reversed y-axis means the
-  // visual order matches the slice order.
+  // Color frequency — sorted by deck frequency descending, most common at top.
   const colorKeys = (Object.keys(deckColorPct) as SspColor[])
     .filter((c) => deckColorPct[c] > 0)
     .sort((a, b) => deckColorPct[b] - deckColorPct[a]);
-  const colorLabels = colorKeys.map((c) => c);
-  const colorTraces: PlotData[] = [
-    {
-      type: 'bar', orientation: 'h',
-      name: 'Deck',
-      x: colorKeys.map((k) => deckColorPct[k]),
-      y: colorLabels,
-      marker: { color: '#888', pattern: { shape: '/', size: 4, solidity: 0.4 } as never },
-      hovertemplate: '%{x:.1f}%<extra>Deck</extra>',
-    },
-    ...playerIds.map((pid): PlotData => ({
-      type: 'bar', orientation: 'h',
-      name: nameById(pid),
-      x: colorKeys.map((k) => playerColorPct[pid][k]),
-      y: colorLabels,
-      marker: { color: colorOf(pid) },
-      hovertemplate: '%{x:.1f}%<extra>%{fullData.name}</extra>',
+  const colorLabels: string[] = colorKeys;
+  const colorSeries = [
+    { id: 'deck', label: 'Deck', color: '#888',
+      values: colorKeys.map((k) => deckColorPct[k]) },
+    ...playerIds.map((pid) => ({
+      id: pid,
+      label: nameById(pid),
+      color: colorOf(pid),
+      values: colorKeys.map((k) => playerColorPct[pid][k]),
     })),
   ];
 
-  // Time per player — single bar chart, total seconds per seat.
-  const timeBarTrace: PlotData = {
-    type: 'bar',
-    name: 'Seconds',
-    x: playerIds.map((pid) => nameById(pid)),
-    y: playerIds.map((pid) => Math.round((timingPerPlayer[pid] ?? 0) / 1000)),
-    marker: { color: playerIds.map((pid) => colorOf(pid)) },
-    hovertemplate: '%{x}: %{y}s<extra></extra>',
-  };
+  // Time per player — single "series" with one value per seat.
+  const timeSeries = playerIds.map((pid) => ({
+    id: pid,
+    label: nameById(pid),
+    color: colorOf(pid),
+    values: [Math.round((timingPerPlayer[pid] ?? 0) / 1000)],
+  }));
 
-  // Pie data for round endings.
-  const endingPieTrace: PlotData = {
-    type: 'pie',
-    labels: endingSlices.map((s) => s.label),
-    values: endingSlices.map((s) => s.n),
-    marker: { colors: endingSlices.map((s) => s.color) },
-    textinfo: 'percent',
-    hovertemplate: '%{label}: %{value} (%{percent})<extra></extra>',
-    sort: false,
-  };
+  // Pie slices for round endings.
+  const endingPieSlices = endingSlices.map((s) => ({
+    label: s.label, color: s.color, value: s.n,
+  }));
 
   // Tab layout: one chart per tab, mirrors catan's MatchGraph navigation. Tab
   // state is local component state — switching doesn't re-fetch any data.
@@ -1482,46 +1429,21 @@ function MatchStats({ state }: { state: SspState }) {
       {(active) => (
         <>
           {active === 'score' && (
-            <PlotlyChart
-              data={cumulativeScoreTraces}
-              layout={{
-                xaxis: { title: { text: 'Round' } },
-                yaxis: { title: { text: 'Points' }, rangemode: 'tozero' },
-              }}
-            />
+            <MultiLine xLabels={cumulativeRoundLabels} series={cumulativeScoreSeries}
+                       xLabel="Round" yLabel="Points" />
           )}
           {active === 'cardsCum' && (
-            <PlotlyChart
-              data={cumulativeCardsTraces}
-              layout={{
-                xaxis: { title: { text: 'Round' } },
-                yaxis: { title: { text: 'Cards' }, rangemode: 'tozero' },
-              }}
-            />
+            <MultiLine xLabels={cumulativeRoundLabels} series={cumulativeCardsSeries}
+                       xLabel="Round" yLabel="Cards" />
           )}
           {active === 'cardsRound' && (
-            <PlotlyChart
-              data={cardsPerRoundTraces}
-              layout={{
-                barmode: 'group',
-                bargap: 0.2,
-                bargroupgap: 0.08,
-                xaxis: { title: { text: 'Round' } },
-                yaxis: { title: { text: 'Cards' }, rangemode: 'tozero' },
-              }}
-            />
+            <GroupedBar xLabels={roundLabels} series={cardsPerRoundSeries}
+                        xLabel="Round" yLabel="Cards" />
           )}
           {active === 'ptsPerCard' && (
-            <PlotlyChart
-              data={avgPtPerCardTraces}
-              layout={{
-                barmode: 'group',
-                bargap: 0.2,
-                bargroupgap: 0.08,
-                xaxis: { title: { text: 'Round' } },
-                yaxis: { title: { text: 'pts / card' }, rangemode: 'tozero' },
-              }}
-            />
+            <GroupedBar xLabels={roundLabels} series={avgPtPerCardSeries}
+                        xLabel="Round" yLabel="pts / card"
+                        formatY={(v) => v.toFixed(2)} />
           )}
           {active === 'category' && (
             <CategoryBreakdownChart
@@ -1533,58 +1455,22 @@ function MatchStats({ state }: { state: SspState }) {
             />
           )}
           {active === 'family' && (
-            <PlotlyChart
-              data={familyTraces}
-              layout={{
-                barmode: 'group',
-                bargap: 0.55,
-                bargroupgap: 0.12,
-                xaxis: { title: { text: '% of tableau' }, ticksuffix: '%' },
-                yaxis: { autorange: 'reversed', automargin: true },
-                hovermode: 'y unified',
-              }}
-              style={{ height: Math.max(480, familyKeys.length * 52) }}
-            />
+            <HBarGrouped yLabels={familyLabels} series={familySeries}
+                         xTickSuffix="%"
+                         formatX={(v) => `${v.toFixed(1)}%`} />
           )}
           {active === 'color' && (
-            <PlotlyChart
-              data={colorTraces}
-              layout={{
-                barmode: 'group',
-                bargap: 0.55,
-                bargroupgap: 0.12,
-                xaxis: { title: { text: '% of tableau' }, ticksuffix: '%' },
-                yaxis: { autorange: 'reversed', automargin: true },
-                hovermode: 'y unified',
-              }}
-              style={{ height: Math.max(480, colorKeys.length * 52) }}
-            />
+            <HBarGrouped yLabels={colorLabels} series={colorSeries}
+                         xTickSuffix="%"
+                         formatX={(v) => `${v.toFixed(1)}%`} />
           )}
           {active === 'time' && (
-            <PlotlyChart
-              data={[timeBarTrace]}
-              layout={{
-                xaxis: { title: { text: 'Player' } },
-                yaxis: { title: { text: 'Seconds spent' }, rangemode: 'tozero' },
-                showlegend: false,
-                hovermode: 'closest',
-                bargap: 0.3,
-              }}
-              style={{ height: 320 }}
-            />
+            <GroupedBar xLabels={['Players']} series={timeSeries}
+                        xLabel="Player" yLabel="Seconds spent" />
           )}
           {active === 'endings' && (
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(260px, 360px) 1fr', gap: 16, alignItems: 'start' }}>
-        <PlotlyChart
-          data={[endingPieTrace]}
-          layout={{
-            margin: { t: 8, r: 8, b: 8, l: 8 },
-            showlegend: true,
-            legend: { orientation: 'v', x: 1.02, xanchor: 'left', y: 0.5, yanchor: 'middle' },
-            hovermode: 'closest',
-          }}
-          style={{ height: 320 }}
-        />
+        <Pie slices={endingPieSlices} />
         <table style={{ margin: 0 }}>
           <thead>
             <tr><th>Round</th><th>How it ended</th><th>By</th><th>Result</th></tr>
@@ -1665,16 +1551,13 @@ function CategoryBreakdownChart({ data, playerIds, nameById, colorOf, roundLabel
     { key: 'colorBonus',   label: 'Color bonus',   color: '#16a085' },
   ];
   const series = data[selected] ?? [];
-  // Stacked bars: each category is its own trace; barmode 'stack' in the
-  // layout stacks them into one bar per round, so the total round score is
-  // visible as the column height and each color slice is its source.
-  const traces: PlotData[] = CATEGORIES.map((c) => ({
-    type: 'bar',
-    name: c.label,
-    x: roundLabels,
-    y: series.map((row) => row[c.key]),
-    marker: { color: c.color },
-    hovertemplate: '%{y} pts<extra>%{fullData.name}</extra>',
+  // Stacked-bar series: one per category, layered by round. Total height of
+  // the column = the player's round score, color slices show the source.
+  const stackSeries = CATEGORIES.map((c) => ({
+    id: c.key,
+    label: c.label,
+    color: c.color,
+    values: series.map((row) => row[c.key]),
   }));
   return (
     <div>
@@ -1704,15 +1587,8 @@ function CategoryBreakdownChart({ data, playerIds, nameById, colorOf, roundLabel
           background: colorOf(selected), marginLeft: 4,
         }} />
       </div>
-      <PlotlyChart
-        data={traces}
-        layout={{
-          barmode: 'stack',
-          bargap: 0.25,
-          xaxis: { title: { text: 'Round' } },
-          yaxis: { title: { text: 'Points' }, rangemode: 'tozero' },
-        }}
-      />
+      <StackedBar xLabels={roundLabels} series={stackSeries}
+                  xLabel="Round" yLabel="Points" />
     </div>
   );
 }
