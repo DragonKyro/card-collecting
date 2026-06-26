@@ -461,6 +461,50 @@
 }
 .ssp .ssp-stats-panel { min-height: 360px; }
 
+/* SVG chart + right-side legend. */
+.ssp .ssp-svg-chart {
+  /* the layout is set inline (display:flex, gap) — this hook is for future
+     theming and to scope the legend rules below. */
+}
+.ssp .ssp-svg-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--paper-ink);
+  padding: 4px 4px 4px 8px;
+  min-width: 140px;
+  max-width: 200px;
+}
+.ssp .ssp-svg-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  padding: 2px 0;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  font-size: 12px;
+}
+.ssp .ssp-svg-legend-row .swatch {
+  display: inline-block;
+  width: 12px; height: 12px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.ssp .ssp-svg-legend-row .lbl {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ssp .ssp-svg-legend-row .num {
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
 .ssp .ssp-stats .recharts-default-tooltip { color: var(--paper-ink) !important; }
 .ssp .ssp-stats .recharts-legend-item-text { color: var(--paper-ink) !important; }
 .ssp .ssp-stats .recharts-cartesian-axis-tick-value { fill: var(--paper-ink); }
