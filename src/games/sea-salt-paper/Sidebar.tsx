@@ -159,7 +159,7 @@ function Feed({ state, mySeatName, localPlayerId }: { state: SspState; mySeatNam
 
 function LogLine({ entry, state, localPlayerId }: { entry: SspLogEntry; state: SspState; localPlayerId: PlayerId | null }) {
   const name = (id: PlayerId | null) => {
-    if (!id) return <span className="who">System</span>;
+    if (!id) return <span className="who system-who">System</span>;
     const seat = state.seats.find((s) => s.id === id);
     return (
       <span className="who" style={{ color: seat?.color ?? undefined }}>
@@ -227,7 +227,7 @@ function LogLine({ entry, state, localPlayerId }: { entry: SspLogEntry; state: S
       cls += ' round-end system';
       body = (
         <>
-          <span className="who">Round {entry.round} ended</span> —{' '}
+          <span className="who system-who">Round {entry.round} ended</span> —{' '}
           {entry.endedBy === 'stop' && (<>{name(entry.endedByPlayerId)} stopped</>)}
           {entry.endedBy === 'lastChance' && (<>{name(entry.endedByPlayerId)}'s LAST CHANCE {entry.lastChanceWon ? 'won' : 'lost'}</>)}
           {entry.endedBy === 'deckEmpty' && 'deck ran out'}
@@ -241,7 +241,7 @@ function LogLine({ entry, state, localPlayerId }: { entry: SspLogEntry; state: S
       break;
     case 'matchEnd':
       cls += ' match-end system';
-      body = (<><span className="who">Match over</span> — {name(entry.winnerId)} wins!</>);
+      body = (<><span className="who system-who">Match over</span> — {name(entry.winnerId)} wins!</>);
       break;
     case 'playTrio': {
       const [a, b, c] = entry.families;
@@ -267,13 +267,13 @@ function LogLine({ entry, state, localPlayerId }: { entry: SspLogEntry; state: S
     }
     case 'eventReveal':
       cls += ' system';
-      body = (<><span className="who">Round {entry.round}</span> — Event revealed: <strong>{entry.eventId}</strong>.</>);
+      body = (<><span className="who system-who">Round {entry.round}</span> — Event revealed: <strong>{entry.eventId}</strong>.</>);
       break;
     case 'eventAwarded':
       cls += ' system';
       body = entry.playerId
-        ? (<><span className="who">Event awarded</span> — <strong>{entry.eventId}</strong> goes to {name(entry.playerId)}.</>)
-        : (<><span className="who">Event discarded</span> — <strong>{entry.eventId}</strong> applied this round only.</>);
+        ? (<><span className="who system-who">Event awarded</span> — <strong>{entry.eventId}</strong> goes to {name(entry.playerId)}.</>)
+        : (<><span className="who system-who">Event discarded</span> — <strong>{entry.eventId}</strong> applied this round only.</>);
       break;
   }
   return <div className={cls}>{body}</div>;

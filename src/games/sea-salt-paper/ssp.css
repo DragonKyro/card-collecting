@@ -92,10 +92,10 @@
 }
 
 .ssp .pile.empty .empty-slot {
-  width: 78px;
-  height: 118px;
+  width: 56px;
+  height: 86px;
   border: 2px dashed rgba(255,255,255,0.25);
-  border-radius: 10px;
+  border-radius: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -138,7 +138,16 @@
   flex-wrap: wrap;
   gap: 4px;
   margin-top: 6px;
-  min-height: 72px;     /* one row of small cards — keeps height stable when empty */
+  min-height: 90px;     /* one row of standard cards — keeps height stable when empty */
+}
+
+/* Opponent face-down cards overlap heavily to save horizontal space while
+ * remaining countable (each card's left ~14px is visible). The first card
+ * keeps its full width; subsequent cards slide left over their predecessor.
+ * Face-up table cards in the SAME strip aren't overlapped — they only apply
+ * the negative margin to .facedown siblings. */
+.ssp .table-strip .card.facedown + .card.facedown {
+  margin-left: -42px;
 }
 
 /* Reserve a stable action area so the duo/steal/crab/lobster pickers don't
@@ -163,11 +172,13 @@
 
 .ssp .actions button:disabled { background: rgba(255,255,255,0.12); color: rgba(255,255,255,0.4); }
 
-/* Card */
+/* Card. One unified size everywhere — deck, piles, hands (local and opponent),
+ * tables, pending-draw, reveal screen. The `.small` modifier still exists in
+ * markup but is now a no-op so animations across zones don't visually rescale. */
 .ssp .card {
-  width: 78px;
-  height: 118px;
-  border-radius: 8px;
+  width: 56px;
+  height: 86px;
+  border-radius: 6px;
   background: var(--paper-cream);
   border: 2px solid var(--paper-ink);
   position: relative;
@@ -178,12 +189,9 @@
   transition: transform 100ms ease, box-shadow 100ms ease;
   box-shadow: 0 2px 0 var(--paper-edge);
   overflow: hidden;
-  /* Card movement (deck → hand, pile → hand, hand → pile) is driven by the
-     FLIP harness in cardFlip.tsx, which writes inline `transform` + `transition`
-     directly on the node. No CSS animation needed here.
-
-     We do keep a tiny fallback fade so cards that aren't tracked (e.g. opponent
-     hand face-down strips, keyed by index) still acknowledge a new arrival. */
+  /* Card movement is driven by the FLIP harness in cardFlip.tsx, which writes
+     inline `transform` + `transition` directly on the node. No CSS animation
+     needed here. We do keep a tiny fallback fade for fresh-mounts. */
   animation: ssp-card-fade 180ms ease-out;
 }
 
@@ -199,21 +207,33 @@
    make it visually invisible (height 0). */
 .ssp .card .color-bar { display: none; }
 
+/* `.small` is a no-op now — same size as the base `.ssp .card` rule. Kept so
+ * existing markup that passes `size="small"` still works without per-component
+ * edits. */
 .ssp .card.small {
   width: 56px;
   height: 86px;
 }
-.ssp .card.small .art {
-  margin: 16px 4px 2px;
+
+/* Flip animation harness for the OpponentMoveAnim "card lands on discard pile
+ * and flips face-up" effect. Two stacked faces with backface-visibility so
+ * the front (face-down) rotates away and the back (empty — the real face-up
+ * card underneath shows through) takes over past 90°. */
+.ssp .ssp-flip-card {
+  position: relative;
+  width: 56px;
+  height: 86px;
+  transform-style: preserve-3d;
 }
-.ssp .card.small .footer {
-  font-size: 7px;
-  height: 14px;
-  line-height: 14px;
+.ssp .ssp-flip-face {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
 }
-.ssp .card.small .ribbon { font-size: 8px; top: 2px; left: 2px; right: 2px; }
-.ssp .card.small .ribbon .pts,
-.ssp .card.small .ribbon .fam { padding: 0 3px; }
+.ssp .ssp-flip-back {
+  transform: rotateY(180deg);
+}
 
 .ssp .card.selectable { cursor: pointer; }
 .ssp .card.selectable:hover { transform: translateY(-3px); box-shadow: 0 5px 0 var(--paper-edge); }
@@ -226,12 +246,12 @@
 
 .ssp .card .ribbon {
   position: absolute;
-  top: 4px;
-  left: 4px;
-  right: 4px;
+  top: 2px;
+  left: 2px;
+  right: 2px;
   display: flex;
   justify-content: center;
-  font-size: 11px;
+  font-size: 8px;
   font-weight: 700;
   letter-spacing: 0.4px;
   z-index: 2;
@@ -240,46 +260,41 @@
 .ssp .card .ribbon .pts {
   background: rgba(0, 0, 0, 0.65);
   color: #fff;
-  padding: 0 5px;
+  padding: 0 3px;
   border-radius: 3px;
 }
 
 .ssp .card .ribbon .fam {
   background: rgba(255, 255, 255, 0.85);
-  padding: 0 5px;
+  padding: 0 3px;
   border-radius: 3px;
   text-transform: uppercase;
   color: var(--paper-ink);
 }
 
-/* The art sits on a translucent white plate so the SVG reads cleanly against
-   any background color. */
+/* Art sits on a translucent white plate so the SVG reads cleanly against any
+   background color. */
 .ssp .card .art {
   flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  /* Leave room for the ribbon at the top (it's absolutely positioned, ~16px
-   * tall starting at top:4) and a touch of breathing room from the footer. */
-  margin: 24px 8px 2px;
+  margin: 16px 4px 2px;
   background: rgba(255, 255, 255, 0.78);
-  border-radius: 6px;
+  border-radius: 5px;
   min-height: 0;
 }
 
 .ssp .card .footer {
-  /* Footer needs enough height to clear descenders + breathing room from the
-   * 2px dark card border below. 22px with line-height 22 leaves ~6px buffer
-   * below the baseline so "SWIMMER" / "MERMAID" don't kiss the border. */
-  height: 22px;
-  font-size: 9px;
+  height: 14px;
+  font-size: 7px;
   text-align: center;
   letter-spacing: 1px;
   color: rgba(0, 0, 0, 0.85);
   text-transform: uppercase;
   background: rgba(255, 255, 255, 0.85);
   border-top: 1px solid rgba(0, 0, 0, 0.08);
-  line-height: 22px;
+  line-height: 14px;
   flex-shrink: 0;
 }
 
@@ -332,7 +347,6 @@
   margin: 0 auto;
 }
 
-.ssp .round-summary.minimized { padding: 10px 14px; }
 .ssp .round-summary h2 { margin-top: 0; }
 
 .ssp .round-summary-header {
@@ -342,8 +356,6 @@
   gap: 8px;
 }
 .ssp .round-summary-header h2 { margin-bottom: 0; }
-.ssp .round-summary.minimized h2 { font-size: 16px; }
-.ssp .round-summary.minimized > *:not(.round-summary-header) { display: none; }
 
 .ssp .round-summary-reveal {
   display: flex;
@@ -376,8 +388,14 @@
 
 .ssp .round-summary tr.forfeit td { color: var(--danger); }
 /* Single-cell forfeit indicator — used for the Bonus column on STOP rounds
- * where the bonus is shown for reference but doesn't count toward total. */
-.ssp .round-summary td.forfeit-cell { color: var(--danger); }
+ * (where the special bonus is shown for reference but doesn't count) and
+ * for the Cards column when a LAST CHANCE bet is lost. The number stays
+ * visible so the player can see what they "would have" scored, but it's
+ * struck through to indicate it's not in the total. */
+.ssp .round-summary td.forfeit-cell {
+  color: var(--danger);
+  text-decoration: line-through;
+}
 
 /* Match stats — same cream surface as the round summary so the recharts
  * dark-ink labels/grid render readable against a light background. */
@@ -413,6 +431,36 @@
 .ssp .ssp-stats td.num,
 .ssp .ssp-stats th.num { text-align: right; }
 /* Make sure recharts tooltips + legend text inherit dark ink. */
+/* Tabbed pagination of post-match charts. One chart per tab; horizontally
+   scrolling tab bar keeps the layout single-row on narrow widths. */
+.ssp .ssp-stats-tabs {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--paper-deep);
+  margin-bottom: 12px;
+  padding-bottom: 0;
+}
+.ssp .ssp-stats-tabs button {
+  background: transparent;
+  border: none;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--paper-ink);
+  opacity: 0.6;
+  cursor: pointer;
+  border-bottom: 3px solid transparent;
+  margin-bottom: -1px;
+  white-space: nowrap;
+}
+.ssp .ssp-stats-tabs button:hover { opacity: 0.85; }
+.ssp .ssp-stats-tabs button.active {
+  opacity: 1;
+  border-bottom-color: var(--paper-ink);
+}
+.ssp .ssp-stats-panel { min-height: 360px; }
+
 .ssp .ssp-stats .recharts-default-tooltip { color: var(--paper-ink) !important; }
 .ssp .ssp-stats .recharts-legend-item-text { color: var(--paper-ink) !important; }
 .ssp .ssp-stats .recharts-cartesian-axis-tick-value { fill: var(--paper-ink); }
@@ -426,6 +474,68 @@
   font-size: 18px;
   font-weight: 700;
   margin-bottom: 12px;
+}
+
+/* Big celebratory winner card shown at the top of the GameOver screen. The
+ * background gradient is tinted with the winner's seat color (set inline) and
+ * the trophy + name are sized to be unmissable. */
+.ssp .ssp-winner-banner {
+  background: linear-gradient(135deg, var(--yellow) 0%, #fff2c2 100%);
+  color: var(--paper-ink);
+  padding: 22px 18px;
+  border-radius: 14px;
+  text-align: center;
+  margin-bottom: 14px;
+  box-shadow: 0 4px 0 var(--paper-edge), 0 0 0 3px rgba(0, 0, 0, 0.08);
+  animation: ssp-winner-pulse 1.8s ease-out;
+}
+.ssp .ssp-winner-trophy {
+  font-size: 48px;
+  line-height: 1;
+  margin-bottom: 6px;
+}
+.ssp .ssp-winner-eyebrow {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  opacity: 0.7;
+  margin-bottom: 2px;
+}
+.ssp .ssp-winner-name {
+  font-size: 32px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  margin: 2px 0 6px;
+  text-shadow: 0 1px 0 rgba(255,255,255,0.5);
+}
+.ssp .ssp-winner-sub {
+  font-size: 14px;
+  font-style: italic;
+  opacity: 0.85;
+}
+@keyframes ssp-winner-pulse {
+  0%   { transform: scale(0.9); opacity: 0; }
+  60%  { transform: scale(1.04); opacity: 1; }
+  100% { transform: scale(1); }
+}
+
+/* Highlight the winning row in the final-scores table. */
+.ssp .round-summary tr.ssp-winner-row {
+  background: rgba(244, 210, 104, 0.35);
+  font-weight: 700;
+}
+.ssp .round-summary tr.ssp-winner-row td {
+  border-bottom-color: var(--paper-edge);
+}
+.ssp .ssp-winner-pip {
+  background: var(--yellow);
+  color: var(--paper-ink);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 999px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
 }
 
 /* LAST CHANCE announcement banner. Full-board overlay that fades in for a
@@ -803,9 +913,11 @@
   font-weight: 600;
   color: var(--accent);
 }
-/* System rows (round-end, match-end, event reveals) always use the warning
-   hue. Per-player names override the color inline via seat.color. */
-.ssp-log-entry.system .who { color: var(--warning) !important; }
+/* System spans (the "Round N ended" / "Match over" / "Event revealed"
+   prefixes) use a NEUTRAL hue that's distinct from any seat color. Use the
+   `system-who` class on these spans — generic `.who` keeps its inline seat
+   color (set from JSX via style={{color: seat.color}}). */
+.ssp-log-entry .system-who { color: #aab2c5 !important; }
 
 /* Chat */
 .ssp-chat-thread {

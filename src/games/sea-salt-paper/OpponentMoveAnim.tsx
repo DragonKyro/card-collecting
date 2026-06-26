@@ -1,45 +1,41 @@
-// Visualizes opponent moves that involve cards the local viewer can see:
-//   - drawDiscard / crabPick   → animate the taken card from the pile → opponent's hand strip
-//   - keepFromDraw (discard)   → animate the discarded card from opponent's hand strip → pile
-//   - sharkSteal               → animate the stolen card from target's strip → stealer's strip
-//   - playPair / playTrio      → animate cards from opponent's hand strip → their table
+// Animation overlay for moves that the FLIP harness (cardFlip.tsx) can't see.
 //
-// Implementation: watch state.log; for each new entry that matches one of the
-// visible-info kinds above, mount a transient absolutely-positioned ghost
-// CardView at the SOURCE location, then on the next frame slide it to the
-// DESTINATION location. Auto-cleans up after the slide.
+// Background: every RENDERED card uses `useFlipCard(card.id, zone)`, so when
+// a card's zone changes (pile → hand, hand → table, opponent A's hand →
+// opponent B's hand via shark steal), the FLIP harness automatically slides
+// it from its prior screen position to its new home. That covers ALMOST every
+// move the player ever needs to follow:
+//   - drawDiscard / crabPick   → pile-N to hand-X    (FLIP-handled)
+//   - keepFromDraw (discard)   → pending-draw to pile (FLIP-handled)
+//   - sharkSteal               → hand-A to hand-B    (FLIP-handled)
+//   - playPair / playTrio      → hand to table       (FLIP-handled)
 //
-// Source / destination positions are resolved via DOM lookups by stable id
-// attributes (`data-anchor`) on the pile slots, opponent strips, and table
-// strips. Cards going INTO an opponent's hand land at the END of their strip
-// (right side, where new face-down cards visually appear).
+// What FLIP can't see: cards that come straight off the DECK. The deck doesn't
+// render its interior cards, so a fresh-drawn card has no prior DOM position;
+// the harness silently mounts it in place rather than inventing a phantom
+// "flew from deck" animation.
+//
+// This overlay fills only that gap: we watch the log for deck-originating
+// moves and spawn a transient face-down ghost that flies from the deck anchor
+// to the card's destination (opponent's hand row, or a discard pile in the
+// case of drawDeck's discarded card).
 
 import { useEffect, useRef, useState } from 'react';
-import type { SspState, SspLogEntry, SspCardFamily, SspColor } from './types';
+import type { SspState, SspLogEntry } from './types';
 import type { PlayerId } from '@/core/types';
 
-/** Featureless ghost card: just a colored rectangle the size of a small
- *  card. Used by the opponent-move animation overlay — no art, no text, just
- *  a visual hint of "a card is moving here". */
-function GhostCard({ color }: { family: SspCardFamily; color: SspColor }) {
-  return (
-    <div
-      className={`card small color-${color} ssp-ghost-card`}
-      style={{ animation: 'none' }}
-    />
-  );
-}
-
 interface Ghost {
-  id: string;            // unique per ghost; entry seq + variant
-  card: { id: number; family: import('./types').SspCardFamily; color: import('./types').SspColor };
+  id: string;
   from: { x: number; y: number };
-  to:   { x: number; y: number };
-  faceDown: boolean;     // render as face-down placeholder if the card identity is hidden
-  visible: boolean;      // controls the post-mount transform clear
-  /** Delay (ms) before this ghost starts moving — used to stagger multi-leg
-   *  moves like deck → opponent hand → pile so the player sees the flow. */
+  to: { x: number; y: number };
+  visible: boolean;
   startDelay: number;
+  /** If true, the ghost rotates 180° during its slide so it visually FLIPS
+   *  on landing — simulating a real-life "deal" where the card is face-down
+   *  in the dealer's hand and lands face-up on the table. The back face uses
+   *  `backface-visibility: hidden`, so once rotated past 90° the ghost
+   *  disappears and the real face-up card on the pile shows through. */
+  flip?: boolean;
 }
 
 function getRect(selector: string): DOMRect | null {
@@ -48,14 +44,46 @@ function getRect(selector: string): DOMRect | null {
   return el.getBoundingClientRect();
 }
 
-function pileRect(idx: 0 | 1): DOMRect | null {
+/** Rect of the actual card that's NOW on top of a discard pile. The pile DOM
+ *  is `.pile` > `.card` + label rows, so the pile rect's top-left is OFFSET
+ *  from where the card sits. Querying the inner `.card` gives us the exact
+ *  position the ghost should land on. Falls back to the pile rect's top-left
+ *  if the pile is empty (shouldn't happen post-discard). */
+function pileTopCardRect(idx: 0 | 1): DOMRect | null {
+  const el = document.querySelector(`[data-anchor="pile-${idx}"] .card`) as HTMLElement | null;
+  if (el) return el.getBoundingClientRect();
   return getRect(`[data-anchor="pile-${idx}"]`);
 }
-function opponentStripRect(pid: PlayerId): DOMRect | null {
-  return getRect(`[data-anchor="hand-${pid}"]`);
-}
-function localHandRect(): DOMRect | null {
-  return getRect('[data-anchor="hand-me"]');
+
+/** Compute the landing rect for the NEXT face-down card that will appear in
+ *  an opponent's hand row. The hand is rendered as small cards (56px wide,
+ *  4px gap) inside `[data-anchor="strip-${pid}"]`, left-aligned. The newest
+ *  card sits at the right end after the action committed, so we use the
+ *  post-action hand size to derive the new slot's x. */
+function opponentHandEndPoint(state: SspState, pid: PlayerId): { x: number; y: number } | null {
+  const r = getRect(`[data-anchor="strip-${pid}"]`) ?? getRect(`[data-anchor="hand-${pid}"]`);
+  if (!r) return null;
+  // Try to query the LAST face-down card in the strip — it's the precise
+  // landing spot since the new card is appended at the end of the row.
+  // Falls back to a computed x using the overlap step if no face-down card
+  // exists yet (first-ever draw of the round).
+  const cards = document.querySelectorAll(`[data-anchor="strip-${pid}"] .card.facedown`);
+  if (cards.length > 0) {
+    const last = (cards[cards.length - 1] as HTMLElement).getBoundingClientRect();
+    return { x: last.left, y: last.top };
+  }
+  const player = state.players.find((p) => p.id === pid);
+  const handCount = player?.hand.length ?? 0;
+  // Standard card size + overlap step — must match .ssp .table-strip's overlap
+  // rule (card is 56 wide, overlapping cards step by 14px → 56 - 42 = 14).
+  const cardW = 56;
+  const step = 14;
+  const gap = 4;
+  const slotsBeforeNew = Math.max(0, handCount - 1);
+  const maxX = r.right - cardW - 4;
+  const x = Math.min(maxX, r.left + slotsBeforeNew * step + (slotsBeforeNew > 0 ? gap : 0));
+  const y = r.top + 4;
+  return { x, y };
 }
 
 export function OpponentMoveAnim({ state, localPlayerId }: { state: SspState; localPlayerId: PlayerId | null }) {
@@ -64,7 +92,6 @@ export function OpponentMoveAnim({ state, localPlayerId }: { state: SspState; lo
 
   useEffect(() => {
     const log = state.log ?? [];
-    // Process every NEW entry since the last seq we handled.
     const newEntries = log.filter((e) => e.seq > lastSeq.current);
     if (newEntries.length === 0) return;
     lastSeq.current = log[log.length - 1].seq;
@@ -77,38 +104,50 @@ export function OpponentMoveAnim({ state, localPlayerId }: { state: SspState; lo
 
     setGhosts((prev) => [...prev, ...toAdd]);
 
-    const timers: number[] = [];
-    // For each ghost, fire its visibility flip after `startDelay` + 1 frame
-    // so the browser first paints it at its `from` position.
+    const flipTimers: number[] = [];
     for (const g of toAdd) {
       const t = window.setTimeout(() => {
         requestAnimationFrame(() => {
           setGhosts((prev) => prev.map((x) => x.id === g.id ? { ...x, visible: true } : x));
         });
       }, g.startDelay);
-      timers.push(t);
+      flipTimers.push(t);
     }
 
-    // Clean up after the slide completes. We pick the max delay + the 460ms
-    // animation + a 200ms grace period, so all ghosts have fully settled.
-    const maxLifetime = Math.max(...toAdd.map((g) => g.startDelay)) + 700;
-    const cleanup = window.setTimeout(() => {
+    // Cleanup intentionally not cancelled on re-render — see history for the
+    // orphaned-ghost bug. Each batch's removal timer must fire on its own.
+    // Slide is 460ms; 40ms grace lines the removal up tight against the end
+    // of the transition so the ghost doesn't sit on top of the real card.
+    const maxLifetime = Math.max(...toAdd.map((g) => g.startDelay)) + 500;
+    window.setTimeout(() => {
       const ids = new Set(toAdd.map((t) => t.id));
       setGhosts((prev) => prev.filter((g) => !ids.has(g.id)));
     }, maxLifetime);
-    timers.push(cleanup);
-    return () => { for (const t of timers) clearTimeout(t); };
-  }, [state.logSeq, state, localPlayerId]);
+
+    return () => { for (const t of flipTimers) clearTimeout(t); };
+    // `state` is intentionally NOT in the deps — `state.logSeq` already fires
+    // on every dispatch (and that's what gates new-entry discovery). Including
+    // `state` re-runs the effect on identity changes that aren't log-related
+    // and re-walks the (growing) log every time.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.logSeq, localPlayerId]);
 
   if (ghosts.length === 0) return null;
 
+  // Overlay sits outside the .ssp container; add the class here so the ghost
+  // card picks up SSP-scoped sizing and the facedown stripe pattern.
   return (
-    <div style={{
+    <div className="ssp" style={{
       position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 80,
     }}>
       {ghosts.map((g) => {
         const dx = g.visible ? 0 : g.from.x - g.to.x;
         const dy = g.visible ? 0 : g.from.y - g.to.y;
+        // Two-layer transform: the outer div slides, the inner div flips on
+        // its Y-axis if `flip` is set. We can't combine translate + rotateY on
+        // one node because the rotation breaks the FLIP-style translate-back
+        // illusion. perspective on the slider makes the flip read as a real
+        // 3D rotation.
         return (
           <div
             key={g.id}
@@ -116,15 +155,30 @@ export function OpponentMoveAnim({ state, localPlayerId }: { state: SspState; lo
               position: 'absolute',
               left: g.to.x,
               top: g.to.y,
-              transform: `translate(${dx}px, ${dy}px) scale(0.75)`,
-              transformOrigin: 'top left',
+              transform: `translate(${dx}px, ${dy}px)`,
               transition: g.visible ? 'transform 460ms cubic-bezier(0.2, 0.7, 0.3, 1)' : 'none',
+              perspective: 600,
             }}
           >
-            {g.faceDown ? (
-              <div className="card facedown small" style={{ animation: 'none' }} />
+            {g.flip ? (
+              <div
+                className="ssp-flip-card"
+                style={{
+                  transform: g.visible ? 'rotateY(180deg)' : 'rotateY(0deg)',
+                  transition: g.visible ? 'transform 460ms cubic-bezier(0.2, 0.7, 0.3, 1)' : 'none',
+                }}
+              >
+                {/* Front face = the face-down ghost. As the slider lands and
+                 *  the inner flips past 90°, this face rotates out of view
+                 *  (backface-visibility hides it). The back face is empty —
+                 *  the real face-up card on the pile beneath shows through. */}
+                <div className="ssp-flip-face ssp-flip-front">
+                  <div className="card facedown small" style={{ animation: 'none' }} />
+                </div>
+                <div className="ssp-flip-face ssp-flip-back" />
+              </div>
             ) : (
-              <GhostCard family={g.card.family} color={g.card.color} />
+              <div className="card facedown small" style={{ animation: 'none' }} />
             )}
           </div>
         );
@@ -136,148 +190,55 @@ export function OpponentMoveAnim({ state, localPlayerId }: { state: SspState; lo
 function ghostFor(
   e: SspLogEntry, state: SspState, localPlayerId: PlayerId | null,
 ): Ghost[] {
-  // We only animate moves involving OPPONENT cards that the local viewer can
-  // partially see (the source or destination is public).
+  // FLIP handles every other card move. We ONLY animate cards leaving the
+  // deck, because the deck doesn't render its interior and FLIP can't see a
+  // card it never tracked.
   switch (e.kind) {
-    case 'drawDiscard': {
-      if (e.playerId === localPlayerId) return [];
-      const from = pileRect(e.pile);
-      const to = opponentStripRect(e.playerId);
-      if (!from || !to) return [];
-      const cardId = guessCardId(state, e);
-      return [{
-        id: `l-${e.seq}-drawDiscard`,
-        card: { id: cardId ?? -e.seq, family: e.family, color: pickColor(e.family) },
-        from: { x: from.left, y: from.top },
-        to: { x: to.right - 60, y: to.top },
-        faceDown: false,
-        visible: false,
-        startDelay: 0,
-      }];
-    }
-    case 'crabPick': {
-      if (e.playerId === localPlayerId) return [];
-      const from = pileRect(e.pile);
-      const to = opponentStripRect(e.playerId);
-      if (!from || !to) return [];
-      const cardId = guessCardId(state, e);
-      return [{
-        id: `l-${e.seq}-crabPick`,
-        card: { id: cardId ?? -e.seq, family: e.family, color: pickColor(e.family) },
-        from: { x: from.left, y: from.top },
-        to: { x: to.right - 60, y: to.top },
-        faceDown: false,
-        visible: false,
-        startDelay: 0,
-      }];
-    }
-    case 'sharkSteal': {
-      const fromPid = e.targetPlayerId;
-      const toPid = e.playerId;
-      if (toPid === localPlayerId) return [];
-      const fromRect = fromPid === localPlayerId ? localHandRect() : opponentStripRect(fromPid);
-      const toRect = opponentStripRect(toPid);
-      if (!fromRect || !toRect) return [];
-      return [{
-        id: `l-${e.seq}-shark`,
-        card: { id: -e.seq, family: e.family, color: pickColor(e.family) },
-        from: { x: fromRect.left + Math.max(0, fromRect.width - 60), y: fromRect.top },
-        to: { x: toRect.right - 60, y: toRect.top },
-        faceDown: true,
-        visible: false,
-        startDelay: 0,
-      }];
-    }
     case 'drawDeck': {
-      // Opponent drew 2 from the deck; kept one and discarded the other to a
-      // pile. We animate this as two sequential moves so the player can
-      // FOLLOW what happened:
-      //   leg 1 (0ms):    a face-down card slides deck → opponent's hand
-      //   leg 1b (60ms):  the discarded card slides deck → opponent's hand
-      //                   (just a slight stagger so they don't overlap exactly)
-      //   leg 2 (520ms):  the discarded card slides opponent's hand → pile
+      // Opponent drew 2 from the deck; kept one face-down, discarded the other
+      // onto a pile. We animate just the deck → opponent's hand leg here; the
+      // discarded card is FLIP-tracked once it lands on the pile, but the
+      // moment-of-landing flight from deck → pile happens too fast for FLIP to
+      // see (the card never had a prior rect on screen) so we animate it too.
       if (e.playerId === localPlayerId) return [];
       const deckRect = getRect('[data-anchor="deck"]');
-      const handRect = opponentStripRect(e.playerId);
-      const pileR = pileRect(e.toPile);
+      const handEnd = opponentHandEndPoint(state, e.playerId);
+      const pileR = pileTopCardRect(e.toPile);
       if (!deckRect) return [];
       const ghosts: Ghost[] = [];
-      if (handRect) {
-        // Kept card: face-down, deck → hand.
+      if (handEnd) {
         ghosts.push({
           id: `l-${e.seq}-kept`,
-          card: { id: -e.seq, family: e.keptFamily, color: pickColor(e.keptFamily) },
           from: { x: deckRect.left, y: deckRect.top },
-          to: { x: handRect.right - 70, y: handRect.top + 8 },
-          faceDown: true,
-          visible: false,
-          startDelay: 0,
-        });
-        // Discarded card: deck → hand (briefly), THEN hand → pile.
-        ghosts.push({
-          id: `l-${e.seq}-disc-pickup`,
-          card: { id: -e.seq - 50000, family: e.discardedFamily, color: pickColor(e.discardedFamily) },
-          from: { x: deckRect.left, y: deckRect.top },
-          to: { x: handRect.right - 40, y: handRect.top + 8 },
-          faceDown: false,
-          visible: false,
-          startDelay: 60,
-        });
-        if (pileR) {
-          ghosts.push({
-            id: `l-${e.seq}-disc-drop`,
-            card: { id: -e.seq - 100000, family: e.discardedFamily, color: pickColor(e.discardedFamily) },
-            from: { x: handRect.right - 40, y: handRect.top + 8 },
-            to: { x: pileR.left, y: pileR.top },
-            faceDown: false,
-            visible: false,
-            startDelay: 520,
-          });
-        }
-      } else if (pileR) {
-        // No opponent hand strip visible — fall back to deck → pile.
-        ghosts.push({
-          id: `l-${e.seq}-disc`,
-          card: { id: -e.seq - 100000, family: e.discardedFamily, color: pickColor(e.discardedFamily) },
-          from: { x: deckRect.left, y: deckRect.top },
-          to: { x: pileR.left, y: pileR.top },
-          faceDown: false,
+          to: handEnd,
           visible: false,
           startDelay: 0,
         });
       }
+      if (pileR) {
+        // Land exactly on the pile's top card and flip face-up on touchdown.
+        ghosts.push({
+          id: `l-${e.seq}-disc`,
+          from: { x: deckRect.left, y: deckRect.top },
+          to: { x: pileR.left, y: pileR.top },
+          visible: false,
+          startDelay: 0,
+          flip: true,
+        });
+      }
       return ghosts;
-    }
-    case 'playPair':
-    case 'playTrio': {
-      if (e.playerId === localPlayerId) return [];
-      const stripRect = opponentStripRect(e.playerId);
-      if (!stripRect) return [];
-      // Show each played family sliding out of the opponent's hand strip and
-      // landing on their table (= top of the strip area, slightly offset).
-      return e.families.map((fam, i) => ({
-        id: `l-${e.seq}-play-${i}`,
-        card: { id: -e.seq - i * 1000, family: fam, color: pickColor(fam) },
-        from: { x: stripRect.right - 70 - i * 30, y: stripRect.top + 4 },
-        to: { x: stripRect.right - 70 - i * 30, y: stripRect.top + 38 },
-        faceDown: false,
-        visible: false,
-        startDelay: i * 80,
-      }));
     }
     case 'fishDraw':
     case 'angelfishDraw': {
-      // Opponent drew a free card from the deck (fish duo bonus, etc.).
+      // Free draw from the deck. Always face-down (deck is hidden).
       if (e.playerId === localPlayerId) return [];
       const deckRect = getRect('[data-anchor="deck"]');
-      const handRect = opponentStripRect(e.playerId);
-      if (!deckRect || !handRect) return [];
+      const handEnd = opponentHandEndPoint(state, e.playerId);
+      if (!deckRect || !handEnd) return [];
       return [{
         id: `l-${e.seq}-${e.kind}`,
-        card: { id: -e.seq, family: e.family, color: pickColor(e.family) },
         from: { x: deckRect.left, y: deckRect.top },
-        to: { x: handRect.right - 60, y: handRect.top + 8 },
-        faceDown: true,
+        to: handEnd,
         visible: false,
         startDelay: 0,
       }];
@@ -285,24 +246,4 @@ function ghostFor(
     default:
       return [];
   }
-}
-
-/** Try to find the actual SspCard.id from state for log entries whose source
- *  is a discard pile (we know the family was on top). Returns null if no
- *  match — caller falls back to a synthetic id. */
-function guessCardId(state: SspState, e: SspLogEntry): number | null {
-  if (e.kind === 'drawDiscard' || e.kind === 'crabPick') {
-    // After the action, the card has already been removed from the pile and
-    // added to the actor's hand. We can find it there.
-    const p = state.players.find((q) => q.id === (e as { playerId: PlayerId }).playerId);
-    if (!p) return null;
-    const match = p.hand.find((c) => c.family === e.family);
-    return match?.id ?? null;
-  }
-  return null;
-}
-
-function pickColor(family: SspCardFamily): SspColor {
-  if (family === 'mermaid') return 'white';
-  return 'yellow';
 }

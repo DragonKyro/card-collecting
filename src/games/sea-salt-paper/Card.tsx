@@ -17,7 +17,10 @@ interface Props {
   zone?: string;
 }
 
-export function CardView({ card, size = 'normal', selectable, selected, onClick, zone }: Props) {
+export function CardView({ card, size, selectable, selected, onClick, zone }: Props) {
+  // `size` is a no-op after the card-size unification (see ssp.css). Kept in
+  // the props so callers don't need to change; the `small` class is harmless
+  // because `.ssp .card.small` is the same size as `.ssp .card` now.
   const cls = [
     'card',
     size === 'small' ? 'small' : '',
@@ -35,7 +38,7 @@ export function CardView({ card, size = 'normal', selectable, selected, onClick,
       </div>
       <div className="color-bar" />
       <div className="art">
-        <svg viewBox="0 0 100 120" width={size === 'small' ? 50 : 80}>
+        <svg viewBox="0 0 100 120" width={50}>
           <CardArt family={card.family} bodyColor={card.color} />
         </svg>
       </div>
@@ -51,6 +54,22 @@ export function CardView({ card, size = 'normal', selectable, selected, onClick,
 
 export function FaceDownCard({ size = 'normal' }: { size?: 'normal' | 'small' }) {
   return <div className={`card facedown ${size === 'small' ? 'small' : ''}`} />;
+}
+
+/** A face-down card placeholder that's tracked by the FLIP harness via the
+ *  underlying card.id, so cross-zone movement (deck → opponent hand, pile →
+ *  opponent hand, opponent A's hand → opponent B's hand via shark steal) is
+ *  animated for free — same logic as the local hand. The card identity is
+ *  used ONLY for FLIP tracking; nothing about the family/color is rendered. */
+export function TrackedFaceDownCard({
+  card, zone, size = 'small',
+}: {
+  card: { id: number };
+  zone: string;
+  size?: 'normal' | 'small';
+}) {
+  const flipRef = useFlipCard(card.id, zone);
+  return <div ref={flipRef} className={`card facedown ${size === 'small' ? 'small' : ''}`} />;
 }
 
 function ribbonValue(family: SspCardFamily): string {

@@ -4,7 +4,7 @@ import type { PlayerId, Seat } from '@/core/types';
 import type {
   SspState, SspAction, SspConfig, SspCard, SspCardFamily, SspPlayer, SspColor,
 } from './types';
-import { CardView, FaceDownCard } from './Card';
+import { CardView, FaceDownCard, TrackedFaceDownCard } from './Card';
 import { isValidDuoPair, isValidStarfishTrio, tentativeScore, totalScore } from './scoring';
 import { FAMILY, FAMILY_COLORS, FAMILY_ORDER } from './cards';
 import { EVENT_BY_ID, ALL_EVENT_IDS } from './events';
@@ -12,6 +12,9 @@ import { Sidebar } from './Sidebar';
 import { RulesBook, RulesHero, RulesGrid, RulesTile } from '@/ui/RulesBook';
 import { SspFlipProvider, useFlipAnchor } from './cardFlip';
 import { OpponentMoveAnim } from './OpponentMoveAnim';
+import { PlotlyChart } from './PlotlyChart';
+import { useSspTiming, formatElapsed } from './timingStore';
+import type { Data as PlotData } from 'plotly.js';
 import './ssp.css';
 
 function LobbyConfig({ config, seats, onChange }: { config: SspConfig; seats: Seat[]; onChange: (c: SspConfig) => void }) {
@@ -325,6 +328,15 @@ function GameView({
   const [keepIndex, setKeepIndex] = useState<0 | 1 | null>(null);
   // Step-1 of the crab ability: which pile the player committed to dig into.
   const [crabPickPile, setCrabPickPile] = useState<0 | 1 | null>(null);
+  // Local-only display order for the player's hand. The canonical hand in
+  // `state.players[me].hand` is untouched — shark-steal randomness still
+  // operates over the underlying array — but the UI renders cards in the
+  // user's preferred sort. Resync on every render: keep already-known ids in
+  // their current display order, append newly-drawn ids at the end, and drop
+  // ids no longer in hand.
+  const [handOrder, setHandOrder] = useState<number[]>([]);
+  // Currently-dragged hand card id (null when no drag in flight).
+  const [dragId, setDragId] = useState<number | null>(null);
 
   useEffect(() => {
     setSelected([]);
@@ -332,9 +344,42 @@ function GameView({
     setCrabPickPile(null);
   }, [state.activePlayerId, state.subPhase, state.round]);
 
+  // Timing: reset on fresh match (round 1, no log yet), then credit gaps to
+  // whichever seat was previously active on every active-player change. Lives
+  // in a local zustand store (out of replicated state) so wall-clock ticks
+  // don't churn the reducer.
+  useEffect(() => {
+    if (state.round === 1 && (state.log?.length ?? 0) <= 2) {
+      useSspTiming.getState().resetForMatch();
+    }
+    // run only when round resets to 1 — i.e., a new match was loaded.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.round === 1 ? 'reset' : 'live']);
+  useEffect(() => {
+    useSspTiming.getState().onActiveChanged(state.activePlayerId);
+  }, [state.activePlayerId]);
+
   const isLocalActive = localPlayerId !== null && state.activePlayerId === localPlayerId;
   const me = state.players.find((p) => p.id === localPlayerId) ?? null;
-  const opponents = state.players.filter((p) => p.id !== localPlayerId);
+
+  // Prune stale ids from handOrder whenever the underlying hand changes.
+  // We don't seed it with the current hand here — `sortedHand` treats an
+  // empty order as "keep the hand's own order", so we only need to commit
+  // an order once the user actually drags something. Pruning keeps the
+  // array bounded over a long match.
+  useEffect(() => {
+    if (handOrder.length === 0) return;
+    const ids = new Set((me?.hand ?? []).map((c) => c.id));
+    const filtered = handOrder.filter((id) => ids.has(id));
+    if (filtered.length !== handOrder.length) setHandOrder(filtered);
+  }, [me?.hand]);
+  // All-AI match: no human seat at this device. Treat EVERY player as an
+  // opponent strip (no special "your hand" pane), so the user can watch all
+  // AIs play side-by-side instead of one being hidden in the bottom hand area.
+  const isAllAI = state.seats.every((s) => s.isAI);
+  const opponents = isAllAI
+    ? state.players
+    : state.players.filter((p) => p.id !== localPlayerId);
   const mySeatName = getSeat(state, localPlayerId ?? '')?.name ?? 'You';
 
   // ----- Auto-end-turn: if active human has no plays AND can't stop, just pass.
@@ -476,6 +521,7 @@ function GameView({
           <div className="target-info">
             <span>Round {state.round}</span>
             <span>{state.deck.length} cards left in deck</span>
+            <GameClock isOver={false} />
             <span className="match-progress">
               {state.players.map((p) => {
                 const seat = getSeat(state, p.id);
@@ -541,7 +587,7 @@ function GameView({
             />
           )}
 
-          {me ? (
+          {isAllAI ? null : me ? (
             <div className="hand-area" data-anchor="hand-me">
               <h3>
                 <span>{getSeat(state, me.id)?.name ?? 'You'} — {myTentative} pt{myTentative === 1 ? '' : 's'}</span>
@@ -549,17 +595,24 @@ function GameView({
               </h3>
 
               <div className="cards">
-                {me.hand.map((c) => {
+                {sortedHand(me.hand, handOrder).map((c) => {
                   const allowSelect =
                     isLocalActive && state.subPhase === 'awaitingPlayOrEnd';
                   return (
-                    <CardView
+                    <DraggableHandCard
                       key={c.id}
                       card={c}
-                      zone="hand-me"
                       selectable={allowSelect}
                       selected={selected.includes(c.id)}
                       onClick={allowSelect ? () => toggleSelect(c.id) : undefined}
+                      isDragging={dragId === c.id}
+                      onDragStart={() => setDragId(c.id)}
+                      onDragEnd={() => setDragId(null)}
+                      onDropOn={() => {
+                        if (dragId == null || dragId === c.id) return;
+                        setHandOrder((prev) => reorder(prev.length ? prev : me.hand.map((x) => x.id), dragId, c.id));
+                        setDragId(null);
+                      }}
                     />
                   );
                 })}
@@ -637,13 +690,16 @@ function GameView({
         </div>
 
         {/* Always reserve a row for the "waiting" hint so the board doesn't
-         *  jump as turn rotates between local + opponent seats. */}
-        <p
-          className="help center"
-          style={{ marginTop: 12, visibility: isLocalActive ? 'hidden' : 'visible' }}
-        >
-          Waiting for {getSeat(state, state.activePlayerId ?? '')?.name ?? 'opponent'}…
-        </p>
+         *  jump as turn rotates between local + opponent seats. Hidden in
+         *  all-AI mode since there's no human to wait for. */}
+        {!isAllAI && (
+          <p
+            className="help center"
+            style={{ marginTop: 12, visibility: isLocalActive ? 'hidden' : 'visible' }}
+          >
+            Waiting for {getSeat(state, state.activePlayerId ?? '')?.name ?? 'opponent'}…
+          </p>
+        )}
       </div>
 
       <Sidebar state={state} mySeatName={mySeatName} localPlayerId={localPlayerId} />
@@ -983,11 +1039,15 @@ function PlayerStrip({ player, seat, isActive, reveal }: {
           {seat?.isAI ? <span style={{ fontSize: 10, opacity: 0.6, marginLeft: 4 }}>(AI)</span> : null}
         </span>
       </header>
-      <div className="table-strip">
-        {[...Array(player.hand.length)].map((_, i) => (
-          reveal
-            ? null
-            : <FaceDownCard key={`fd-${i}`} size="small" />
+      <div className="table-strip" data-anchor={`strip-${player.id}`}>
+        {/* Opponent hand cards: face-down placeholders KEYED BY CARD ID so
+         *  the FLIP harness animates cross-zone movement (deck/pile → here,
+         *  here → table on play, here → here on shark steal) automatically.
+         *  We never reveal the family/color; only the card id is used for
+         *  identity tracking, which is fine since hidden info is already a
+         *  UI concern per the project's full-state-replication model. */}
+        {reveal ? null : player.hand.map((c) => (
+          <TrackedFaceDownCard key={c.id} card={c} zone={`hand-${player.id}`} size="small" />
         ))}
         {player.table.map((c) => (
           <CardView key={c.id} card={c} size="small" zone={`table-${player.id}`} />
@@ -1004,18 +1064,16 @@ function PlayerStrip({ player, seat, isActive, reveal }: {
 
 function RoundSummary({ state, dispatch }: { state: SspState; dispatch: (a: SspAction) => void }) {
   const s = state.lastRoundSummary;
-  const [minimized, setMinimized] = useState(false);
   if (!s) return null;
+  const tied = state.tieBreakerPlayers ?? [];
+  const isTieBreak = tied.length >= 2;
   return (
-    <div className={`round-summary ${minimized ? 'minimized' : ''}`}>
+    <div className="round-summary">
       <div className="round-summary-header">
         <h2>Round {s.round} complete</h2>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button className="secondary" onClick={() => setMinimized((v) => !v)}>
-            {minimized ? 'Expand ▾' : 'Minimize ▴'}
-          </button>
-          <button onClick={() => dispatch({ type: 'nextRound' })}>Next round →</button>
-        </div>
+        <button onClick={() => dispatch({ type: 'nextRound' })}>
+          {isTieBreak ? 'Tie-breaker round →' : 'Next round →'}
+        </button>
       </div>
       <p style={{ margin: '6px 0', fontStyle: 'italic' }}>
         {s.endedBy === 'stop' && `${nameOf(state, s.endedByPlayerId)} called STOP.`}
@@ -1023,6 +1081,11 @@ function RoundSummary({ state, dispatch }: { state: SspState; dispatch: (a: SspA
         {s.endedBy === 'deckEmpty' && `The deck ran out — round ends with no penalty.`}
         {s.endedBy === 'mermaid' && `${nameOf(state, s.endedByPlayerId)} collected 4 mermaids!`}
       </p>
+      {isTieBreak && (
+        <p style={{ margin: '6px 0', fontWeight: 600, color: 'var(--danger, #c0392b)' }}>
+          Tied at the target: {tied.map((id) => nameOf(state, id)).join(' & ')}. Play another round to break it.
+        </p>
+      )}
       <table>
         <thead>
           <tr><th>Player</th><th className="num">Cards</th><th className="num">Bonus</th><th className="num">Round</th><th className="num">Match</th></tr>
@@ -1033,8 +1096,8 @@ function RoundSummary({ state, dispatch }: { state: SspState; dispatch: (a: SspA
             return (
               <tr key={row.playerId} className={row.forfeitCards ? 'forfeit' : ''}>
                 <td>{nameOf(state, row.playerId)}</td>
-                <td className="num">{row.forfeitCards ? `(${row.cardPoints} ✕)` : row.cardPoints}</td>
-                <td className={`num ${row.forfeitBonus ? 'forfeit-cell' : ''}`}>{row.forfeitBonus ? `(${row.colorBonus} ✕)` : row.colorBonus}</td>
+                <td className={`num ${row.forfeitCards ? 'forfeit-cell' : ''}`}>{row.cardPoints}</td>
+                <td className={`num ${row.forfeitBonus ? 'forfeit-cell' : ''}`}>{row.colorBonus}</td>
                 <td className="num"><strong>{row.total}</strong></td>
                 <td className="num">{p.matchScore}</td>
               </tr>
@@ -1044,52 +1107,63 @@ function RoundSummary({ state, dispatch }: { state: SspState; dispatch: (a: SspA
       </table>
 
       {/* All cards revealed face-up so each player can see how they scored. */}
-      {!minimized && (
-        <div className="round-summary-reveal">
-          {state.players.map((p) => {
-            const seat = getSeat(state, p.id);
-            const all = [...p.hand, ...p.table];
-            return (
-              <div key={p.id} className="round-summary-player">
-                <h3 style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '8px 0 4px' }}>
-                  <span style={{ width: 10, height: 10, background: seat?.color ?? '#888', borderRadius: 2 }} />
-                  {seat?.name ?? p.id}
-                </h3>
-                <div className="table-strip">
-                  {all.map((c) => (
-                    <CardView key={c.id} card={c} size="small" zone={`reveal-${p.id}`} />
-                  ))}
-                  {all.length === 0 && <span style={{ color: 'var(--fg-muted)', fontSize: 12 }}>no cards</span>}
-                </div>
+      <div className="round-summary-reveal">
+        {state.players.map((p) => {
+          const seat = getSeat(state, p.id);
+          const all = [...p.hand, ...p.table];
+          return (
+            <div key={p.id} className="round-summary-player">
+              <h3 style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '8px 0 4px' }}>
+                <span style={{ width: 10, height: 10, background: seat?.color ?? '#888', borderRadius: 2 }} />
+                {seat?.name ?? p.id}
+              </h3>
+              <div className="table-strip">
+                {all.map((c) => (
+                  <CardView key={c.id} card={c} size="small" zone={`reveal-${p.id}`} />
+                ))}
+                {all.length === 0 && <span style={{ color: 'var(--fg-muted)', fontSize: 12 }}>no cards</span>}
               </div>
-            );
-          })}
-        </div>
-      )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
 
 function GameOver({ state }: { state: SspState }) {
   const sorted = [...state.players].sort((a, b) => b.matchScore - a.matchScore);
-  const winner = sorted[0];
-  const reason = state.mermaidWinnerId
-    ? `${nameOf(state, state.mermaidWinnerId)} collected 4 mermaids — instant win!`
-    : `${nameOf(state, winner.id)} reached ${state.config.targetScore}.`;
+  // Pull the canonical winner from the matchEnd log entry — this respects the
+  // mermaid-count tiebreaker applied in the reducer. Falls back to the highest
+  // matchScore for any legacy state without a matchEnd log.
+  const matchEnd = (state.log ?? []).filter((e) => e.kind === 'matchEnd').slice(-1)[0];
+  const winnerId = (matchEnd && matchEnd.kind === 'matchEnd') ? matchEnd.winnerId : sorted[0]?.id ?? null;
   return (
     <div className="ssp">
-      <div className="gameover-banner">{reason}</div>
       <div className="round-summary">
         <h2>Final scores</h2>
         <table>
           <thead><tr><th>Player</th><th className="num">Score</th></tr></thead>
           <tbody>
-            {sorted.map((p) => (
-              <tr key={p.id}>
-                <td>{nameOf(state, p.id)}</td>
-                <td className="num">{p.matchScore}</td>
-              </tr>
-            ))}
+            {sorted.map((p, idx) => {
+              const isWinner = p.id === winnerId;
+              const seat = state.seats.find((s) => s.id === p.id);
+              return (
+                <tr key={p.id} className={isWinner ? 'ssp-winner-row' : ''}>
+                  <td>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{
+                        width: 10, height: 10, background: seat?.color ?? '#888', borderRadius: 2,
+                      }} />
+                      {nameOf(state, p.id)}
+                      {isWinner && <span className="ssp-winner-pip">🏆 winner</span>}
+                      {!isWinner && idx === 1 && <span style={{ fontSize: 11, opacity: 0.6 }}>runner-up</span>}
+                    </span>
+                  </td>
+                  <td className="num"><strong>{p.matchScore}</strong></td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -1102,34 +1176,144 @@ function MatchStats({ state }: { state: SspState }) {
   const rounds = state.roundHistory ?? [];
   if (rounds.length === 0) return null;
 
-  // Cumulative score per player per round.
   const playerIds = state.players.map((p) => p.id);
   const colorOf = (pid: PlayerId) => state.seats.find((s) => s.id === pid)?.color ?? '#888';
   const nameById = (pid: PlayerId) => state.seats.find((s) => s.id === pid)?.name ?? pid;
-  const cumulative: Record<PlayerId, number[]> = {};
-  for (const pid of playerIds) cumulative[pid] = [0];
+  const extraSalt = !!state.config.expansions?.extraSalt;
+  const timingPerPlayer = useSspTiming((s) => s.perPlayer);
+
+  // Cumulative score across rounds — used for the cumulative-score line chart.
+  const cumulativeScore: Record<PlayerId, number[]> = {};
+  for (const pid of playerIds) cumulativeScore[pid] = [0];
   for (const r of rounds) {
     for (const pid of playerIds) {
       const row = r.perPlayer.find((x) => x.playerId === pid);
-      const prev = cumulative[pid][cumulative[pid].length - 1];
-      cumulative[pid].push(prev + (row?.total ?? 0));
+      const prev = cumulativeScore[pid][cumulativeScore[pid].length - 1];
+      cumulativeScore[pid].push(prev + (row?.total ?? 0));
     }
   }
 
-  // Per-round per-player STACKED bars (cards + bonus).
-  const perRoundBreakdown = rounds.map((r) => ({
-    round: r.round,
-    bars: r.perPlayer.map((pp) => ({
-      pid: pp.playerId,
-      cards: pp.cardPoints,
-      bonus: pp.colorBonus,
-      total: pp.total,
-      forfeitCards: pp.forfeitCards,
-      forfeitBonus: pp.forfeitBonus,
-    })),
-  }));
+  // Cumulative card counts across rounds — sum of per-round card counts (rounds
+  // RESET the tableau, so this is "total cards seen over the match", not a
+  // running tableau size). Falls back to current hand+table sizes for legacy
+  // matches that pre-date the breakdown field.
+  const cumulativeCards: Record<PlayerId, number[]> = {};
+  for (const pid of playerIds) cumulativeCards[pid] = [0];
+  for (const r of rounds) {
+    for (const pid of playerIds) {
+      const row = r.perPlayer.find((x) => x.playerId === pid);
+      const prev = cumulativeCards[pid][cumulativeCards[pid].length - 1];
+      cumulativeCards[pid].push(prev + (row?.cardCount ?? 0));
+    }
+  }
 
-  // STOP vs LAST CHANCE history.
+  // Avg points / card per round, for the avg-pt-per-card line chart.
+  const avgPtPerCard: Record<PlayerId, number[]> = {};
+  for (const pid of playerIds) {
+    avgPtPerCard[pid] = rounds.map((r) => {
+      const row = r.perPlayer.find((x) => x.playerId === pid);
+      if (!row || !row.cardCount) return 0;
+      return row.total / row.cardCount;
+    });
+  }
+
+  // Final-tableau family frequencies (%) — per player vs the deck's natural
+  // distribution. We normalize so the bars are comparable across player hand
+  // sizes (one player ending with 20 cards vs another with 12).
+  const deckTotal = (function () {
+    let n = 0;
+    for (const fam of FAMILY_ORDER) {
+      if (FAMILY[fam].expansion === 'extraSalt' && !extraSalt) continue;
+      n += FAMILY[fam].count;
+    }
+    return n;
+  })();
+  const deckFamilyPct: Record<SspCardFamily, number> = {} as Record<SspCardFamily, number>;
+  for (const fam of FAMILY_ORDER) {
+    if (FAMILY[fam].expansion === 'extraSalt' && !extraSalt) {
+      deckFamilyPct[fam] = 0;
+    } else {
+      deckFamilyPct[fam] = (FAMILY[fam].count / deckTotal) * 100;
+    }
+  }
+  const playerFamilyPct: Record<PlayerId, Record<SspCardFamily, number>> = {} as Record<PlayerId, Record<SspCardFamily, number>>;
+  for (const p of state.players) {
+    const all = [...p.hand, ...p.table];
+    const counts: Record<SspCardFamily, number> = {} as Record<SspCardFamily, number>;
+    for (const fam of FAMILY_ORDER) counts[fam] = 0;
+    for (const c of all) counts[c.family] += 1;
+    const n = Math.max(1, all.length);
+    const pct: Record<SspCardFamily, number> = {} as Record<SspCardFamily, number>;
+    for (const fam of FAMILY_ORDER) pct[fam] = (counts[fam] / n) * 100;
+    playerFamilyPct[p.id] = pct;
+  }
+
+  // Color distribution at match end vs deck (as percentages).
+  const deckColorCount: Record<SspColor, number> = {
+    white: 0, yellow: 0, green: 0, pink: 0, purple: 0,
+    teal: 0, darkblue: 0, black: 0, gray: 0, orange: 0, tan: 0,
+  };
+  for (const fam of FAMILY_ORDER) {
+    if (FAMILY[fam].expansion === 'extraSalt' && !extraSalt) continue;
+    const palette = FAMILY_COLORS[fam];
+    const count = FAMILY[fam].count;
+    for (let i = 0; i < count; i++) {
+      const color = palette[i % palette.length] ?? 'darkblue';
+      deckColorCount[color] += 1;
+    }
+  }
+  const deckColorPct: Record<SspColor, number> = {} as Record<SspColor, number>;
+  for (const c of Object.keys(deckColorCount) as SspColor[]) {
+    deckColorPct[c] = deckTotal > 0 ? (deckColorCount[c] / deckTotal) * 100 : 0;
+  }
+  const playerColorPct: Record<PlayerId, Record<SspColor, number>> = {} as Record<PlayerId, Record<SspColor, number>>;
+  for (const p of state.players) {
+    const all = [...p.hand, ...p.table];
+    const tally: Record<SspColor, number> = {
+      white: 0, yellow: 0, green: 0, pink: 0, purple: 0,
+      teal: 0, darkblue: 0, black: 0, gray: 0, orange: 0, tan: 0,
+    };
+    for (const c of all) tally[c.color] += 1;
+    const n = Math.max(1, all.length);
+    const pct: Record<SspColor, number> = {} as Record<SspColor, number>;
+    for (const c of Object.keys(tally) as SspColor[]) pct[c] = (tally[c] / n) * 100;
+    playerColorPct[p.id] = pct;
+  }
+
+  // Per-player per-round category lines (duos / sets / multipliers / trios /
+  // mermaidClaim / colorBonus). Each player has a series per category over
+  // rounds. Falls back to coarse splits for legacy matches with no breakdown.
+  const playerCategoryByRound: Record<PlayerId, Array<{
+    duos: number; sets: number; multipliers: number; trios: number; mermaidClaim: number; colorBonus: number;
+  }>> = {} as Record<PlayerId, Array<{ duos: number; sets: number; multipliers: number; trios: number; mermaidClaim: number; colorBonus: number }>>;
+  for (const pid of playerIds) {
+    playerCategoryByRound[pid] = rounds.map((r) => {
+      const row = r.perPlayer.find((x) => x.playerId === pid);
+      if (row?.breakdown) {
+        const b = row.breakdown;
+        // forfeit handling: if cards were forfeit (lost LAST CHANCE bet), zero
+        // out the card categories; if bonus was forfeit (STOP / deck-empty /
+        // mermaid-win), zero the colorBonus.
+        const f = row.forfeitCards;
+        return {
+          duos: f ? 0 : b.duos,
+          sets: f ? 0 : b.sets,
+          multipliers: f ? 0 : b.multipliers,
+          trios: f ? 0 : b.trios,
+          mermaidClaim: f ? 0 : b.mermaidClaim,
+          colorBonus: row.forfeitBonus ? 0 : b.colorBonus,
+        };
+      }
+      // Legacy fallback — just split the row's two columns coarsely.
+      return {
+        duos: 0, sets: 0, multipliers: 0, trios: 0,
+        mermaidClaim: row?.forfeitCards ? 0 : row?.cardPoints ?? 0,
+        colorBonus: row?.forfeitBonus ? 0 : row?.colorBonus ?? 0,
+      };
+    });
+  }
+
+  // Round-endings summary — both a pie chart and the existing table.
   const endingTypes = rounds.map((r) => ({
     round: r.round,
     kind: r.endedBy,
@@ -1137,297 +1321,418 @@ function MatchStats({ state }: { state: SspState }) {
     won: r.lastChanceWon,
   }));
 
-  // Card-type breakdown per player at MATCH END.
-  const breakdownByType: Record<PlayerId, { duos: number; collectors: number; multipliers: number; mermaids: number; other: number }> = {};
-  for (const p of state.players) {
-    const all = [...p.hand, ...p.table];
-    let duos = 0, coll = 0, mult = 0, mer = 0, other = 0;
-    for (const c of all) {
-      const cat = FAMILY[c.family]?.category;
-      if (cat === 'duo') duos++;
-      else if (cat === 'collector') coll++;
-      else if (cat === 'multiplier') mult++;
-      else if (cat === 'mermaid') mer++;
-      else other++;
+  // Aggregate ending categories for the pie chart. We split lastChance into
+  // success vs fail, AND split by the calling player so the user can see who
+  // pulled the trigger.
+  const endingSlices: Array<{ label: string; color: string; n: number }> = [];
+  const sliceMap = new Map<string, { label: string; color: string; n: number }>();
+  const incSlice = (key: string, label: string, color: string) => {
+    const existing = sliceMap.get(key);
+    if (existing) existing.n += 1;
+    else { const s = { label, color, n: 1 }; sliceMap.set(key, s); endingSlices.push(s); }
+  };
+  for (const e of endingTypes) {
+    if (e.kind === 'stop') {
+      const name = e.by ? nameById(e.by) : '—';
+      const c = e.by ? colorOf(e.by) : '#888';
+      incSlice(`stop:${e.by ?? 'none'}`, `STOP — ${name}`, c);
+    } else if (e.kind === 'lastChance') {
+      const name = e.by ? nameById(e.by) : '—';
+      const c = e.by ? colorOf(e.by) : '#888';
+      const result = e.won ? 'WON' : 'LOST';
+      incSlice(`lc:${e.by ?? 'none'}:${result}`, `LAST CHANCE ${result} — ${name}`, c);
+    } else if (e.kind === 'deckEmpty') {
+      incSlice('deck', 'Deck empty', '#888');
+    } else {
+      incSlice('mermaid', '4 Mermaids', '#f4d268');
     }
-    breakdownByType[p.id] = { duos, collectors: coll, multipliers: mult, mermaids: mer, other };
   }
 
-  // Color distribution at match end vs deck distribution.
-  const deckColorCounts: Record<string, number> = {};
-  for (const family of FAMILY_ORDER) {
-    const palette = FAMILY_COLORS[family];
-    for (const c of palette) deckColorCounts[c] = (deckColorCounts[c] ?? 0) + 1;
-  }
-  const colorBreakdown: Record<PlayerId, Record<string, number>> = {};
-  for (const p of state.players) {
-    const all = [...p.hand, ...p.table];
-    const tally: Record<string, number> = {};
-    for (const c of all) tally[c.color] = (tally[c.color] ?? 0) + 1;
-    colorBreakdown[p.id] = tally;
-  }
+  // X axis labels for cumulative charts (include "Start" before round 1).
+  const cumulativeRoundLabels = ['Start', ...rounds.map((r) => `R${r.round}`)];
+  const roundLabels = rounds.map((r) => `R${r.round}`);
 
+  // Pre-build Plotly trace data so each chart's JSX is just a render call.
+  const cumulativeScoreTraces: PlotData[] = playerIds.map((pid) => ({
+    type: 'scatter', mode: 'lines+markers',
+    name: nameById(pid),
+    x: cumulativeRoundLabels,
+    y: cumulativeScore[pid],
+    line: { color: colorOf(pid), width: 2.5 },
+    marker: { color: colorOf(pid), size: 7 },
+    hovertemplate: '%{y} pts<extra>%{fullData.name}</extra>',
+  }));
+  const cumulativeCardsTraces: PlotData[] = playerIds.map((pid) => ({
+    type: 'scatter', mode: 'lines+markers',
+    name: nameById(pid),
+    x: cumulativeRoundLabels,
+    y: cumulativeCards[pid],
+    line: { color: colorOf(pid), width: 2.5 },
+    marker: { color: colorOf(pid), size: 7 },
+    hovertemplate: '%{y} cards<extra>%{fullData.name}</extra>',
+  }));
+  // Avg pts/card as a grouped bar chart — one bar per (round × player).
+  const avgPtPerCardTraces: PlotData[] = playerIds.map((pid) => ({
+    type: 'bar',
+    name: nameById(pid),
+    x: roundLabels,
+    y: avgPtPerCard[pid].map((v) => Number(v.toFixed(3))),
+    marker: { color: colorOf(pid) },
+    hovertemplate: '%{y:.2f} pts/card<extra>%{fullData.name}</extra>',
+  }));
+
+  // Cards collected PER ROUND (not cumulative) — grouped bars.
+  const cardsPerRoundTraces: PlotData[] = playerIds.map((pid) => ({
+    type: 'bar',
+    name: nameById(pid),
+    x: roundLabels,
+    y: rounds.map((r) => r.perPlayer.find((x) => x.playerId === pid)?.cardCount ?? 0),
+    marker: { color: colorOf(pid) },
+    hovertemplate: '%{y} cards<extra>%{fullData.name}</extra>',
+  }));
+
+  // Family / color frequency — grouped horizontal bars. To get separation
+  // between cards/colors we explicitly set bargroupgap.
+  const familyKeys = FAMILY_ORDER.filter((f) => extraSalt || FAMILY[f].expansion !== 'extraSalt');
+  const familyLabels = familyKeys.map((k) => FAMILY[k].label);
+  const familyTraces: PlotData[] = [
+    {
+      type: 'bar', orientation: 'h',
+      name: 'Deck',
+      x: familyKeys.map((k) => deckFamilyPct[k]),
+      y: familyLabels,
+      marker: { color: '#888', pattern: { shape: '/', size: 4, solidity: 0.4 } as never },
+      hovertemplate: '%{x:.1f}%<extra>Deck</extra>',
+    },
+    ...playerIds.map((pid): PlotData => ({
+      type: 'bar', orientation: 'h',
+      name: nameById(pid),
+      x: familyKeys.map((k) => playerFamilyPct[pid][k]),
+      y: familyLabels,
+      marker: { color: colorOf(pid) },
+      hovertemplate: '%{x:.1f}%<extra>%{fullData.name}</extra>',
+    })),
+  ];
+
+  // Sort colors by deck frequency descending — most common at top of the
+  // horizontal bar chart, rarest at bottom. Auto-reversed y-axis means the
+  // visual order matches the slice order.
+  const colorKeys = (Object.keys(deckColorPct) as SspColor[])
+    .filter((c) => deckColorPct[c] > 0)
+    .sort((a, b) => deckColorPct[b] - deckColorPct[a]);
+  const colorLabels = colorKeys.map((c) => c);
+  const colorTraces: PlotData[] = [
+    {
+      type: 'bar', orientation: 'h',
+      name: 'Deck',
+      x: colorKeys.map((k) => deckColorPct[k]),
+      y: colorLabels,
+      marker: { color: '#888', pattern: { shape: '/', size: 4, solidity: 0.4 } as never },
+      hovertemplate: '%{x:.1f}%<extra>Deck</extra>',
+    },
+    ...playerIds.map((pid): PlotData => ({
+      type: 'bar', orientation: 'h',
+      name: nameById(pid),
+      x: colorKeys.map((k) => playerColorPct[pid][k]),
+      y: colorLabels,
+      marker: { color: colorOf(pid) },
+      hovertemplate: '%{x:.1f}%<extra>%{fullData.name}</extra>',
+    })),
+  ];
+
+  // Time per player — single bar chart, total seconds per seat.
+  const timeBarTrace: PlotData = {
+    type: 'bar',
+    name: 'Seconds',
+    x: playerIds.map((pid) => nameById(pid)),
+    y: playerIds.map((pid) => Math.round((timingPerPlayer[pid] ?? 0) / 1000)),
+    marker: { color: playerIds.map((pid) => colorOf(pid)) },
+    hovertemplate: '%{x}: %{y}s<extra></extra>',
+  };
+
+  // Pie data for round endings.
+  const endingPieTrace: PlotData = {
+    type: 'pie',
+    labels: endingSlices.map((s) => s.label),
+    values: endingSlices.map((s) => s.n),
+    marker: { colors: endingSlices.map((s) => s.color) },
+    textinfo: 'percent',
+    hovertemplate: '%{label}: %{value} (%{percent})<extra></extra>',
+    sort: false,
+  };
+
+  // Tab layout: one chart per tab, mirrors catan's MatchGraph navigation. Tab
+  // state is local component state — switching doesn't re-fetch any data.
+  type StatsTab =
+    | 'score' | 'cardsCum' | 'cardsRound' | 'ptsPerCard' | 'category'
+    | 'family' | 'color' | 'endings' | 'time';
+  const TABS: Array<{ key: StatsTab; label: string }> = [
+    { key: 'score',       label: 'Score' },
+    { key: 'cardsCum',    label: 'Cards (cum)' },
+    { key: 'cardsRound',  label: 'Cards / rd' },
+    { key: 'ptsPerCard',  label: 'Pts / card' },
+    { key: 'category',    label: 'Categories' },
+    { key: 'family',      label: 'Family %' },
+    { key: 'color',       label: 'Color %' },
+    { key: 'endings',     label: 'Endings' },
+    { key: 'time',        label: 'Time' },
+  ];
+  return (
+    <MatchStatsTabs tabs={TABS}>
+      {(active) => (
+        <>
+          {active === 'score' && (
+            <PlotlyChart
+              data={cumulativeScoreTraces}
+              layout={{
+                xaxis: { title: { text: 'Round' } },
+                yaxis: { title: { text: 'Points' }, rangemode: 'tozero' },
+              }}
+            />
+          )}
+          {active === 'cardsCum' && (
+            <PlotlyChart
+              data={cumulativeCardsTraces}
+              layout={{
+                xaxis: { title: { text: 'Round' } },
+                yaxis: { title: { text: 'Cards' }, rangemode: 'tozero' },
+              }}
+            />
+          )}
+          {active === 'cardsRound' && (
+            <PlotlyChart
+              data={cardsPerRoundTraces}
+              layout={{
+                barmode: 'group',
+                bargap: 0.2,
+                bargroupgap: 0.08,
+                xaxis: { title: { text: 'Round' } },
+                yaxis: { title: { text: 'Cards' }, rangemode: 'tozero' },
+              }}
+            />
+          )}
+          {active === 'ptsPerCard' && (
+            <PlotlyChart
+              data={avgPtPerCardTraces}
+              layout={{
+                barmode: 'group',
+                bargap: 0.2,
+                bargroupgap: 0.08,
+                xaxis: { title: { text: 'Round' } },
+                yaxis: { title: { text: 'pts / card' }, rangemode: 'tozero' },
+              }}
+            />
+          )}
+          {active === 'category' && (
+            <CategoryBreakdownChart
+              data={playerCategoryByRound}
+              playerIds={playerIds}
+              nameById={nameById}
+              colorOf={colorOf}
+              roundLabels={roundLabels}
+            />
+          )}
+          {active === 'family' && (
+            <PlotlyChart
+              data={familyTraces}
+              layout={{
+                barmode: 'group',
+                bargap: 0.55,
+                bargroupgap: 0.12,
+                xaxis: { title: { text: '% of tableau' }, ticksuffix: '%' },
+                yaxis: { autorange: 'reversed', automargin: true },
+                hovermode: 'y unified',
+              }}
+              style={{ height: Math.max(480, familyKeys.length * 52) }}
+            />
+          )}
+          {active === 'color' && (
+            <PlotlyChart
+              data={colorTraces}
+              layout={{
+                barmode: 'group',
+                bargap: 0.55,
+                bargroupgap: 0.12,
+                xaxis: { title: { text: '% of tableau' }, ticksuffix: '%' },
+                yaxis: { autorange: 'reversed', automargin: true },
+                hovermode: 'y unified',
+              }}
+              style={{ height: Math.max(480, colorKeys.length * 52) }}
+            />
+          )}
+          {active === 'time' && (
+            <PlotlyChart
+              data={[timeBarTrace]}
+              layout={{
+                xaxis: { title: { text: 'Player' } },
+                yaxis: { title: { text: 'Seconds spent' }, rangemode: 'tozero' },
+                showlegend: false,
+                hovermode: 'closest',
+                bargap: 0.3,
+              }}
+              style={{ height: 320 }}
+            />
+          )}
+          {active === 'endings' && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(260px, 360px) 1fr', gap: 16, alignItems: 'start' }}>
+        <PlotlyChart
+          data={[endingPieTrace]}
+          layout={{
+            margin: { t: 8, r: 8, b: 8, l: 8 },
+            showlegend: true,
+            legend: { orientation: 'v', x: 1.02, xanchor: 'left', y: 0.5, yanchor: 'middle' },
+            hovermode: 'closest',
+          }}
+          style={{ height: 320 }}
+        />
+        <table style={{ margin: 0 }}>
+          <thead>
+            <tr><th>Round</th><th>How it ended</th><th>By</th><th>Result</th></tr>
+          </thead>
+          <tbody>
+            {endingTypes.map((e) => (
+              <tr key={e.round}>
+                <td>R{e.round}</td>
+                <td>
+                  {e.kind === 'stop' && <span style={{ color: '#2ecc71', fontWeight: 700 }}>STOP</span>}
+                  {e.kind === 'lastChance' && <span style={{ color: '#e0584f', fontWeight: 700 }}>LAST CHANCE</span>}
+                  {e.kind === 'deckEmpty' && <span style={{ color: '#888' }}>Deck empty</span>}
+                  {e.kind === 'mermaid' && <span style={{ color: '#f4d268', fontWeight: 700 }}>4 mermaids</span>}
+                </td>
+                <td>{e.by ? <span style={{ color: colorOf(e.by), fontWeight: 600 }}>{nameById(e.by)}</span> : '—'}</td>
+                <td>
+                  {e.kind === 'lastChance'
+                    ? (e.won ? 'Bet won' : 'Bet lost')
+                    : '—'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+          )}
+        </>
+      )}
+    </MatchStatsTabs>
+  );
+}
+
+/** Tabbed wrapper for the match-stats charts. Mirrors catan's MatchGraph
+ *  navigation — tabs across the top, one chart per tab below. Tabs scroll
+ *  horizontally on narrow widths so the layout stays single-row. */
+function MatchStatsTabs<T extends string>({ tabs, children }: {
+  tabs: Array<{ key: T; label: string }>;
+  children: (active: T) => React.ReactNode;
+}) {
+  const [active, setActive] = useState<T>(tabs[0].key);
   return (
     <div className="ssp-stats">
       <h2 style={{ margin: '22px 0 8px' }}>📊 Match stats</h2>
-
-      <h3>Cumulative score</h3>
-      <CumulativeChart cumulative={cumulative} playerIds={playerIds} colorOf={colorOf} nameById={nameById} />
-
-      <h3>Per-round breakdown</h3>
-      <PerRoundBars data={perRoundBreakdown} colorOf={colorOf} nameById={nameById} />
-
-      <h3>Round endings</h3>
-      <table>
-        <thead>
-          <tr><th>Round</th><th>How it ended</th><th>By</th><th>Result</th></tr>
-        </thead>
-        <tbody>
-          {endingTypes.map((e) => (
-            <tr key={e.round}>
-              <td>R{e.round}</td>
-              <td>
-                {e.kind === 'stop' && <span style={{ color: '#2ecc71', fontWeight: 700 }}>STOP</span>}
-                {e.kind === 'lastChance' && <span style={{ color: '#e0584f', fontWeight: 700 }}>LAST CHANCE</span>}
-                {e.kind === 'deckEmpty' && <span style={{ color: '#888' }}>Deck empty</span>}
-                {e.kind === 'mermaid' && <span style={{ color: '#f4d268', fontWeight: 700 }}>4 mermaids</span>}
-              </td>
-              <td>{e.by ? <span style={{ color: colorOf(e.by), fontWeight: 600 }}>{nameById(e.by)}</span> : '—'}</td>
-              <td>
-                {e.kind === 'lastChance'
-                  ? (e.won ? 'Bet won' : 'Bet lost')
-                  : '—'}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-
-      <h3>Final tableau by card category</h3>
-      <table>
-        <thead>
-          <tr>
-            <th>Player</th>
-            <th className="num">Duos</th>
-            <th className="num">Collectors</th>
-            <th className="num">Multipliers</th>
-            <th className="num">Mermaids</th>
-          </tr>
-        </thead>
-        <tbody>
-          {state.players.map((p) => (
-            <tr key={p.id}>
-              <td><span style={{ color: colorOf(p.id), fontWeight: 600 }}>{nameById(p.id)}</span></td>
-              <td className="num">{breakdownByType[p.id].duos}</td>
-              <td className="num">{breakdownByType[p.id].collectors}</td>
-              <td className="num">{breakdownByType[p.id].multipliers}</td>
-              <td className="num">{breakdownByType[p.id].mermaids}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-
-      <h3>Color groups in final tableau</h3>
-      <ColorGroupsTable colorBreakdown={colorBreakdown} state={state} colorOf={colorOf} nameById={nameById} deckColorCounts={deckColorCounts} />
+      <div className="ssp-stats-tabs" role="tablist">
+        {tabs.map((t) => (
+          <button
+            key={t.key}
+            role="tab"
+            aria-selected={active === t.key}
+            className={active === t.key ? 'active' : ''}
+            onClick={() => setActive(t.key)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <div className="ssp-stats-panel">{children(active)}</div>
     </div>
   );
 }
 
-function CumulativeChart({ cumulative, playerIds, colorOf, nameById }: {
-  cumulative: Record<PlayerId, number[]>;
+/** Per-round category breakdown for a SINGLE player (selected via dropdown).
+ *  Renders each category as its own line with shared y-axis. */
+function CategoryBreakdownChart({ data, playerIds, nameById, colorOf, roundLabels }: {
+  data: Record<PlayerId, Array<{ duos: number; sets: number; multipliers: number; trios: number; mermaidClaim: number; colorBonus: number }>>;
   playerIds: PlayerId[];
-  colorOf: (pid: PlayerId) => string;
   nameById: (pid: PlayerId) => string;
-}) {
-  const rounds = (cumulative[playerIds[0]] ?? [0]).length - 1;
-  const maxScore = Math.max(1, ...playerIds.flatMap((pid) => cumulative[pid]));
-  const W = 640;
-  const H = 260;
-  const padL = 38;
-  const padR = 18;
-  const padT = 14;
-  const padB = 30;
-  const innerW = W - padL - padR;
-  const innerH = H - padT - padB;
-  const x = (r: number) => padL + (rounds === 0 ? 0 : (r / rounds) * innerW);
-  const y = (v: number) => padT + innerH - (v / maxScore) * innerH;
-  const gridLines = [0, 0.25, 0.5, 0.75, 1];
-  const ink = 'rgba(28, 26, 46, 0.7)';
-  const inkLight = 'rgba(28, 26, 46, 0.12)';
-  return (
-    <div style={{ marginBottom: 12 }}>
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ maxWidth: '100%', height: 'auto', display: 'block' }}>
-        {gridLines.map((f) => (
-          <line key={`g-${f}`} x1={padL} y1={padT + f * innerH} x2={W - padR} y2={padT + f * innerH}
-                stroke={inkLight} strokeDasharray="3 3" />
-        ))}
-        {gridLines.map((f) => (
-          <text key={`yl-${f}`} x={padL - 8} y={padT + (1 - f) * innerH + 4}
-                fontSize={11} textAnchor="end" fill={ink}>
-            {Math.round(f * maxScore)}
-          </text>
-        ))}
-        {Array.from({ length: rounds + 1 }, (_, r) => (
-          <text key={`xl-${r}`} x={x(r)} y={H - 10} fontSize={11} textAnchor="middle" fill={ink}>
-            {r === 0 ? 'Start' : `R${r}`}
-          </text>
-        ))}
-        {playerIds.map((pid) => {
-          const series = cumulative[pid];
-          const points = series.map((v, r) => `${x(r)},${y(v)}`).join(' ');
-          return (
-            <g key={pid}>
-              <polyline points={points} fill="none" stroke={colorOf(pid)} strokeWidth={2.5} strokeLinejoin="round" />
-              {series.map((v, r) => (
-                <circle key={r} cx={x(r)} cy={y(v)} r={3.5} fill={colorOf(pid)} />
-              ))}
-            </g>
-          );
-        })}
-      </svg>
-      <div style={{ display: 'flex', gap: 14, marginTop: 4, flexWrap: 'wrap', justifyContent: 'center', fontSize: 12, color: 'var(--paper-ink)' }}>
-        {playerIds.map((pid) => (
-          <span key={pid}>
-            <span style={{ display: 'inline-block', width: 12, height: 12, background: colorOf(pid), borderRadius: 2, marginRight: 4, verticalAlign: 'middle' }} />
-            {nameById(pid)}
-          </span>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function PerRoundBars({ data, colorOf, nameById }: {
-  data: Array<{ round: number; bars: Array<{ pid: PlayerId; cards: number; bonus: number; total: number; forfeitCards: boolean; forfeitBonus: boolean }> }>;
   colorOf: (pid: PlayerId) => string;
-  nameById: (pid: PlayerId) => string;
+  roundLabels: string[];
 }) {
-  const playerIds = data[0]?.bars.map((b) => b.pid) ?? [];
-  // Flatten to one bar per (round × player) so each player has a visible bar
-  // per round. Stack Cards (full opacity) + Bonus (55% opacity).
-  const rows = data.flatMap((d) =>
-    d.bars.map((b) => ({
-      round: d.round,
-      pid: b.pid,
-      cards: b.forfeitCards ? 0 : b.cards,
-      bonus: b.forfeitBonus ? 0 : b.bonus,
-      total: b.total,
-    }))
-  );
-  const maxV = Math.max(1, ...rows.map((r) => r.cards + r.bonus));
-  const W = 640;
-  const H = 260;
-  const padL = 38;
-  const padR = 14;
-  const padT = 14;
-  const padB = 46;
-  const innerW = W - padL - padR;
-  const innerH = H - padT - padB;
-  const barW = Math.max(8, innerW / rows.length * 0.7);
-  const slotW = rows.length > 0 ? innerW / rows.length : 0;
-  const ink = 'rgba(28, 26, 46, 0.7)';
-  const inkLight = 'rgba(28, 26, 46, 0.12)';
-  const yScale = (v: number) => (v / maxV) * innerH;
-  const gridLines = [0, 0.25, 0.5, 0.75, 1];
+  const [selected, setSelected] = useState<PlayerId>(playerIds[0]);
+  const CATEGORIES: Array<{ key: 'duos' | 'sets' | 'multipliers' | 'trios' | 'mermaidClaim' | 'colorBonus'; label: string; color: string }> = [
+    { key: 'duos',         label: 'Duo pairs',     color: '#2980b9' },
+    { key: 'sets',         label: 'Collector sets', color: '#27ae60' },
+    { key: 'multipliers',  label: 'Multipliers',   color: '#e67e22' },
+    { key: 'trios',        label: 'Starfish trios', color: '#f39c12' },
+    { key: 'mermaidClaim', label: 'Mermaid claim', color: '#9b59b6' },
+    { key: 'colorBonus',   label: 'Color bonus',   color: '#16a085' },
+  ];
+  const series = data[selected] ?? [];
+  // Stacked bars: each category is its own trace; barmode 'stack' in the
+  // layout stacks them into one bar per round, so the total round score is
+  // visible as the column height and each color slice is its source.
+  const traces: PlotData[] = CATEGORIES.map((c) => ({
+    type: 'bar',
+    name: c.label,
+    x: roundLabels,
+    y: series.map((row) => row[c.key]),
+    marker: { color: c.color },
+    hovertemplate: '%{y} pts<extra>%{fullData.name}</extra>',
+  }));
   return (
-    <div style={{ marginBottom: 12 }}>
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ maxWidth: '100%', height: 'auto', display: 'block' }}>
-        {gridLines.map((f) => (
-          <line key={`g-${f}`} x1={padL} y1={padT + f * innerH} x2={W - padR} y2={padT + f * innerH}
-                stroke={inkLight} strokeDasharray="3 3" />
-        ))}
-        {gridLines.map((f) => (
-          <text key={`yl-${f}`} x={padL - 8} y={padT + (1 - f) * innerH + 4}
-                fontSize={11} textAnchor="end" fill={ink}>
-            {Math.round(f * maxV)}
-          </text>
-        ))}
-        {rows.map((r, i) => {
-          const cx = padL + i * slotW + slotW / 2;
-          const cardsH = yScale(r.cards);
-          const bonusH = yScale(r.bonus);
-          const cardsY = padT + innerH - cardsH;
-          const bonusY = cardsY - bonusH;
-          return (
-            <g key={i}>
-              <rect x={cx - barW / 2} y={cardsY} width={barW} height={cardsH}
-                    fill={colorOf(r.pid)} />
-              <rect x={cx - barW / 2} y={bonusY} width={barW} height={bonusH}
-                    fill={colorOf(r.pid)} fillOpacity={0.55} />
-              <text x={cx} y={padT + innerH + 14} fontSize={10} textAnchor="middle" fill={ink}>
-                R{r.round}
-              </text>
-              <text x={cx} y={padT + innerH + 26} fontSize={9} textAnchor="middle" fill={colorOf(r.pid)} fontWeight={600}>
-                {nameById(r.pid).slice(0, 6)}
-              </text>
-              {r.cards + r.bonus > 0 && (
-                <text x={cx} y={bonusY - 3} fontSize={10} textAnchor="middle" fill={ink} fontWeight={600}>
-                  {r.total}
-                </text>
-              )}
-            </g>
-          );
-        })}
-      </svg>
-      <div style={{ display: 'flex', gap: 14, marginTop: 4, flexWrap: 'wrap', justifyContent: 'center', fontSize: 12, color: 'var(--paper-ink)' }}>
-        {playerIds.map((pid) => (
-          <span key={pid}>
-            <span style={{ display: 'inline-block', width: 12, height: 12, background: colorOf(pid), borderRadius: 2, marginRight: 4, verticalAlign: 'middle' }} />
-            {nameById(pid)}
-          </span>
-        ))}
-        <span style={{ color: ink, fontStyle: 'italic' }}>
-          <span style={{ display: 'inline-block', width: 12, height: 12, background: 'currentColor', opacity: 0.55, borderRadius: 2, marginRight: 4, verticalAlign: 'middle' }} />
-          paler = color bonus
-        </span>
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+        <label htmlFor="ssp-cat-player" style={{ fontSize: 12, color: 'var(--paper-ink)' }}>
+          Player:
+        </label>
+        <select
+          id="ssp-cat-player"
+          value={selected}
+          onChange={(e) => setSelected(e.target.value as PlayerId)}
+          style={{
+            fontSize: 12,
+            padding: '4px 8px',
+            borderRadius: 4,
+            border: '1px solid var(--paper-deep)',
+            background: 'var(--paper-cream)',
+            color: 'var(--paper-ink)',
+          }}
+        >
+          {playerIds.map((pid) => (
+            <option key={pid} value={pid}>{nameById(pid)}</option>
+          ))}
+        </select>
+        <span style={{
+          display: 'inline-block', width: 10, height: 10, borderRadius: 2,
+          background: colorOf(selected), marginLeft: 4,
+        }} />
       </div>
+      <PlotlyChart
+        data={traces}
+        layout={{
+          barmode: 'stack',
+          bargap: 0.25,
+          xaxis: { title: { text: 'Round' } },
+          yaxis: { title: { text: 'Points' }, rangemode: 'tozero' },
+        }}
+      />
     </div>
   );
 }
 
 
-function ColorGroupsTable({ colorBreakdown, state, colorOf, nameById, deckColorCounts }: {
-  colorBreakdown: Record<PlayerId, Record<string, number>>;
-  state: SspState;
-  colorOf: (pid: PlayerId) => string;
-  nameById: (pid: PlayerId) => string;
-  deckColorCounts: Record<string, number>;
-}) {
-  const allColors = Object.keys(deckColorCounts).sort((a, b) => deckColorCounts[b] - deckColorCounts[a]);
+/** Live wall-clock since the match started. Freezes once `isOver` is true so
+ *  the final time stays visible. Updates once a second. */
+function GameClock({ isOver }: { isOver: boolean }) {
+  const matchStartedAt = useSspTiming((s) => s.matchStartedAt);
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (isOver) return;
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [isOver]);
+  const elapsed = Math.max(0, now - matchStartedAt);
   return (
-    <table className="tight">
-      <thead>
-        <tr>
-          <th>Player</th>
-          {allColors.map((c) => (
-            <th key={c} className="num" title={c}>
-              <span style={{
-                display: 'inline-block', width: 12, height: 12, borderRadius: 3,
-                background: `var(--${c}, #888)`, border: '1px solid rgba(0,0,0,0.25)',
-              }} />
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {state.players.map((p) => (
-          <tr key={p.id}>
-            <td><span style={{ color: colorOf(p.id), fontWeight: 600 }}>{nameById(p.id)}</span></td>
-            {allColors.map((c) => (
-              <td key={c} className="num" style={{ color: (colorBreakdown[p.id][c] ?? 0) === 0 ? 'rgba(0,0,0,0.25)' : 'inherit' }}>
-                {colorBreakdown[p.id][c] || 0}
-              </td>
-            ))}
-          </tr>
-        ))}
-        <tr style={{ borderTop: '2px solid rgba(0,0,0,0.15)' }}>
-          <td style={{ fontStyle: 'italic', opacity: 0.65 }}>Deck total</td>
-          {allColors.map((c) => (
-            <td key={c} className="num" style={{ fontStyle: 'italic', opacity: 0.55 }}>{deckColorCounts[c]}</td>
-          ))}
-        </tr>
-      </tbody>
-    </table>
+    <span title={isOver ? 'Final game time' : 'Time since match start'} style={{ fontVariantNumeric: 'tabular-nums' }}>
+      ⏱ {formatElapsed(elapsed)}
+    </span>
   );
 }
 
@@ -1439,6 +1744,84 @@ function findHandPairs(hand: SspCard[]): Array<[SspCard, SspCard]> {
     }
   }
   return out;
+}
+
+/** Return the hand sorted by the user's preferred display order.
+ *  - Already-known card ids retain their position in `order`.
+ *  - Cards in `hand` not in `order` (newly drawn) go at the END.
+ *  - Cards in `order` no longer in `hand` (played / stolen) are dropped.
+ *  Underlying `hand` array is NOT mutated — randomness operates on it intact. */
+function sortedHand(hand: SspCard[], order: number[]): SspCard[] {
+  if (order.length === 0) return hand;
+  const byId = new Map<number, SspCard>();
+  for (const c of hand) byId.set(c.id, c);
+  const out: SspCard[] = [];
+  const placed = new Set<number>();
+  for (const id of order) {
+    const c = byId.get(id);
+    if (c) { out.push(c); placed.add(id); }
+  }
+  for (const c of hand) {
+    if (!placed.has(c.id)) out.push(c);
+  }
+  return out;
+}
+
+/** Move `srcId` to where `dstId` currently sits in the order array. */
+function reorder(order: number[], srcId: number, dstId: number): number[] {
+  const src = order.indexOf(srcId);
+  const dst = order.indexOf(dstId);
+  if (src === -1 || dst === -1 || src === dst) return order;
+  const next = order.slice();
+  const [card] = next.splice(src, 1);
+  next.splice(dst, 0, card);
+  return next;
+}
+
+function DraggableHandCard({
+  card, selectable, selected, onClick, isDragging, onDragStart, onDragEnd, onDropOn,
+}: {
+  card: SspCard;
+  selectable?: boolean;
+  selected?: boolean;
+  onClick?: () => void;
+  isDragging: boolean;
+  onDragStart: () => void;
+  onDragEnd: () => void;
+  onDropOn: () => void;
+}) {
+  // Wrap the existing CardView in a draggable shell so the card itself keeps
+  // its FLIP-anchored zone behavior. Drag operates on local display order
+  // only — it never mutates `state.players[me].hand`.
+  return (
+    <div
+      draggable
+      onDragStart={(e) => {
+        // Some browsers need data set to start a drag at all.
+        e.dataTransfer.setData('text/plain', String(card.id));
+        e.dataTransfer.effectAllowed = 'move';
+        onDragStart();
+      }}
+      onDragEnd={onDragEnd}
+      onDragOver={(e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+      }}
+      onDrop={(e) => { e.preventDefault(); onDropOn(); }}
+      style={{
+        opacity: isDragging ? 0.4 : 1,
+        cursor: 'grab',
+      }}
+    >
+      <CardView
+        card={card}
+        zone="hand-me"
+        selectable={selectable}
+        selected={selected}
+        onClick={onClick}
+      />
+    </div>
+  );
 }
 
 function getSeat(state: SspState, id: PlayerId): Seat | undefined {

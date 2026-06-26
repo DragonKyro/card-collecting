@@ -2,50 +2,62 @@
 //
 // Approach
 // --------
-// Maintain a per-card "expected point value" estimate. The estimate is
-// game-state-aware: as cards are seen (visible on tables, in the player's own
-// hand, or face-up on discard piles), the AI updates a "remaining unseen" pool
-// and re-estimates the marginal value of acquiring each family.
+// Maintain a perfect-memory model of everything that's publicly observable:
 //
-// Per opponent we track what families they've taken from face-up discard piles
-// (the log entries are public). That gives us a "demand profile" per opponent,
-// which strongly informs:
-//   - which pile to discard to (don't gift cards opponents are building)
-//   - whether shark+swimmer is worth playing (opponent hand value estimate)
-//   - whether to take from a discard pile NOW or save the family for later
+//   - Per-family unseen count: total deck − everything currently visible (own
+//     hand + every player's table + all cards still in either discard pile,
+//     including BURIED cards — buried cards are still in the pile array even
+//     though the UI only shows the top).
+//   - Per-color unseen count: same accounting, used for mermaid bonus
+//     prediction (a color we can see is "spent" toward our top group; a color
+//     we still need is more likely to be drawn live).
+//   - Per-opponent demand profile: every time an opponent takes a face-up card
+//     (drawDiscard / crabPick / sharkSteal / lobsterPick / angelfishDraw) we
+//     record the family + ALSO the specific card id (so we know exactly what
+//     color they hold and which color groups they're building toward).
 //
-// On each decision, the AI:
-//   1. Recomputes marginal values for every family from its own perspective.
-//   2. Recomputes per-opponent "demand value" for each family (how much that
-//      opponent gains from acquiring one more of it).
-//   3. Picks the action with the best NET score gain: my gain − opponents' gain.
-//      drawFromDiscard if a face-up top is significantly better than the unseen
-//      draw. drawPair otherwise. Discard to the pile that hurts opponents the
-//      least.
-//   4. Plays a duo pair when its expected value (effect + 1 pt) > pass value
-//      AND it doesn't trigger a useless effect (e.g. shark+swimmer with no
-//      stealable target).
-//   5. STOPs / LAST CHANCEs based on whether we'd actually win the bet
-//      (total points, not card points) AND match-level lead vs target.
+// On each decision the AI:
+//   1. Recomputes per-family + per-color marginal values for itself.
+//   2. Recomputes per-opponent demand for each family from their profile.
+//   3. Picks the action with the best NET gain: my expected gain − opponents'
+//      expected gain from any side-effects (e.g. our discarded card).
+//
+// Specifically:
+//   - drawFromDiscard if top is meaningfully better than expected unseen draw
+//     AND/OR completes/progresses a collector set we're committed to. Same
+//     priority used DEFENSIVELY: if the top would help an opponent more than
+//     us, we still take it to deny.
+//   - drawPair otherwise. When we have to discard, we bury the pile whose top
+//     helps opponents most.
+//   - Pair plays: highest expected total value of the pair effect + 1 pt.
+//     Boat now looks at concrete next-action options (take an existing top,
+//     finish a collector set, complete a hand pair) rather than just expected
+//     unseen draw.
+//   - Crab: pick the card with the highest NET (my gain − best opponent gain
+//     if we left it on top).
+//   - STOP / LAST CHANCE: based on card-points bet evaluation + match-lead
+//     pressure.
 
 import type { PlayerId } from '@/core/types';
-import type { SspState, SspAction, SspCard, SspCardFamily, SspPlayer, SspLogEntry } from './types';
-import { FAMILY, FAMILY_ORDER, duoPartner, isCollectorFamily, isDuoFamily } from './cards';
+import type { SspState, SspAction, SspCard, SspCardFamily, SspColor, SspPlayer, SspLogEntry } from './types';
+import { FAMILY, FAMILY_ORDER, FAMILY_COLORS, duoPartner, isCollectorFamily, isDuoFamily } from './cards';
 import {
-  collectorPoints, isValidDuoPair, mermaidColorBonus, tentativeScore, totalScore,
+  collectorPoints, isValidDuoPair, mermaidColorBonus, specialColorBonus, tentativeScore, totalScore,
 } from './scoring';
 
 const STOP_THRESHOLD = 7;
 
 interface Knowledge {
-  /** Cards we can see (own hand + tables + face-up discard piles + pendingDraw if we're acting). */
+  /** Cards we can see (own hand + tables + every card still in either discard
+   *  pile + pendingDraw if we're acting). */
   seenIds: Set<number>;
-  /** Per-family count of unseen cards (still in deck or in opponents' hands). */
+  /** Per-family count of unseen cards (still in deck OR in opponents' hands). */
   unseenByFamily: Map<SspCardFamily, number>;
+  /** Per-color count of unseen cards. */
+  unseenByColor: Map<SspColor, number>;
   /** Total unseen cards. */
   unseenTotal: number;
-  /** Per-opponent inferred hand size (from state) + the families we've seen
-   *  them DRAW from discard piles (those almost-certainly remain in hand). */
+  /** Per-opponent inferred hand size + observed acquisitions. */
   opponentProfiles: Map<PlayerId, OpponentProfile>;
 }
 
@@ -54,10 +66,21 @@ interface OpponentProfile {
    *  (drawFromDiscard, crabPick, sharkSteal, lobsterPick, angelfishDraw).
    *  Strong signal of what they're building. */
   knownTaken: Partial<Record<SspCardFamily, number>>;
+  /** Specific card ids we know they hold (from face-up acquisitions where we
+   *  can identify the exact card — e.g. drawDiscard tells us they took the
+   *  exact card we last saw on the pile top). */
+  knownCardIds: Set<number>;
   /** Hand size at the moment we built knowledge. */
   handSize: number;
+  /** How many distinct times they pulled this family from a discard pile.
+   *  Used for defensive blocking — repeated picks of the same family are a
+   *  much stronger signal than a one-off. */
+  discardPullsByFamily: Partial<Record<SspCardFamily, number>>;
 }
 
+/** Build a snapshot of everything the AI knows publicly. Perfect memory of all
+ *  public information: cards still in piles (including buried), every card in
+ *  own hand, every card on every table, and per-opponent acquisition history. */
 function buildKnowledge(state: SspState, meId: PlayerId): Knowledge {
   const me = state.players.find((p) => p.id === meId)!;
   const seen = new Set<number>();
@@ -77,30 +100,84 @@ function buildKnowledge(state: SspState, meId: PlayerId): Knowledge {
 
   const seenByFamily: Record<SspCardFamily, number> = {} as Record<SspCardFamily, number>;
   for (const f of FAMILY_ORDER) seenByFamily[f] = 0;
+  const seenByColor: Record<SspColor, number> = {
+    white: 0, yellow: 0, green: 0, pink: 0, purple: 0,
+    teal: 0, darkblue: 0, black: 0, gray: 0, orange: 0, tan: 0,
+  };
+
+  // Total color distribution of the FULL deck (Salt-aware).
+  const extraSalt = !!state.config.expansions?.extraSalt;
+  const totalByColor: Record<SspColor, number> = {
+    white: 0, yellow: 0, green: 0, pink: 0, purple: 0,
+    teal: 0, darkblue: 0, black: 0, gray: 0, orange: 0, tan: 0,
+  };
+  for (const f of FAMILY_ORDER) {
+    if (FAMILY[f].expansion === 'extraSalt' && !extraSalt) continue;
+    const palette = FAMILY_COLORS[f];
+    const count = FAMILY[f].count;
+    for (let i = 0; i < count; i++) {
+      const color = palette[i % palette.length] ?? 'darkblue';
+      totalByColor[color] += 1;
+    }
+  }
 
   const accum = (cards: SspCard[]) => {
-    for (const c of cards) seenByFamily[c.family] += 1;
+    for (const c of cards) {
+      seenByFamily[c.family] += 1;
+      seenByColor[c.color] += 1;
+    }
   };
   accum(me.hand);
   for (const p of state.players) accum(p.table);
   for (const pile of state.discards) accum(pile);
   if (state.activePlayerId === meId) accum(state.pendingDraw);
 
-  const unseen = new Map<SspCardFamily, number>();
+  // Cards we know specific opponents are holding (face-up acquisitions) — also
+  // count those colors as seen even though the card has left the pile and
+  // returned to a private hand. They're known facts and shouldn't be double-
+  // counted in unseen tallies.
+  //
+  // IMPORTANT: scope the log walk to the CURRENT round only. Cards acquired
+  // in prior rounds were shuffled back into the deck at round start and are
+  // no longer in any hand. Walking the full log (a) double-counts those cards
+  // (the deck is fresh) and (b) scales with game length, which is the dominant
+  // cost of the AI's per-action time by round 5+.
+  const currentRound = state.round;
+  const currentLog = (state.log ?? []).filter((e) => e.round === currentRound);
+  for (const e of currentLog) {
+    if (e.kind !== 'drawDiscard' && e.kind !== 'crabPick'
+        && e.kind !== 'sharkSteal' && e.kind !== 'lobsterPick'
+        && e.kind !== 'angelfishDraw') continue;
+    seenByFamily[(e as { family: SspCardFamily }).family] += 1;
+  }
+
+  const unseenByFamily = new Map<SspCardFamily, number>();
   let unseenTotal = 0;
   for (const f of FAMILY_ORDER) {
     const u = Math.max(0, totalByFamily[f] - seenByFamily[f]);
-    unseen.set(f, u);
+    unseenByFamily.set(f, u);
     unseenTotal += u;
   }
+  const unseenByColor = new Map<SspColor, number>();
+  for (const c of [
+    'white', 'yellow', 'green', 'pink', 'purple', 'teal', 'darkblue', 'black', 'gray', 'orange', 'tan',
+  ] as SspColor[]) {
+    unseenByColor.set(c, Math.max(0, totalByColor[c] - seenByColor[c]));
+  }
 
-  // Per-opponent profile: walk the log, tally families taken from face-up sources.
   const opponentProfiles = new Map<PlayerId, OpponentProfile>();
   for (const p of state.players) {
     if (p.id === meId) continue;
-    opponentProfiles.set(p.id, { knownTaken: {}, handSize: p.hand.length });
+    opponentProfiles.set(p.id, {
+      knownTaken: {},
+      knownCardIds: new Set<number>(),
+      handSize: p.hand.length,
+      discardPullsByFamily: {},
+    });
   }
-  for (const e of state.log ?? []) {
+  // Same scoping as above — opponent profile reflects what they're holding
+  // THIS round, not cumulative cards across the whole match.
+  for (const e of currentLog) {
     const fam = familyFromLogEntry(e);
     if (!fam) continue;
     const pid = (e as { playerId?: PlayerId }).playerId;
@@ -108,12 +185,15 @@ function buildKnowledge(state: SspState, meId: PlayerId): Knowledge {
     const prof = opponentProfiles.get(pid);
     if (!prof) continue;
     prof.knownTaken[fam] = (prof.knownTaken[fam] ?? 0) + 1;
+    if (e.kind === 'drawDiscard' || e.kind === 'crabPick') {
+      prof.discardPullsByFamily[fam] = (prof.discardPullsByFamily[fam] ?? 0) + 1;
+    }
   }
 
-  return { seenIds: seen, unseenByFamily: unseen, unseenTotal, opponentProfiles };
+  return { seenIds: seen, unseenByFamily, unseenByColor, unseenTotal, opponentProfiles };
 }
 
-/** Pull the family out of a log entry if it represents a card-acquisition by a
+/** Pull the family out of a log entry if it represents a card acquisition by a
  *  specific player from a public source (so we know exactly what they took). */
 function familyFromLogEntry(e: SspLogEntry): SspCardFamily | null {
   switch (e.kind) {
@@ -122,25 +202,30 @@ function familyFromLogEntry(e: SspLogEntry): SspCardFamily | null {
     case 'sharkSteal':     return e.family;
     case 'lobsterPick':    return e.family;
     case 'angelfishDraw':  return e.family;
-    // 'drawDeck' (kept face-down draw), 'fishDraw' (drawn from face-down deck)
-    // are hidden info if the player isn't the local viewer.
     default: return null;
   }
 }
 
-/** Marginal score gain to ME if I add one extra card of `family` to my pool. */
-function marginalValue(me: SspPlayer, family: SspCardFamily, _know: Knowledge): number {
+/** Marginal score gain to ME if I add one extra card of `family` to my pool.
+ *  When `addedColor` is provided, uses that color for the new card; otherwise
+ *  picks the color most likely to maximize mermaid bonus (the largest existing
+ *  group, falling back to a non-white color we haven't seen much). */
+function marginalValue(
+  me: SspPlayer,
+  family: SspCardFamily,
+  _know: Knowledge,
+  addedColor?: SspColor,
+): number {
   const before = countMyFamilies(me);
   const after = { ...before };
   after[family] = (after[family] ?? 0) + 1;
 
   const beforeScore = scoreFromCounts(before, me);
-  const afterScore = scoreFromCounts(after, me, family);
-
+  const afterScore = scoreFromCounts(after, me, family, addedColor);
   let delta = afterScore - beforeScore;
 
-  // Mermaid swing: each unseen mermaid is genuinely valuable (4 mermaids = instant
-  // win). Encourage chase if we already hold ≥1.
+  // Mermaid swing — each unseen mermaid is genuinely valuable (4 mermaids =
+  // instant win). Scale aggressively with how close we already are.
   if (family === 'mermaid') {
     const owned = (before.mermaid ?? 0);
     if (owned >= 3) delta += 25;
@@ -149,39 +234,53 @@ function marginalValue(me: SspPlayer, family: SspCardFamily, _know: Knowledge): 
     else delta += 1.5;
   }
 
-  // Bonus signal for cards that form a duo pair with something we already hold.
-  // The base scoreFromCounts already credits the +1 from the pair when it
-  // becomes possible, but the duo ABILITY is also worth ~1 pt of expected
-  // future value (crab pull, boat extra turn, etc.).
+  // Bonus signal: cards that COMPLETE a duo pair we already partially hold
+  // unlock the pair ability + 1 pt. The base scoreFromCounts already credits
+  // the +1 pair point — here we add expected ability value.
   if (isDuoFamily(family)) {
     const partner = duoPartner(family);
     if (partner) {
       const ownPartners = me.hand.filter((c) => c.family === partner).length;
       const ownSelf = me.hand.filter((c) => c.family === family).length;
-      if (partner === family && ownSelf >= 1) delta += 1.0;       // base ability ~1 EV
-      if (partner !== family && ownPartners >= 1) delta += 1.5;   // shark+swimmer steal worth more
+      if (partner === family && ownSelf >= 1) delta += abilityEV(family);
+      if (partner !== family && ownPartners >= 1) delta += abilityEV(family);
     }
   }
 
-  // Penalty if family is already saturated (e.g. 6 shells = max already).
+  // Collector saturation penalty — beyond the cap nothing more helps.
   if (family === 'shell' && (before.shell ?? 0) >= 6) delta -= 1;
   if (family === 'octopus' && (before.octopus ?? 0) >= 5) delta -= 1;
   if (family === 'penguin' && (before.penguin ?? 0) >= 3) delta -= 1;
   if (family === 'sailor' && (before.sailor ?? 0) >= 2) delta -= 1;
 
+  // Multiplier card without its target = wasted slot.
+  if (family === 'lighthouse' && (before.boat ?? 0) === 0) delta -= 0.5;
+  if (family === 'shoal' && (before.fish ?? 0) === 0) delta -= 0.5;
+  if (family === 'penguinColony' && (before.penguin ?? 0) === 0) delta -= 0.5;
+  if (family === 'captain' && (before.sailor ?? 0) === 0) delta -= 0.5;
+
   return delta;
 }
 
-/** Marginal value the family would have for OPPONENT `op` — based on what we
- *  know they've taken from public sources. We treat their inferred hand as
- *  a virtual `SspPlayer` and run the same marginal scoring. */
+/** Lightweight EV estimate for a duo ability — used when we're evaluating the
+ *  marginal value of a card that COMPLETES a pair (so the ability becomes
+ *  available next turn). Returns roughly the expected number of points the
+ *  ability would deliver. Kept to flat constants so the recursive use of
+ *  `marginalValue` inside `expectedUnseenDrawValue` doesn't loop. */
+function abilityEV(family: SspCardFamily): number {
+  if (family === 'crab' || family === 'lobster') return 2.5;
+  if (family === 'boat') return 2.0;
+  if (family === 'fish') return 1.8; // ≈ a typical face-down draw value
+  if (family === 'shark' || family === 'swimmer') return 2.0;
+  if (family === 'jellyfish') return 1.2;
+  return 0;
+}
+
+/** Marginal value the family would have for OPPONENT `op`. Uses their
+ *  knownTaken profile as their virtual hand. */
 function marginalValueForOpponent(
   op: SspPlayer, profile: OpponentProfile, family: SspCardFamily, know: Knowledge,
 ): number {
-  // Build a virtual "opponent player" with only the cards we can prove they
-  // hold (knownTaken). It's a partial view — missing cards we never saw —
-  // but it captures their stated demand much better than treating the
-  // opponent's hand as uniformly average.
   const virtual: SspPlayer = {
     id: op.id,
     hand: [],
@@ -196,7 +295,14 @@ function marginalValueForOpponent(
       virtual.hand.push({ id: pid--, family: fam, color: 'yellow' });
     }
   }
-  return marginalValue(virtual, family, know);
+  let v = marginalValue(virtual, family, know);
+  // Defensive multiplier — if they've REPEATEDLY pulled this family from a
+  // discard pile, that's strong evidence they're committed to it. Boost the
+  // perceived value so we block harder.
+  const pulls = profile.discardPullsByFamily[family] ?? 0;
+  if (pulls >= 2) v *= 1.5;
+  else if (pulls >= 1) v *= 1.2;
+  return v;
 }
 
 function countMyFamilies(me: SspPlayer): Partial<Record<SspCardFamily, number>> {
@@ -205,10 +311,15 @@ function countMyFamilies(me: SspPlayer): Partial<Record<SspCardFamily, number>> 
   return out;
 }
 
+/** Pure scoring from a family-count map. When `addedFamily` is provided we
+ *  also predict the mermaid color-bonus contribution of that hypothetical card
+ *  using known color frequencies. `addedColor` lets the caller specify the
+ *  exact color (used when we're considering a concrete card from a pile). */
 function scoreFromCounts(
   counts: Partial<Record<SspCardFamily, number>>,
   me: SspPlayer,
   addedFamily?: SspCardFamily,
+  addedColor?: SspColor,
 ): number {
   let total = 0;
   const crab = counts.crab ?? 0;
@@ -231,28 +342,46 @@ function scoreFromCounts(
   if (counts.penguinColony) total += 2 * (counts.penguin ?? 0);
   if (counts.captain) total += 3 * (counts.sailor ?? 0);
 
-  // Mermaid color bonus — use ACTUAL cards owned + hypothetical added card.
   const cards: SspCard[] = [...me.hand, ...me.table];
   if (addedFamily) {
-    const colorTally = new Map<string, number>();
-    for (const c of cards) colorTally.set(c.color, (colorTally.get(c.color) ?? 0) + 1);
-    let bestColor = 'yellow';
-    let bestN = -1;
-    for (const [c, n] of colorTally) {
-      if (n > bestN) { bestN = n; bestColor = c; }
-    }
-    if (addedFamily === 'mermaid') {
-      cards.push({ id: -1, family: 'mermaid', color: 'white' });
+    // Determine the added card's color. If the caller specified one, use it.
+    // Otherwise pick the most likely color — for mermaid that's white; for
+    // anything else we pick our LARGEST EXISTING non-white color group so the
+    // mermaid bonus prediction is optimistic (and matches what we'd actually
+    // chase given the chance).
+    let color: SspColor;
+    if (addedColor) {
+      color = addedColor;
+    } else if (addedFamily === 'mermaid') {
+      color = 'white';
     } else {
-      cards.push({ id: -1, family: addedFamily, color: bestColor as SspCard['color'] });
+      const colorTally = new Map<SspColor, number>();
+      for (const c of cards) {
+        if (c.color === 'white') continue;
+        colorTally.set(c.color, (colorTally.get(c.color) ?? 0) + 1);
+      }
+      let bestColor: SspColor = 'yellow';
+      let bestN = -1;
+      for (const [col, n] of colorTally) {
+        if (n > bestN) { bestN = n; bestColor = col; }
+      }
+      color = bestColor;
     }
+    cards.push({ id: -1, family: addedFamily, color });
   }
   total += mermaidColorBonus(cards);
+
+  // Partial credit for the LAST CHANCE special color bonus (1 pt per card of
+  // the largest color group, including white). Counts at face value only when
+  // the round ends via LAST CHANCE — we discount to ~30% to reflect the
+  // probabilistic nature, but it's still meaningful: it means MERMAIDS (which
+  // are white) contribute to the bonus column, not just to the mermaid claim.
+  total += 0.3 * specialColorBonus(cards);
 
   return total;
 }
 
-/** Expected value of a face-down draw. */
+/** Expected value of a face-down draw, weighted by per-family unseen counts. */
 function expectedUnseenDrawValue(me: SspPlayer, know: Knowledge): number {
   if (know.unseenTotal === 0) return 0;
   let exp = 0;
@@ -264,31 +393,26 @@ function expectedUnseenDrawValue(me: SspPlayer, know: Knowledge): number {
   return exp;
 }
 
-/** Pick the best of 2 drawn cards: return [keepIndex, otherIndex, keepValue]. */
-function chooseKeep(me: SspPlayer, draw: [SspCard, SspCard], know: Knowledge): { keepIndex: 0 | 1; keepValue: number; otherValue: number } {
-  const v0 = marginalValue(me, draw[0].family, know);
-  const v1 = marginalValue(me, draw[1].family, know);
-  if (v0 >= v1) return { keepIndex: 0, keepValue: v0, otherValue: v1 };
-  return { keepIndex: 1, keepValue: v1, otherValue: v0 };
+/** Value of a SPECIFIC card (family + color known) given my current state. */
+function valueOfConcreteCard(me: SspPlayer, card: SspCard, know: Knowledge): number {
+  return marginalValue(me, card.family, know, card.color);
 }
 
-/** Pick the discard pile so that, after our card is placed on top, the worst
- *  case for opponents is minimized. We consider:
- *    - Which top is most useful to opponents now (we want to bury it).
- *    - But ALSO: our discarded card becomes the new top, so we should weight
- *      how much opponents would gain from our discard itself.
- *  Algorithm:
- *    score(pile_i) = harmGain(pile_i) where
- *      harmGain = max-over-opponents marginal value of the NEW top (our card)
- *               − max-over-opponents marginal value of the buried top (their
- *                  potential gain we just denied them)
- *    pick the pile with the SMALLEST harmGain. Ties are broken via a
- *    deterministic per-turn hash so the AI doesn't always favour pile 0.
+/** Pick the best of 2 drawn cards. */
+function chooseKeep(me: SspPlayer, draw: [SspCard, SspCard], know: Knowledge): { keepIndex: 0 | 1 } {
+  const v0 = valueOfConcreteCard(me, draw[0], know);
+  const v1 = valueOfConcreteCard(me, draw[1], know);
+  return { keepIndex: v0 >= v1 ? 0 : 1 };
+}
+
+/** Pick the discard pile so opponents gain as little as possible. We balance:
+ *    - our discarded card becomes the new top → opponents may grab it.
+ *    - the buried top is now ALSO inaccessible to opponents (good for us).
+ *  Pick the pile with the smallest "harm".
  */
 function chooseDiscardPile(
   me: SspPlayer, discardCard: SspCard, state: SspState, know: Knowledge,
 ): 0 | 1 {
-  // Empty-pile rule (enforced by reducer): fill the empty pile first.
   if (state.discards[0].length === 0 && state.discards[1].length > 0) return 0;
   if (state.discards[1].length === 0 && state.discards[0].length > 0) return 1;
   if (state.discards[0].length === 0 && state.discards[1].length === 0) return 0;
@@ -316,18 +440,14 @@ function chooseDiscardPile(
 
   const h0 = harm(0);
   const h1 = harm(1);
-  // Only treat truly-equal harm as a tie; otherwise pick the smaller harm.
   if (Math.abs(h0 - h1) < 0.001) return tieBreakHash(state, me, discardCard);
   return h0 < h1 ? 0 : 1;
 }
 
-/** Deterministic per-turn hash → 0 or 1. Used as a tie-breaker for choices
- *  that would otherwise always go to the same option. Mixes several
- *  state-derived signals so the answer varies turn-to-turn even when the
- *  numerical scores are identical. */
+/** Deterministic per-turn hash → 0 or 1, used as a tiebreaker. */
 function tieBreakHash(state: SspState, me: SspPlayer, extra?: SspCard): 0 | 1 {
   let h = (state.logSeq ?? 0) >>> 0;
-  h = (h * 2654435761) >>> 0;          // Knuth multiplicative hash
+  h = (h * 2654435761) >>> 0;
   h ^= state.round;
   h ^= state.deck.length;
   h ^= me.hand.length << 4;
@@ -353,41 +473,51 @@ function findHandPairs(me: SspPlayer): Array<[SspCard, SspCard]> {
   return pairs;
 }
 
-/** Score a duo pair play by expected value of its effect + the +1 pair point. */
+/** Value of a duo pair play, looking at the concrete next-action options
+ *  enabled by the ability rather than averaging EV. */
 function valueDuoPair(state: SspState, me: SspPlayer, pair: [SspCard, SspCard], know: Knowledge): number {
   const families = new Set([pair[0].family, pair[1].family]);
   let v = 1; // pair scores 1 point
 
   if (families.has('boat')) {
-    // Boat: extra turn ≈ best of (best discard top, expected face-down draw).
+    // Boat gives us a free extra turn. Value = the best concrete action we
+    // could take next: drawDiscard the best top, OR drawPair (best of 2 unseen
+    // → expected value). We DON'T add a follow-up pair play because the boat
+    // pair itself has already used up our pair budget for this play — but the
+    // EXTRA draw might land us into a new pair, so we credit a small follow-on
+    // pair-completion EV (≈ probability of drawing a duo partner × 1).
     let bestDiscardV = 0;
     for (const pile of state.discards) {
       const top = pile[pile.length - 1];
-      if (top) bestDiscardV = Math.max(bestDiscardV, marginalValue(me, top.family, know));
+      if (top) bestDiscardV = Math.max(bestDiscardV, valueOfConcreteCard(me, top, know));
     }
-    const exp = expectedUnseenDrawValue(me, know);
-    v += Math.max(bestDiscardV, exp) * 0.85; // small discount for "we still have to choose well"
+    const drawPairKeep = 1.3 * expectedUnseenDrawValue(me, know);
+    // Take the better of the two concrete next-action options.
+    const bestNext = Math.max(bestDiscardV, drawPairKeep);
+    // Cap at a sensible ceiling — the next turn isn't infinitely valuable, and
+    // boat doesn't give the play-a-pair step (we already played our pair).
+    v += bestNext;
   }
 
   if (families.has('fish')) {
+    // Fish gives a free face-down draw — straight EV.
     v += expectedUnseenDrawValue(me, know);
   }
 
-  if (families.has('crab')) {
-    // Pick from a discard pile — value the BEST card visible across piles.
+  if (families.has('crab') || families.has('lobster')) {
+    // Crab/lobster lets us reach into a discard pile. Find the SPECIFIC card
+    // (across all visible cards in both piles) with the highest value to us.
     let bestVis = 0;
     for (const pile of state.discards) {
       for (const c of pile) {
-        bestVis = Math.max(bestVis, marginalValue(me, c.family, know));
+        bestVis = Math.max(bestVis, valueOfConcreteCard(me, c, know));
       }
     }
     v += bestVis;
   }
 
   if (families.has('shark') && families.has('swimmer')) {
-    // Steal a RANDOM card from an opponent. Use our per-opponent profile to
-    // estimate the average value of cards in their hand (the known-taken
-    // families weighted by hand fraction; remaining slots use expected unseen).
+    // Steal from highest-expected-value opponent.
     let best = 0;
     for (const op of state.players) {
       if (op.id === me.id || op.hand.length === 0) continue;
@@ -421,9 +551,6 @@ function biggestOpponentScore(state: SspState, meId: PlayerId): number {
   return max;
 }
 
-/** Biggest opponent CARD-POINTS score (including mermaid claims, excluding
- *  the special color bonus). Used for LAST CHANCE bet evaluation since the
- *  bet compares card points only — the color bonus is paid to everyone. */
 function biggestOpponentCardScore(state: SspState, meId: PlayerId): number {
   let max = 0;
   for (const p of state.players) {
@@ -432,6 +559,23 @@ function biggestOpponentCardScore(state: SspState, meId: PlayerId): number {
     max = Math.max(max, sc.cardPoints);
   }
   return max;
+}
+
+/** Maximum across opponents of the marginal value `family` has for THEM. Used
+ *  to bias drawFromDiscard defensively — if leaving a card on top would
+ *  significantly help an opponent, we may want to take it anyway. */
+function bestOpponentValueForFamily(
+  state: SspState, me: SspPlayer, family: SspCardFamily, know: Knowledge,
+): number {
+  let best = 0;
+  for (const op of state.players) {
+    if (op.id === me.id) continue;
+    const prof = know.opponentProfiles.get(op.id);
+    if (!prof) continue;
+    const v = marginalValueForOpponent(op, prof, family, know);
+    best = Math.max(best, v);
+  }
+  return best;
 }
 
 /** AI entry point — return next legal action for `playerId`, or null. */
@@ -453,9 +597,9 @@ export function chooseAIAction(state: SspState, playerId: PlayerId): SspAction |
 
   switch (state.subPhase) {
     case 'awaitingAction': {
-      // Inspect both discard tops + expected face-down draw value, AND each
-      // option's opportunity cost (do we give opponents free cards if we draw
-      // from the deck?). We pick the option with the best NET EV.
+      // Inspect both discard tops AND each option's NET value (my gain MINUS
+      // opportunity cost from leaving the card for opponents). Combine that
+      // with expected unseen-draw value for the deck.
       const expDraw = expectedUnseenDrawValue(me, know);
 
       let bestPile: -1 | 0 | 1 = -1;
@@ -465,11 +609,16 @@ export function chooseAIAction(state: SspState, playerId: PlayerId): SspAction |
         const pile = state.discards[i];
         if (pile.length === 0) continue;
         const top = pile[pile.length - 1];
-        const v = marginalValue(me, top.family, know);
-        pileValues[i] = v;
-        if (v > bestPileV) { bestPileV = v; bestPile = i; }
+        // My value of taking this concrete card.
+        const myV = valueOfConcreteCard(me, top, know);
+        // Defensive bonus: if leaving it helps an opponent more than us, the
+        // pure my-value undervalues the move. Add a fraction of the opponent's
+        // gain as our gain-from-denying.
+        const denyV = bestOpponentValueForFamily(state, me, top.family, know);
+        const netV = myV + 0.4 * denyV;
+        pileValues[i] = netV;
+        if (netV > bestPileV) { bestPileV = netV; bestPile = i; }
       }
-      // Tie-break: if both tops are equally valuable, vary pile choice each turn.
       if (bestPile !== -1
           && Math.abs(pileValues[0] - pileValues[1]) < 0.001
           && state.discards[0].length > 0
@@ -477,20 +626,14 @@ export function chooseAIAction(state: SspState, playerId: PlayerId): SspAction |
         bestPile = tieBreakHash(state, me);
       }
 
-      // drawPair: we keep the BETTER of two unseen draws + discard the other.
-      // Approximate as max(2 i.i.d. samples of expDraw) ≈ 1.3× expDraw, minus
-      // the opponent's average gain from our forced discard (estimated as the
-      // expected unseen value × opponents-care factor).
+      // drawPair: keep best of 2 unseen ≈ 1.3 × expDraw, minus opponent demand
+      // for the average forced discard. The forced discard's color matters
+      // for mermaid prediction, but at the average-case level the family is
+      // the dominant driver, so we estimate via expDraw × demand factor.
       const drawPairKeep = 1.3 * expDraw;
-      // Estimate opponent "demand" for the average discarded card: roughly
-      // expDraw weighted by how much they engage with discards. Use a fixed
-      // 0.4 multiplier to reflect "some of the time they grab it, some they
-      // don't" — same shape as the original code.
       const drawPairOpponentCost = 0.4 * expDraw;
       const drawPairNet = drawPairKeep - drawPairOpponentCost;
 
-      // Threshold: only prefer the discard pile if it's better than the
-      // net of drawing a pair (which gives us choice).
       if (bestPile !== -1 && bestPileV >= drawPairNet) {
         return { type: 'drawFromDiscard', pile: bestPile };
       }
@@ -508,8 +651,8 @@ export function chooseAIAction(state: SspState, playerId: PlayerId): SspAction |
     }
 
     case 'awaitingPlayOrEnd': {
-      // 1. Play any valuable pair we can — pick the highest-value one, but
-      // only if its EV strictly beats just passing.
+      // 1. Play any valuable pair we can — pick the highest-value one. A pair
+      // always scores ≥ 1 point so it's always worth playing.
       const pairs = findHandPairs(me);
       if (pairs.length > 0) {
         let best = pairs[0];
@@ -518,13 +661,10 @@ export function chooseAIAction(state: SspState, playerId: PlayerId): SspAction |
           const v = valueDuoPair(state, me, pairs[i], know);
           if (v > bestV) { best = pairs[i]; bestV = v; }
         }
-        // Always >= 1 point, always worth playing.
         return { type: 'playPair', cardIds: [best[0].id, best[1].id] };
       }
 
       // 2. End-turn decisions.
-      // If another player has already called LAST CHANCE, we're on the final
-      // forced go-around: stop/lastChance are illegal, only pass is allowed.
       if (state.lastChanceFrom !== null) {
         return { type: 'pass' };
       }
@@ -540,32 +680,73 @@ export function chooseAIAction(state: SspState, playerId: PlayerId): SspAction |
       const stopThreshold = hasEvent('treasureChest') ? 10 : STOP_THRESHOLD;
       const canStop = !hasEvent('diodonFish');
 
+      // End-round decision tree.
+      //
+      // STOP behavior (per user intent):
+      //   - Ahead on ROUND points (myScore > oppMax): we want to lock in our
+      //     lead and end the round before opponents catch up.
+      //   - Wins the match outright (matchScore + myScore >= target): always
+      //     STOP if legal.
+      //   - Behind in MATCH but ahead in ROUND by a lot: still STOP to bank
+      //     points.
+      //
+      // LAST CHANCE behavior (per user intent):
+      //   - Behind on ROUND points but card-points bet is winnable (we hit
+      //     threshold first; opp hasn't reached it; our color bonus would push
+      //     us ahead).
+      //   - Behind in MATCH and need a swing — color bonus on LAST CHANCE
+      //     gives every player a bonus, but only the bet winner keeps both
+      //     halves of their score, so when we have a STRONG card-points
+      //     advantage but are losing the match by a lot, betting is correct.
+      //
+      // PASS only when we're far below threshold or all options look losing
+      // and we'd rather draw another card.
       if (myScore >= stopThreshold) {
         const wouldFinishMatch = (me.matchScore + myScore) >= matchTarget;
-        const safeLead = myScore - oppMax >= 4;
+        // STOP threshold: even a 1-point lead on the round is enough to lock in
+        // (we don't want opponents getting another turn).
+        const aheadOnRound = myScore > oppMax;
+        const safeLead = myScore - oppMax >= 3;
+
         if (canStop && (wouldFinishMatch || safeLead)) {
           return { type: 'stop' };
         }
 
-        // LAST CHANCE bet evaluation: the bet compares CARD POINTS only (the
-        // special color bonus is paid to every player regardless of the bet).
-        // We win the bet if our card total stays ≥ every opponent's card
-        // total after they take one more turn. Ties go to the caller.
+        // LAST CHANCE evaluation. The bet compares CARD POINTS only — the
+        // special color bonus is paid to everyone regardless of who wins. So
+        // LAST CHANCE is profitable when:
+        //   - Our card-points lead AFTER opponents take their last turn is
+        //     positive (we win the bet → we keep all our points + bonus,
+        //     opps keep ONLY their bonus). Ties go to the caller.
+        //   - OR we trail in MATCH and need to swing — even a borderline bet
+        //     is justified because passing won't close the gap.
         const myCards = totalScore([...me.hand, ...me.table]).cardPoints;
         const oppMaxCards = biggestOpponentCardScore(state, me.id);
-        // After their last turn each opponent could gain ~expectedUnseenDraw
-        // worth of card value. Be moderately pessimistic: 1.2× expected draw.
-        const expectedOpponentCardsAfter = oppMaxCards + 1.2 * expectedUnseenDrawValue(me, know);
+        // Be MILDLY pessimistic about the opponent's next turn — they could
+        // gain 1 expected unseen draw worth of card value. We don't multiply
+        // by 1.2 anymore; that was overly cautious.
+        const expectedOpponentCardsAfter = oppMaxCards + 0.9 * expectedUnseenDrawValue(me, know);
         const betWinMargin = myCards - expectedOpponentCardsAfter;
-        const aggressionBoost = myMatchLeadAfter < 0 ? 2 : 0;
-        if (betWinMargin + aggressionBoost >= 2 && myMatchLeadAfter > -10) {
+
+        // Adjust threshold by match-lead pressure: trailing in match → lower
+        // bar; ahead in match → raise the bar (don't risk a lost bet).
+        let lcThreshold = 1.5;
+        if (myMatchLeadAfter < -8) lcThreshold = -2;     // way behind: gamble
+        else if (myMatchLeadAfter < 0) lcThreshold = 0;  // behind: lower bar
+        else if (myMatchLeadAfter > 8) lcThreshold = 4;  // way ahead: only call on clear wins
+
+        if (betWinMargin >= lcThreshold) {
           return { type: 'lastChance' };
         }
 
-        const trailing = state.players.some((p) => p.id !== me.id && p.matchScore > me.matchScore + 5);
-        if (canStop && trailing && myScore >= stopThreshold + 2) {
+        // STOP fallback: ahead on round but not safe-lead. Still locking in
+        // is better than letting opponents continue.
+        if (canStop && aheadOnRound) {
           return { type: 'stop' };
         }
+
+        // Trailing on round AND can't win the bet → continue drawing in hope
+        // of improving our position before opp ends the round.
         return { type: 'pass' };
       }
 
@@ -573,36 +754,32 @@ export function chooseAIAction(state: SspState, playerId: PlayerId): SspAction |
     }
 
     case 'awaitingCrabPick': {
-      // Choose the highest-value visible card from either pile. When several
-      // cards tie at the same top value, vary which one we take across turns.
-      const candidates: Array<{ card: SspCard; pile: 0 | 1; v: number }> = [];
-      let bestV = -Infinity;
+      // Pick the visible card whose NET value (my gain + denial bonus) is
+      // highest. Crab digs into ANY visible card in either pile, so we have
+      // perfect choice — we use concrete card identity (family + color), not
+      // just family aggregates.
+      type Cand = { card: SspCard; pile: 0 | 1; net: number };
+      const candidates: Cand[] = [];
       for (let i = 0 as 0 | 1; i < 2; i = (i + 1) as 0 | 1) {
         const pile = state.discards[i];
         for (const c of pile) {
-          const v = marginalValue(me, c.family, know);
-          candidates.push({ card: c, pile: i, v });
-          if (v > bestV) bestV = v;
+          const myV = valueOfConcreteCard(me, c, know);
+          const denyV = bestOpponentValueForFamily(state, me, c.family, know);
+          const net = myV + 0.4 * denyV;
+          candidates.push({ card: c, pile: i, net });
         }
       }
-      const top = candidates.filter((x) => Math.abs(x.v - bestV) < 0.001);
-      let bestPile: 0 | 1 = 0;
-      let bestCard: SspCard | null = null;
-      if (top.length > 0) {
-        const pick = top[tieBreakHash(state, me) === 0
-          ? 0
-          : Math.min(top.length - 1, 1)];
-        bestCard = pick.card;
-        bestPile = pick.pile;
-      }
-      if (!bestCard) return null;
-      return { type: 'crabPick', pile: bestPile, cardId: bestCard.id };
+      if (candidates.length === 0) return null;
+      let bestNet = -Infinity;
+      for (const c of candidates) if (c.net > bestNet) bestNet = c.net;
+      const top = candidates.filter((x) => Math.abs(x.net - bestNet) < 0.001);
+      const pick = top[tieBreakHash(state, me) % top.length];
+      return { type: 'crabPick', pile: pick.pile, cardId: pick.card.id };
     }
 
     case 'awaitingSharkSteal': {
-      // Use the per-opponent profile to pick the target whose average hand
-      // value is highest. Skip the LAST CHANCE caller (protected) and empty
-      // hands.
+      // Steal from the opponent whose hand has the highest expected value to
+      // us. Repeat profile logic.
       let best: PlayerId | null = null;
       let bestV = -Infinity;
       for (const op of state.players) {
@@ -630,9 +807,9 @@ export function chooseAIAction(state: SspState, playerId: PlayerId): SspAction |
       const pool = state.pendingLobsterPick ?? [];
       if (pool.length === 0) return null;
       let best = pool[0];
-      let bestV = marginalValue(me, best.family, know);
+      let bestV = valueOfConcreteCard(me, best, know);
       for (let i = 1; i < pool.length; i++) {
-        const v = marginalValue(me, pool[i].family, know);
+        const v = valueOfConcreteCard(me, pool[i], know);
         if (v > bestV) { bestV = v; best = pool[i]; }
       }
       return { type: 'lobsterPick', cardId: best.id };
@@ -643,8 +820,8 @@ export function chooseAIAction(state: SspState, playerId: PlayerId): SspAction |
   }
 }
 
-// Re-export for tests (lets test code peek at heuristics without exporting
-// every helper).
+// Reference exports for tests + future debugging.
 export const __test__ = {
   buildKnowledge, marginalValue, chooseDiscardPile, valueDuoPair, isCollectorFamily,
+  valueOfConcreteCard, bestOpponentValueForFamily,
 };

@@ -12,8 +12,12 @@
     "typecheck": "tsc"
   },
   "dependencies": {
+    "@types/plotly.js": "^3.0.10",
+    "@types/react-plotly.js": "^2.6.4",
+    "plotly.js-basic-dist-min": "^3.6.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-plotly.js": "^4.0.0",
     "trystero": "^0.20.0",
     "zustand": "^5.0.2"
   },

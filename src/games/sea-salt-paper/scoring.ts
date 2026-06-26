@@ -297,5 +297,111 @@ export function isFamily(card: SspCard, family: SspCardFamily): boolean {
   return card.family === family;
 }
 
+/** Per-category point breakdown for a player's end-of-round tableau. Useful
+ *  for post-match analytics. Order matches cardPoints() internals so the sum
+ *  of categories equals cardPoints (and total = sum + mermaidClaim + colorBonus
+ *  if LAST CHANCE was active).
+ *
+ *  Categories are mutually exclusive — every scored point lands in exactly one. */
+export interface CategoryBreakdown {
+  /** Duo pair points (1 pt per pair, including starfish trio replacements where applicable). */
+  duos: number;
+  /** Collector set points (shell/octopus/penguin/sailor + seahorse wildcard). */
+  sets: number;
+  /** Multiplier card bonuses (lighthouse/shoal/penguinColony/captain/crabBasket). */
+  multipliers: number;
+  /** Starfish trio points (3 pts per trio). */
+  trios: number;
+  /** Mermaid color-group claim points (largest unclaimed non-white group per mermaid). */
+  mermaidClaim: number;
+  /** Special LAST CHANCE color bonus (largest single color group, including white).
+   *  Only counts toward the total when LAST CHANCE was the round-end mechanism. */
+  colorBonus: number;
+}
+
+/** Compute the full category breakdown for a player's hand+table. The numeric
+ *  categories sum to the same total as totalScore.cardPoints + .colorBonus. */
+export function categoryBreakdown(cards: SspCard[], opts: TotalScoreOpts = {}): CategoryBreakdown {
+  // Re-run scoring per category. We compute each category in isolation to keep
+  // this function readable; the result MUST be consistent with cardPoints()'s
+  // sum. Cards in trios are excluded from duo counting (matches cardPoints).
+  const effective = opts.trioCancelledIds
+    ? cards.filter((c) => !opts.trioCancelledIds!.has(c.id))
+    : cards;
+  const counts: Partial<Record<SspCardFamily, number>> = {};
+  for (const c of effective) counts[c.family] = (counts[c.family] ?? 0) + 1;
+
+  // Duo pairs (Salt-aware): replicate cardPoints' greedy pairing.
+  const crab = counts.crab ?? 0;
+  const boat = counts.boat ?? 0;
+  const fish = counts.fish ?? 0;
+  const shark = counts.shark ?? 0;
+  const swimmer = counts.swimmer ?? 0;
+  const jellyfish = counts.jellyfish ?? 0;
+  const lobster = counts.lobster ?? 0;
+  let duos = 0;
+  const lobsterPairs = Math.min(lobster, crab);
+  duos += lobsterPairs;
+  duos += Math.floor((crab - lobsterPairs) / 2);
+  const jellyfishPairs = Math.min(jellyfish, swimmer);
+  duos += jellyfishPairs;
+  duos += Math.min(shark, swimmer - jellyfishPairs);
+  duos += Math.floor(boat / 2);
+  duos += Math.floor(fish / 2);
+
+  // Trios — 3 pts each.
+  const trios = 3 * (opts.trios ?? 0);
+
+  // Collector sets.
+  const shellPerCard = opts.shellPerCard === true;
+  const octopusPerCard = opts.octopusPerCard === true;
+  const shells = counts.shell ?? 0;
+  const octopi = counts.octopus ?? 0;
+  const penguins = counts.penguin ?? 0;
+  const sailors = counts.sailor ?? 0;
+  const seahorse = counts.seahorse ?? 0;
+  let sets = 0;
+  if (shellPerCard) sets += 2 * shells;
+  else sets += collectorPoints('shell', shells);
+  if (octopusPerCard) sets += octopi;
+  else sets += collectorPoints('octopus', octopi);
+  sets += collectorPoints('penguin', penguins);
+  sets += collectorPoints('sailor', sailors);
+  if (seahorse > 0) {
+    let bestGain = 0;
+    for (const fam of ['shell', 'octopus', 'penguin', 'sailor'] as const) {
+      if (fam === 'shell' && shellPerCard) continue;
+      if (fam === 'octopus' && octopusPerCard) continue;
+      const n = counts[fam] ?? 0;
+      if (n < 1) continue;
+      const gain = collectorPoints(fam, n + 1) - collectorPoints(fam, n);
+      if (gain > bestGain) bestGain = gain;
+    }
+    sets += bestGain;
+  }
+
+  // Multipliers.
+  let multipliers = 0;
+  if (counts.lighthouse)    multipliers += counts.boat ?? 0;
+  if (counts.shoal)         multipliers += counts.fish ?? 0;
+  if (counts.penguinColony) multipliers += 2 * (counts.penguin ?? 0);
+  if (counts.captain)       multipliers += 3 * (counts.sailor ?? 0);
+  if (counts.crabBasket)    multipliers += counts.crab ?? 0;
+
+  // Mermaid claims (largest non-white group per mermaid). Skip if Tornado is in
+  // force (mermaids score 0).
+  let mermaidClaim = 0;
+  if (!opts.mermaidsScoreZero) {
+    let mc = mermaidColorBonus(cards, { forceMinMermaids: 0 });
+    if (opts.doubleColorBonus) mc *= 2;
+    mermaidClaim = mc;
+  }
+
+  // Special LAST CHANCE color bonus.
+  const colorBonus = opts.mermaidsScoreZero ? 0 : specialColorBonus(cards);
+
+  return { duos, sets, multipliers, trios, mermaidClaim, colorBonus };
+}
+
 /** Reference to keep callers honest the family list lives in cards.ts. */
 export const _FAMILY = FAMILY;
