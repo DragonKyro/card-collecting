@@ -298,9 +298,11 @@ export function GameLobby({ module, onBack, onStart }: Props) {
           {!isOnline && (
             <>
               <button onClick={startLocal} disabled={!canStartLocal}>Start (hot-seat)</button>
-              <button className="secondary" onClick={hostOnline} disabled={status === 'connecting'}>
-                {status === 'connecting' ? 'Connecting…' : 'Host online'}
-              </button>
+              {module.onlineSupported !== false && (
+                <button className="secondary" onClick={hostOnline} disabled={status === 'connecting'}>
+                  {status === 'connecting' ? 'Connecting…' : 'Host online'}
+                </button>
+              )}
             </>
           )}
           {isOnlineHost && (

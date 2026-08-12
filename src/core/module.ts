@@ -48,6 +48,10 @@ export interface GameModule<
   /** Allowed player counts (inclusive). */
   readonly minPlayers: number;
   readonly maxPlayers: number;
+  /** Set false for games whose action model can't survive the action-broadcast
+   *  net layer (real-time races need host-authoritative arbitration). The lobby
+   *  then hides "Host online" for this game. Defaults to true. */
+  readonly onlineSupported?: boolean;
 
   /** Build the lobby config component's initial value. Pure. */
   defaultConfig(seats: Seat[]): C;
