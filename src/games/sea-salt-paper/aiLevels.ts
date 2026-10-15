@@ -26,10 +26,10 @@ import easyUrl from './policies/easy-update10.json?url';
 import normalUrl from './policies/normal-update40.json?url';
 import hardUrl from './policies/hard-update1000.json?url';
 
-export const AI_LEVELS: ReadonlyArray<{ id: SspAiLevel; label: string; blurb: string }> = [
-  { id: 'easy', label: 'Easy', blurb: 'Plays simple pairs and always ends rounds with STOP.' },
-  { id: 'normal', label: 'Normal', blurb: 'Races to 7 points, then bets on LAST CHANCE.' },
-  { id: 'hard', label: 'Hard', blurb: 'Steals, takes extra turns and wins its LAST CHANCE bets ~90% of the time. Beats Normal in about 72% of matches.' },
+export const AI_LEVELS: ReadonlyArray<{ id: SspAiLevel; label: string }> = [
+  { id: 'easy', label: 'Easy' },
+  { id: 'normal', label: 'Normal' },
+  { id: 'hard', label: 'Hard' },
 ];
 
 export const DEFAULT_AI_LEVEL: SspAiLevel = 'normal';

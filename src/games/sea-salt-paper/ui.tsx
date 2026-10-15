@@ -35,7 +35,7 @@ function LobbyConfig({ config, seats, onChange }: { config: SspConfig; seats: Se
           <h4 style={{ margin: '0 0 6px', fontSize: 13, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--fg-muted)' }}>
             AI difficulty
           </h4>
-          <div role="radiogroup" aria-label="AI difficulty" style={{ display: 'flex', gap: 6 }}>
+          <div role="radiogroup" aria-label="AI difficulty" style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
             {AI_LEVELS.map((l) => (
               <button
                 key={l.id}
@@ -48,9 +48,6 @@ function LobbyConfig({ config, seats, onChange }: { config: SspConfig; seats: Se
               </button>
             ))}
           </div>
-          <p className="lobby-hint" style={{ margin: '6px 0 14px' }}>
-            {AI_LEVELS.find((l) => l.id === level)?.blurb}
-          </p>
         </>
       )}
 
