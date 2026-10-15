@@ -313,6 +313,7 @@ def main(argv: list[str] | None = None) -> None:
     an.add_argument("a")
     an.add_argument("--vs", required=True, help="comma-separated agents")
     an.add_argument("--json", default=None)
+    an.add_argument("--keep-log", default=None, help="CSV of A's draw-two keep decisions with the features it could see")
 
     lad = sub.add_parser("ladder", parents=[common], help="a run's checkpoints vs baselines and each other, with Elo")
     lad.add_argument("run")
@@ -341,6 +342,8 @@ def main(argv: list[str] | None = None) -> None:
             cmd += ["--workers", str(args.workers)]
         if args.json:
             cmd += ["--json", args.json]
+        if args.keep_log:
+            cmd += ["--keep-log", args.keep_log]
         subprocess.run(cmd, check=True)
     else:
         ladder(args.run, points=args.points, games=args.games, salt=salt, workers=args.workers)

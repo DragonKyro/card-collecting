@@ -132,7 +132,10 @@ python training/ssp/evaluate.py analyze bench:hard-update1000 --vs bench:easy-up
 
 For each matchup it tallies each side's decisions: draw source, pairs played
 or held, steals, crab digs, when it ends rounds (own score, opponent's real
-score), how those rounds end, and points per category.
+score), how those rounds end, and points per category. Per agent it also
+reports what crab digs take (share, and rate when the card is in the pile),
+whether a boat's bonus turn draws from the deck or takes a discard top, and
+how often each pair type is held instead of played.
 
 It then ranks **card importance** for every agent, pooled over its matchups.
 This is normalised for availability, so a boat isn't "important" just because
@@ -146,7 +149,15 @@ there are eight of them. Every card choice becomes head-to-head comparisons:
 A Bradley–Terry fit turns those into one strength per family, shown as how
 often the agent would take that card over a blind draw. Next to it are the
 plain rates (taken ÷ offered as a top, kept ÷ drawn) and how often each card
-was seen.
+was seen. A second table splits the cards whose worth depends on what's
+already held (pair partners, multiplier targets, collectors, mermaids) by that
+situation.
+
+`--keep-log keeps.csv` also writes every draw-two keep decision of agent A,
+with what it could see about each card. `python training/ssp/keep_model.py
+keeps.csv` fits a logistic model to them: each card's base keep value plus
+the situational factors (points added now, completes a pair, matching
+colours, value to the opponent).
 
 ## Pieces
 
@@ -161,6 +172,7 @@ was seen.
 | `ssp/agents.ts` | agent registry (`random`, `nn:`, `nn-sample:`) |
 | `ssp/evaluate.ts` / `eval.ts` | seat-swapped jobs, summary, report / CLI over worker threads |
 | `ssp/analyze.ts` | decision tallies + card-importance ranking (`analyze` / `npm run ssp:analyze`) |
+| `ssp/keep_model.py` | which factors drive draw-two keep decisions (reads `analyze --keep-log`) |
 | `ssp/vec-env.ts` | `SspVecEnv`: N matches, auto-advance to the learner's decisions, auto-reset |
 | `ssp/env-server.ts` | JSON-lines stdio wrapper around `SspVecEnv` (protocol in the file header) |
 
