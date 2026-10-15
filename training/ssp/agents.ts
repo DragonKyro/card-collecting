@@ -1,7 +1,5 @@
 // Agents the simulator, eval harness and env server can seat by spec.
 //
-//   heuristic            the shipped `chooseAIAction` (plays fair — same
-//                        information rules as a trained agent, see knowledge.ts).
 //   random               uniform over legal action slots, through the same
 //                        observe → mask → decode path a trained policy uses.
 //   nn:<policy.json>     a trained policy file, playing its top-scoring slot.
@@ -15,7 +13,6 @@ import { createRng, rngNext } from '@/core/rng';
 import { sampleLegal } from '@/ai/masked';
 import type { Mlp } from '@/ai/mlp';
 import type { SspAction, SspState } from '@/games/sea-salt-paper/types';
-import { chooseAIAction } from '@/games/sea-salt-paper/ai';
 import { actWithPolicy } from '@/games/sea-salt-paper/nn/agent';
 import { greedyPolicy, loadSspPolicy, sampledPolicy, type SspPolicyFile } from '@/games/sea-salt-paper/nn/policy';
 
@@ -27,7 +24,7 @@ export interface SspAgent {
 /** Builds a fresh agent for one seat of one match; `seed` drives any randomness. */
 export type AgentFactory = (seed: number) => SspAgent;
 
-export const AGENT_SPECS = ['heuristic', 'random', 'nn:<policy.json>', 'nn-sample:<policy.json>'] as const;
+export const AGENT_SPECS = ['random', 'nn:<policy.json>', 'nn-sample:<policy.json>'] as const;
 
 const NN = 'nn:';
 const NN_SAMPLE = 'nn-sample:';
@@ -60,8 +57,6 @@ export function agentFactory(spec: string): AgentFactory {
     };
   }
   switch (spec) {
-    case 'heuristic':
-      return () => ({ name: 'heuristic', act: chooseAIAction });
     case 'random':
       return (seed) => {
         const rng = createRng(seed);

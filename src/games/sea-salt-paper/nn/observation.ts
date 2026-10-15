@@ -4,7 +4,7 @@
 // reads SspState. The feature encoder, legal mask and action decoder all take
 // an SspObservation, so a policy built on them cannot see anything a real
 // player in that seat couldn't. The information rules themselves live in
-// ../knowledge.ts (shared with the heuristic AI):
+// ../knowledge.ts:
 //
 //   visible   own hand, every table, pile tops and sizes, hand sizes, match
 //             scores, events, the viewer's own pending draw / lobster reveal,

@@ -6,9 +6,9 @@
 // and so on are zeros), and `featureLayout()` reports the segment table for
 // the trainer and for debugging.
 //
-// Besides raw counts the vector carries a few derived signals the heuristic
-// AI also leans on — score deltas for acquiring each family, the unseen-card
-// pool — because they are cheap to compute exactly here and slow to learn.
+// Besides raw counts the vector carries a few derived signals — score deltas
+// for acquiring each family, the unseen-card pool — because they are cheap to
+// compute exactly here and slow to learn.
 //
 // Bump ENCODER_VERSION whenever a segment is added, removed, reordered or
 // rescaled; trained weights are only valid for the version they saw.

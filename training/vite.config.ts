@@ -25,6 +25,7 @@ export default defineConfig({
       input: {
         'ssp-eval': here('./ssp/eval.ts'),
         'ssp-env': here('./ssp/env-server.ts'),
+        'ssp-analyze': here('./ssp/analyze.ts'),
       },
       output: {
         format: 'es',

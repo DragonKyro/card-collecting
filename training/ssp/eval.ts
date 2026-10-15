@@ -1,8 +1,8 @@
 // CLI: seat-swapped head-to-head eval across worker threads.
 //
-//   npm run ssp:eval -- --a heuristic --b random --games 2000 --salt
+//   npm run ssp:eval -- --a nn:<policy.json> --b random --games 2000 --salt
 //
-// Flags: --a, --b (agent specs, see agents.ts), --games (rounded up to even),
+// Flags: --a, --b (agent specs, see agents.ts; required), --games (rounded up to even),
 // --salt, --pepper, --target, --seed, --workers (default: cores − 1, max 16),
 // --max-steps, --json <path> (write summary + per-match results).
 
@@ -37,10 +37,13 @@ function parseArgs(argv: string[]): { spec: MatchupSpec; games: number; seed: nu
   };
   const known = new Set(['a', 'b', 'games', 'seed', 'workers', 'salt', 'pepper', 'target', 'max-steps', 'json']);
   for (const k of flags.keys()) if (!known.has(k)) throw new Error(`unknown flag --${k}`);
+  if (typeof flags.get('a') !== 'string' || typeof flags.get('b') !== 'string') {
+    throw new Error('usage: --a <agent> --b <agent> [--games N] [--salt] … (agents: random, nn:<file>, nn-sample:<file>)');
+  }
   return {
     spec: {
-      a: str('a', 'heuristic'),
-      b: str('b', 'random'),
+      a: str('a', ''),
+      b: str('b', ''),
       sim: {
         extraSalt: flags.has('salt'),
         extraPepper: flags.has('pepper'),

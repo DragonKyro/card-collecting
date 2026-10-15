@@ -868,7 +868,7 @@ export function canEndRound(state: SspState): boolean {
   return tentativeScore(p.hand, p.table, opts) >= stopThresholdFor(state, p);
 }
 
-/** Exposed for tests + AI heuristics. */
+/** Exposed for tests. */
 export const _internals = {
   STOP_THRESHOLD,
   scoreRound,

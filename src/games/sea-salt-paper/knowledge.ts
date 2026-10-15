@@ -1,7 +1,7 @@
 // Sea Salt & Paper — what one seat can know about cards it can't see.
 //
-// Shared by the heuristic AI and the learned-agent observation, so every AI
-// plays by the same information rules a person at the table would:
+// The learned agent's observation (nn/observation.ts) is built on this, so
+// the AI plays by the same information rules a person at the table would:
 //
 //   Opponents' hands. Known only through cards taken off a pile's visible
 //   top (discard draws, crab picks of the top card, Angelfish) and cards an

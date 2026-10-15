@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { join } from 'node:path';
 import { createRng, rngNext } from '@/core/rng';
 import { sampleLegal } from '@/ai/masked';
 import { NUM_SLOTS } from '@/games/sea-salt-paper/nn/actions';
@@ -36,7 +37,7 @@ const wellFormed = (b: VecBatch) => {
 
 describe('SspVecEnv', () => {
   it('only hands the learner its own seat vs a fixed opponent, alternating seats', () => {
-    const env = new SspVecEnv({ numEnvs: 4, opponent: 'heuristic', extraSalt: true });
+    const env = new SspVecEnv({ numEnvs: 4, opponent: 'random', extraSalt: true });
     const { done, reward } = drive(env, 6, wellFormed);
     expect(done.length).toBeGreaterThanOrEqual(6);
     for (const e of done) {
@@ -58,36 +59,20 @@ describe('SspVecEnv', () => {
   });
 
   it('rejects an illegal slot', () => {
-    const env = new SspVecEnv({ numEnvs: 1, opponent: 'heuristic' });
+    const env = new SspVecEnv({ numEnvs: 1, opponent: 'random' });
     const b = env.reset();
     const illegal = b.mask.findIndex((m) => m === 0);
     expect(() => env.step([illegal])).toThrow(/not legal/);
   });
 
-  it("teacher labels are the heuristic's choice, always a legal slot", () => {
-    const env = new SspVecEnv({ numEnvs: 4, opponent: 'self', teacher: true });
-    let labelled = 0;
-    let rows = 0;
-    const { done } = drive(env, 2, (b) => {
-      for (let i = 0; i < b.seat.length; i++) {
-        rows++;
-        const t = b.teacher[i];
-        if (t < 0) continue;
-        labelled++;
-        expect(b.mask[i * NUM_SLOTS + t]).toBe(1);
-      }
-    });
-    expect(done.length).toBeGreaterThanOrEqual(2);
-    expect(labelled / rows).toBeGreaterThan(0.95);
-  });
-
   it('configure swaps the fixed opponent but not the self-play split', () => {
-    const fixed = new SspVecEnv({ numEnvs: 2, opponent: 'heuristic' });
+    const hard = join(__dirname, '..', '..', 'src', 'games', 'sea-salt-paper', 'policies', 'hard-update1000.json');
+    const fixed = new SspVecEnv({ numEnvs: 2, opponent: 'random' });
     fixed.reset();
-    fixed.configure({ opponent: 'random', teacher: true });
-    expect(fixed.opts.opponent).toBe('random');
+    fixed.configure({ opponent: `nn-sample:${hard}` });
+    expect(fixed.opts.opponent).toBe(`nn-sample:${hard}`);
     expect(() => fixed.configure({ opponent: 'self' })).toThrow(/self-play/);
     const self = new SspVecEnv({ numEnvs: 2, opponent: 'self' });
-    expect(() => self.configure({ opponent: 'heuristic' })).toThrow(/self-play/);
+    expect(() => self.configure({ opponent: 'random' })).toThrow(/self-play/);
   });
 });

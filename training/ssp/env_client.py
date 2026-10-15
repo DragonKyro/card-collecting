@@ -6,7 +6,7 @@ hidden-information boundary and the feature encoder all live in TypeScript;
 this side only ever sees encoded observations, legal masks and rewards.
 
     with SspEnv() as env:
-        batch = env.reset(num_envs=32, opponent="heuristic", extra_salt=True)
+        batch = env.reset(num_envs=32, opponent="self", extra_salt=True)
         while training:
             actions = policy(batch.obs, batch.mask)      # one slot per row
             batch = env.step(actions)
@@ -44,7 +44,6 @@ class Batch:
     mask: np.ndarray  # (n, num_slots) bool -- True = legal
     reward: np.ndarray  # (n, 2) float32 -- per-seat reward since the previous batch
     done: np.ndarray  # (n,) bool -- an episode ended; obs is already the next episode's first decision
-    teacher: np.ndarray  # (n,) int16 -- heuristic's slot for the row, -1 if none / teacher off
     episodes: list  # summaries of the episodes that ended
 
 
@@ -98,7 +97,6 @@ class SspEnv:
             mask=np.frombuffer(base64.b64decode(r["mask"]), dtype=np.uint8).reshape(n, self.num_slots).astype(bool),
             reward=np.asarray(r["reward"], dtype=np.float32).reshape(n, 2),
             done=np.asarray(r["done"], dtype=bool),
-            teacher=np.asarray(r.get("teacher", [-1] * n), dtype=np.int16),
             episodes=r["episodes"],
         )
 
@@ -109,13 +107,12 @@ class SspEnv:
         extra_salt: bool = True,
         extra_pepper: bool = False,
         target_score: int = 40,
-        opponent: str = "heuristic",
+        opponent: str = "random",
         learner_seat: str | int = "alternate",
         round_reward: float = 0.0,
         max_steps: int = 10_000,
-        teacher: bool = False,
     ) -> Batch:
-        """opponent: 'self' (both seats are the learner), 'heuristic', 'random',
+        """opponent: 'self' (both seats are the learner), 'random',
         'nn:<policy.json>' or 'nn-sample:<policy.json>'."""
         options = {
             "numEnvs": num_envs,
@@ -127,7 +124,6 @@ class SspEnv:
             "learnerSeat": learner_seat,
             "roundReward": round_reward,
             "maxSteps": max_steps,
-            "teacher": teacher,
         }
         return self._batch(self._call({"cmd": "reset", "options": options}))
 
@@ -141,14 +137,9 @@ class SspEnv:
     def recv_batch(self) -> Batch:
         return self._batch(self._recv())
 
-    def configure(self, opponent: str | None = None, teacher: bool | None = None) -> None:
-        """New fixed opponent for matches that start from now on, and/or teacher labels on/off."""
-        options: dict = {}
-        if opponent is not None:
-            options["opponent"] = opponent
-        if teacher is not None:
-            options["teacher"] = teacher
-        self._call({"cmd": "configure", "options": options})
+    def configure(self, opponent: str) -> None:
+        """New fixed opponent for matches that start from now on."""
+        self._call({"cmd": "configure", "options": {"opponent": opponent}})
 
     def policy_logits(self, policy_path: str, obs: np.ndarray) -> np.ndarray:
         """Logits from the TypeScript forward pass of an exported policy (parity checks)."""
@@ -209,7 +200,7 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser(description="Random-agent smoke test for the SSP env bridge.")
     p.add_argument("--envs", type=int, default=32)
     p.add_argument("--episodes", type=int, default=200)
-    p.add_argument("--opponent", default="heuristic")
+    p.add_argument("--opponent", default="random")
     p.add_argument("--seed", type=int, default=1)
     p.add_argument("--base", action="store_true", help="base game only (default: Extra Salt on)")
     _smoke(p.parse_args())

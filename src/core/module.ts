@@ -69,6 +69,12 @@ export interface GameModule<
   /** Optional AI hook — return next action for `playerId`, or null to pass/end. */
   chooseAIAction?(state: S, playerId: PlayerId): A | null;
 
+  /** Optional async setup the shell awaits before starting a match on the
+   *  device that drives the AI (local play, or the online host) — e.g.
+   *  fetching trained policy files. Once it resolves, `chooseAIAction` must be
+   *  able to answer synchronously. Rejecting aborts the start with the error. */
+  prepare?(config: C, seats: Seat[]): Promise<void>;
+
   /** Optional thumbnail rendered on the game picker. Game-agnostic shell never imports
    *  game art directly — modules render their own SVG inline. */
   Thumbnail?: React.ComponentType;

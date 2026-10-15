@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { randomPolicyFile } from '@/games/sea-salt-paper/testSupport';
 import { makeJobs, runJobs, summarize, wilson, type MatchupSpec } from './evaluate';
+
+/** The game's shipped hard AI — a known-strong agent. */
+const HARD = join(__dirname, '..', '..', 'src', 'games', 'sea-salt-paper', 'policies', 'hard-update1000.json');
 
 describe('eval harness', () => {
   it('plays every seed from both seats', () => {
@@ -11,14 +18,16 @@ describe('eval harness', () => {
   });
 
   it('a deterministic agent against itself splits every seed pair', () => {
-    const spec: MatchupSpec = { a: 'heuristic', b: 'heuristic', sim: { extraSalt: true, targetScore: 40 } };
+    const path = join(mkdtempSync(join(tmpdir(), 'ssp-eval-')), 'greedy.json');
+    writeFileSync(path, JSON.stringify(randomPolicyFile(11)));
+    const spec: MatchupSpec = { a: `nn:${path}`, b: `nn:${path}`, sim: { extraSalt: true, targetScore: 40 } };
     const s = summarize(spec, runJobs(spec, makeJobs(12, 1)));
     expect(s.aScore).toBe(0.5);
     expect(s.pairs).toEqual({ aSwept: 0, split: 6, bSwept: 0 });
   });
 
-  it('the heuristic beats random with Extra Salt, with no forfeits', () => {
-    const spec: MatchupSpec = { a: 'heuristic', b: 'random', sim: { extraSalt: true, targetScore: 40 } };
+  it('a trained policy beats random with Extra Salt, with no forfeits', () => {
+    const spec: MatchupSpec = { a: `nn:${HARD}`, b: 'random', sim: { extraSalt: true, targetScore: 40 } };
     const s = summarize(spec, runJobs(spec, makeJobs(20, 7)));
     expect(s.a.errors + s.b.errors + s.truncated).toBe(0);
     expect(s.aScore).toBeGreaterThan(0.8);

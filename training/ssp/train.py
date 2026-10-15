@@ -5,19 +5,23 @@
     python training/ssp/train.py --run first-try --resume
     tensorboard --logdir training/runs
 
+To stop a run you can't Ctrl+C (e.g. one started in the background), create
+an empty file training/runs/<run>/STOP: it saves, finishes queued evals and
+exits after the current update (the file is removed on the next start).
+
 Each update:
   1. Collect `--rollout` decisions from every env — `--workers` node processes
      × `--envs-per-worker` matches. Self-play workers train on both seats; the
-     rest play the heuristic or a past checkpoint drawn from the pool.
-  2. Learn from every finished transition: PPO, or for the first
-     `--bc-updates` imitation of the heuristic (a warm start for the policy
-     and the value estimate).
+     rest play a past checkpoint drawn from the pool (random play until the
+     first checkpoint exists).
+  2. PPO on every finished transition. Training starts from scratch.
   3. Every `--save-every`: a resumable checkpoint (ckpt/update_N.pt) and an
      exported policy (policies/update_N.json) the TypeScript side can play —
      `evaluate.py` and the opponent pool use these.
   4. Every `--eval-every`: in the background, a seat-swapped eval of the new
-     policy vs the heuristic, random, and the checkpoint `--eval-past-gap`
-     saves earlier → tensorboard `eval/*` and evals.jsonl.
+     policy vs random, every benchmark (the game's shipped policies, see
+     `evaluate.py freeze`), and the checkpoint `--eval-past-gap` saves
+     earlier → tensorboard `eval/*` and evals.jsonl.
 
 Outputs go to training/runs/<run>/: config.json, metrics.jsonl, evals.jsonl,
 tensorboard events, ckpt/, policies/.
@@ -74,9 +78,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     game.add_argument("--workers", type=int, default=default_workers(), help="node env processes")
     game.add_argument("--envs-per-worker", type=int, default=32)
     game.add_argument("--rollout", type=int, default=64, help="decisions per env per update")
-    game.add_argument("--self-play", type=float, default=0.5, help="share of workers in self-play")
-    game.add_argument("--past-share", type=float, default=0.5,
-                      help="share of the other workers that face past checkpoints (the rest face the heuristic)")
+    game.add_argument("--self-play", type=float, default=0.5,
+                      help="share of workers in self-play; the rest face past checkpoints")
     game.add_argument("--pool", type=int, default=20, help="newest checkpoints past opponents are drawn from")
     game.add_argument("--pool-refresh", type=int, default=10, help="updates between past-opponent re-draws")
     game.add_argument("--round-reward", type=float, default=0.02,
@@ -95,8 +98,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     learn.add_argument("--ent-coef", type=float, default=0.01)
     learn.add_argument("--vf-coef", type=float, default=0.5)
     learn.add_argument("--max-grad-norm", type=float, default=0.5)
-    learn.add_argument("--bc-updates", type=int, default=20,
-                       help="first N updates imitate the heuristic (0 = learn from scratch)")
 
     save = p.add_argument_group("checkpoints / eval")
     save.add_argument("--save-every", type=int, default=10)
@@ -105,6 +106,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     save.add_argument("--eval-games", type=int, default=1000)
     save.add_argument("--eval-workers", type=int, default=4)
     save.add_argument("--eval-past-gap", type=int, default=5, help="compare with the checkpoint this many saves back")
+    save.add_argument("--eval-bench", default="all",
+                      help="comma-separated benchmark names to eval against ('all' = every benchmark, 'none')")
     return p.parse_args(argv)
 
 
@@ -112,16 +115,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 @dataclass
 class Worker:
-    role: str  # 'self' | 'heuristic' | 'past'
+    role: str  # 'self' | 'past'
     env: SspEnv
     opponent: str
     batch: Batch | None = None
 
 
-def worker_roles(n: int, self_share: float, past_share: float) -> list[str]:
+def worker_roles(n: int, self_share: float) -> list[str]:
     n_self = min(n, max(0, round(n * self_share)))
-    n_past = round((n - n_self) * past_share)
-    return ["self"] * n_self + ["past"] * n_past + ["heuristic"] * (n - n_self - n_past)
+    return ["self"] * n_self + ["past"] * (n - n_self)
 
 
 def build_typescript() -> None:
@@ -148,13 +150,12 @@ class Rollout:
         self.action = np.zeros(capacity, np.int64)
         self.logp = np.zeros(capacity, np.float32)
         self.value = np.zeros(capacity, np.float32)
-        self.teacher = np.full(capacity, -1, np.int16)
         self.reward = np.zeros(capacity, np.float32)
         self.done = np.zeros(capacity, bool)
         self.next = np.full(capacity, -1, np.int64)
         self.n = 0
 
-    FIELDS = ("obs", "mask", "action", "logp", "value", "teacher", "reward", "done")
+    FIELDS = ("obs", "mask", "action", "logp", "value", "reward", "done")
 
     def clear(self) -> None:
         self.reward[: self.n] = 0
@@ -199,11 +200,13 @@ class Evaluator:
             except Exception as e:  # noqa: BLE001 — reported, training carries on
                 self.results.put((update, tag, b, None, str(e)))
 
-    def submit(self, update: int, policy: str, past: str | None) -> bool:
-        if self.jobs.qsize() > 2:
+    def submit(self, update: int, policy: str, past: str | None, benches: list[str]) -> bool:
+        """Queue one eval cycle; refuse while the previous cycle hasn't fully started."""
+        if self.jobs.qsize() > 0:
             return False
-        self.jobs.put((update, "heuristic", policy, "heuristic", self.games))
         self.jobs.put((update, "random", policy, "random", min(200, self.games)))
+        for name in benches:
+            self.jobs.put((update, f"bench_{name}", policy, ev.BENCH + name, self.games))
         if past:
             self.jobs.put((update, "past", policy, past, self.games))
         return True
@@ -278,20 +281,17 @@ class Trainer:
             json.dump({**vars(a), **self.versions, "obsDim": self.obs_dim, "numSlots": self.num_slots,
                        "arch": {"hidden": self.net.hidden, "layers": self.net.layers}}, f, indent=2)
 
-        roles = worker_roles(a.workers, a.self_play, a.past_share)
-        teacher = self.update < a.bc_updates
+        roles = worker_roles(a.workers, a.self_play)
         for w, role in enumerate(roles):
             env = SspEnv()
             seed = a.seed * 10_007 + w * 7_919 + self.update * 104_729
-            opponent = "self" if role == "self" else "heuristic"
+            opponent = "self" if role == "self" else "random"  # past workers get a checkpoint once one exists
             worker = Worker(role, env, opponent)
             worker.batch = env.reset(num_envs=a.envs_per_worker, seed=seed, extra_salt=not a.base_game,
-                                     target_score=a.target, opponent=opponent, round_reward=a.round_reward,
-                                     teacher=teacher)
+                                     target_score=a.target, opponent=opponent, round_reward=a.round_reward)
             self.workers.append(worker)
         self.n_envs = a.workers * a.envs_per_worker
         self.slices = [slice(i * a.envs_per_worker, (i + 1) * a.envs_per_worker) for i in range(a.workers)]
-        self.teacher_on = teacher
         print(f"run {self.run_dir}\n  {a.workers} workers ({', '.join(f'{roles.count(r)} {r}' for r in dict.fromkeys(roles))})"
               f" x {a.envs_per_worker} envs | obs {self.obs_dim} | slots {self.num_slots} | device {self.device}")
 
@@ -301,11 +301,19 @@ class Trainer:
         self.carry_streams: np.ndarray | None = None
         self.writer = SummaryWriter(os.path.join(self.run_dir, "tb"))
         self.evaluator = Evaluator(a.eval_games, a.eval_workers, not a.base_game) if a.eval_every > 0 else None
+        available = list(ev.list_benchmarks())
+        wanted = available if a.eval_bench == "all" else [] if a.eval_bench == "none" else a.eval_bench.split(",")
+        missing = [b for b in wanted if b not in available]
+        if missing:
+            raise SystemExit(f"unknown benchmark(s) {missing}; have {available}")
+        self.benches = wanted
+        if self.evaluator and wanted:
+            print(f"  evaluating against benchmarks: {', '.join(wanted)}")
         self.win_window: dict[str, collections.deque] = collections.defaultdict(lambda: collections.deque(maxlen=400))
 
     # ------------------------------------------------------------ collection
 
-    def collect(self, bc: bool) -> np.ndarray:
+    def collect(self) -> np.ndarray:
         """Fill the rollout; returns a mask of the transitions that are still
         pending (carried to the next update, not trained on now)."""
         a, buf, last = self.args, self.buf, self.last
@@ -321,19 +329,15 @@ class Trainer:
             obs = np.concatenate([b.obs for b in batches])
             mask = np.concatenate([b.mask for b in batches])
             seat = np.concatenate([b.seat for b in batches]).astype(np.int64)
-            teacher = np.concatenate([b.teacher for b in batches])
             with torch.no_grad():
                 logits, value = self.net(torch.from_numpy(obs).to(self.device))
                 logits = masked_logits(logits, torch.from_numpy(mask).to(self.device))
                 dist = torch.distributions.Categorical(logits=logits)
                 action = dist.sample()
-                if bc:
-                    t = torch.from_numpy(teacher.astype(np.int64)).to(self.device)
-                    action = torch.where(t >= 0, t, action)
                 logp = dist.log_prob(action)
             action_np = action.cpu().numpy()
             rows = buf.add(obs=obs, mask=mask, action=action_np, logp=logp.cpu().numpy(),
-                           value=value.cpu().numpy(), teacher=teacher)
+                           value=value.cpu().numpy())
             prev = last[envs, seat]
             linked = prev >= 0
             buf.next[prev[linked]] = rows[linked]
@@ -353,8 +357,7 @@ class Trainer:
             for w in self.workers:
                 for ep in w.batch.episodes:
                     self.episodes += 1
-                    # While imitating, the teacher picks the moves — its results say nothing about the net.
-                    if not bc and w.role != "self" and ep["winnerSeat"] is not None:
+                    if w.role != "self" and ep["winnerSeat"] is not None:
                         self.win_window[w.role].append(float(ep["winnerSeat"] in ep["learnerSeats"]))
             self.decisions += self.n_envs
 
@@ -383,7 +386,7 @@ class Trainer:
 
     # ------------------------------------------------------------ learning
 
-    def learn(self, pending: np.ndarray, adv: np.ndarray, bc: bool) -> dict:
+    def learn(self, pending: np.ndarray, adv: np.ndarray) -> dict:
         a, buf, dev = self.args, self.buf, self.device
         idx = np.flatnonzero(~pending)
         obs = torch.from_numpy(buf.obs[idx]).to(dev)
@@ -394,7 +397,6 @@ class Trainer:
         returns = advantage + torch.from_numpy(buf.value[idx]).to(dev)
         # Normalised once over the whole update (a tiny last minibatch has no usable std).
         norm_adv = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
-        teacher = torch.from_numpy(buf.teacher[idx].astype(np.int64)).to(dev)
         n = len(idx)
         stats = collections.defaultdict(list)
         for _ in range(a.epochs):
@@ -404,23 +406,15 @@ class Trainer:
                 logits, value = self.net(obs[b])
                 logp_all = F.log_softmax(masked_logits(logits, mask[b]), dim=-1)
                 entropy = -(logp_all.exp() * logp_all).sum(-1).mean()
-                if bc:
-                    labelled = teacher[b] >= 0
-                    if not labelled.any():
-                        continue
-                    pi_loss = F.nll_loss(logp_all[labelled], teacher[b][labelled])
-                    stats["bc_accuracy"].append((logp_all[labelled].argmax(-1) == teacher[b][labelled])
-                                                .float().mean().item())
-                else:
-                    new_logp = logp_all.gather(1, action[b, None]).squeeze(1)
-                    log_ratio = new_logp - old_logp[b]
-                    ratio = log_ratio.exp()
-                    adv_b = norm_adv[b]
-                    pi_loss = -torch.min(ratio * adv_b, ratio.clamp(1 - a.clip, 1 + a.clip) * adv_b).mean()
-                    stats["approx_kl"].append(((ratio - 1) - log_ratio).mean().item())
-                    stats["clipfrac"].append(((ratio - 1).abs() > a.clip).float().mean().item())
+                new_logp = logp_all.gather(1, action[b, None]).squeeze(1)
+                log_ratio = new_logp - old_logp[b]
+                ratio = log_ratio.exp()
+                adv_b = norm_adv[b]
+                pi_loss = -torch.min(ratio * adv_b, ratio.clamp(1 - a.clip, 1 + a.clip) * adv_b).mean()
+                stats["approx_kl"].append(((ratio - 1) - log_ratio).mean().item())
+                stats["clipfrac"].append(((ratio - 1).abs() > a.clip).float().mean().item())
                 v_loss = 0.5 * (value - returns[b]).pow(2).mean()
-                loss = pi_loss + a.vf_coef * v_loss - (0.0 if bc else a.ent_coef) * entropy
+                loss = pi_loss + a.vf_coef * v_loss - a.ent_coef * entropy
                 if not torch.isfinite(loss):
                     stats["skipped_steps"].append(1.0)
                     continue
@@ -463,7 +457,7 @@ class Trainer:
 
     # ------------------------------------------------------------ logging
 
-    def log_update(self, stats: dict, seconds: float, bc: bool) -> None:
+    def log_update(self, stats: dict, seconds: float) -> None:
         u, w = self.update, self.writer
         rate = self.args.rollout * self.n_envs / max(seconds, 1e-9)
         for k, v in stats.items():
@@ -471,8 +465,7 @@ class Trainer:
         w.add_scalar("perf/decisions_per_sec", rate, u)
         w.add_scalar("progress/decisions", self.decisions, u)
         w.add_scalar("progress/episodes", self.episodes, u)
-        line = {"update": u, "decisions": self.decisions, "episodes": self.episodes, "seconds": seconds,
-                "phase": "bc" if bc else "ppo", **stats}
+        line = {"update": u, "decisions": self.decisions, "episodes": self.episodes, "seconds": seconds, **stats}
         for role, window in self.win_window.items():
             if window:
                 w.add_scalar(f"train/winrate_vs_{role}", float(np.mean(window)), u)
@@ -480,8 +473,7 @@ class Trainer:
         with open(os.path.join(self.run_dir, "metrics.jsonl"), "a", encoding="utf-8") as f:
             f.write(json.dumps(line) + "\n")
         wins = " ".join(f"vs {r} {100 * np.mean(d):.0f}%" for r, d in self.win_window.items() if d)
-        head = f"bc acc {stats.get('bc_accuracy', 0):.2f}" if bc else (
-            f"pi {stats['policy_loss']:+.3f} kl {stats['approx_kl']:.4f} clip {stats['clipfrac']:.2f}")
+        head = f"pi {stats['policy_loss']:+.3f} kl {stats['approx_kl']:.4f} clip {stats['clipfrac']:.2f}"
         print(f"u {u:5d} | {self.decisions / 1e6:6.2f}M dec | {rate / 1e3:5.1f}k/s | {head} "
               f"v {stats['value_loss']:.3f} ent {stats['entropy']:.2f} ev {stats['explained_variance']:+.2f} | {wins}",
               flush=True)
@@ -497,12 +489,13 @@ class Trainer:
             lo, hi = s["aScoreCi95"]
             w.add_scalar(f"eval/score_vs_{tag}", s["aScore"], update)
             w.add_scalar(f"eval/score_vs_{tag}_ci_low", lo, update)
-            if tag == "heuristic":
-                w.add_scalar("eval/score_margin_vs_heuristic", s["a"]["avgScore"] - s["b"]["avgScore"], update)
-                w.add_scalar("eval/stop_per_match", s["a"]["stopsPerMatch"], update)
-                w.add_scalar("eval/lastchance_per_match", s["a"]["lastChancesPerMatch"], update)
+            if tag.startswith("bench_"):
+                # How it plays against a fixed opponent: margin and round-ending habits.
+                w.add_scalar(f"eval_play/score_margin_vs_{tag}", s["a"]["avgScore"] - s["b"]["avgScore"], update)
+                w.add_scalar(f"eval_play/stop_per_match_vs_{tag}", s["a"]["stopsPerMatch"], update)
+                w.add_scalar(f"eval_play/lastchance_per_match_vs_{tag}", s["a"]["lastChancesPerMatch"], update)
                 if s["a"]["lastChanceWinRate"] is not None:
-                    w.add_scalar("eval/lastchance_won", s["a"]["lastChanceWinRate"], update)
+                    w.add_scalar(f"eval_play/lastchance_won_vs_{tag}", s["a"]["lastChanceWinRate"], update)
             with open(os.path.join(self.run_dir, "evals.jsonl"), "a", encoding="utf-8") as f:
                 f.write(json.dumps({"update": update, "vs": tag, "opponent": opponent,
                                     **{k: v for k, v in s.items() if k != "report"}}) + "\n")
@@ -513,36 +506,37 @@ class Trainer:
 
     def train(self) -> None:
         a = self.args
-        if self.update >= a.bc_updates:
-            self.refresh_past_opponents()
+        stop_file = os.path.join(self.run_dir, "STOP")
+        if os.path.exists(stop_file):
+            os.remove(stop_file)
+        self.refresh_past_opponents()
         try:
             while self.update < a.updates:
-                bc = self.update < a.bc_updates
-                if not bc and self.teacher_on:
-                    for w in self.workers:
-                        w.env.configure(teacher=False)
-                    self.teacher_on = False
-                    self.refresh_past_opponents()
+                if os.path.exists(stop_file):
+                    print(f"STOP file found - saving update {self.update} and exiting", flush=True)
+                    if self.update % a.save_every:
+                        self.save()
+                    break
                 if a.anneal_lr:
                     for g in self.opt.param_groups:
                         g["lr"] = a.lr * (1 - self.update / a.updates)
                 t0 = time.perf_counter()
-                pending = self.collect(bc)
+                pending = self.collect()
                 t1 = time.perf_counter()
-                stats = self.learn(pending, self.advantages(pending), bc)
+                stats = self.learn(pending, self.advantages(pending))
                 t2 = time.perf_counter()
                 self.update += 1
                 stats["collect_seconds"], stats["learn_seconds"] = t1 - t0, t2 - t1
-                self.log_update(stats, t2 - t0, bc)
+                self.log_update(stats, t2 - t0)
                 if self.update % a.save_every == 0 or self.update == a.updates:
                     policy = self.save()
                     if self.evaluator and self.update % a.eval_every == 0:
                         past = ev.list_policies(self.run_dir)
                         gap = past[-1 - a.eval_past_gap][1] if len(past) > a.eval_past_gap else None
-                        if not self.evaluator.submit(self.update, policy, gap):
+                        if not self.evaluator.submit(self.update, policy, gap, self.benches):
                             print("  (eval skipped - previous evals still running)")
-                if self.update % a.pool_refresh == 0 and not bc:
-                    self.refresh_past_opponents()
+                if self.update % a.pool_refresh == 0 or self.update == a.save_every:
+                    self.refresh_past_opponents()  # (also right after the first checkpoint lands)
                 self.log_evals()
         except KeyboardInterrupt:
             print(f"\ninterrupted - saving update {self.update}")

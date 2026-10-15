@@ -5,12 +5,12 @@
 //   ← {"ok":true,"obsDim":…,"numSlots":…,"slotNames":[…],"featureLayout":[…],
 //      "encoderVersion":…,"actionSpaceVersion":…}
 //   → {"cmd":"reset","options":{numEnvs, seed, extraSalt, extraPepper,
-//      targetScore, opponent, learnerSeat, roundReward, maxSteps, teacher}}
+//      targetScore, opponent, learnerSeat, roundReward, maxSteps}}
 //   → {"cmd":"step","actions":[slot, …]}          (one per env)
 //   ← {"ok":true,"n":…,"seat":[…],"obs":"<base64 f32 n×obsDim>",
 //      "mask":"<base64 u8 n×numSlots>","reward":[r00,r01,r10,…],
-//      "done":[…],"teacher":[…],"episodes":[…]}
-//   → {"cmd":"configure","options":{opponent?, teacher?}}  ← {"ok":true}
+//      "done":[…],"episodes":[…]}
+//   → {"cmd":"configure","options":{opponent}}  ← {"ok":true}
 //   → {"cmd":"policyLogits","path":"<policy.json>","obs":"<base64 f32>"}
 //   ← {"ok":true,"logits":[…]}       (the TS forward pass — export parity checks)
 //   → {"cmd":"close"}
@@ -37,7 +37,6 @@ function batchReply(b: VecBatch) {
     mask: b64(b.mask),
     reward: Array.from(b.reward),
     done: Array.from(b.done),
-    teacher: Array.from(b.teacher),
     episodes: b.episodes,
   };
 }

@@ -1,10 +1,10 @@
 // Test support for the Sea Salt & Paper AI / agent tests.
 //
-//   sampleStates   a spread of realistic mid-game states. Seat 0 plays the
-//                  heuristic, the rest pick uniformly random legal slots
-//                  (every fifth match is random-vs-random) — the heuristic
-//                  produces sensible boards, the random seats reach the odd
-//                  corners (lobster picks, trios, locked turns, deep crab digs).
+//   sampleStates   a spread of mid-game states from matches where every seat
+//                  picks uniformly random legal slots. Random play runs rounds
+//                  long, so it reaches the odd corners (lobster picks, trios,
+//                  locked turns, deep crab digs, STOP / LAST CHANCE windows)
+//                  without depending on any trained policy file.
 //   scrambleHidden rewrites everything one seat must NOT know, so a fair AI's
 //                  view (and choice) has to come out identical.
 //   randomPolicyFile  a small randomly initialised policy file, for exercising
@@ -17,7 +17,6 @@ import { MLP_FORMAT, encodeFloat32 } from '@/ai/mlp';
 import type { SspCard, SspCardFamily, SspState } from './types';
 import { FAMILY_ORDER } from './cards';
 import { applyAction } from './reducer';
-import { chooseAIAction } from './ai';
 import { createSspState } from './setup';
 import { roundLog } from './knowledge';
 import { actWithPolicy } from './nn/agent';
@@ -48,7 +47,6 @@ export function sampleStates(opts: SampleOptions): SspState[] {
   for (let m = 0; m < opts.matches; m++) {
     const seed = opts.seed + m * 7919;
     const rng = createRng(seed ^ 0x5bd1e995);
-    const allRandom = m % 5 === 4;
     let s = createSspState(
       {
         targetScore: 40,
@@ -64,9 +62,7 @@ export function sampleStates(opts: SampleOptions): SspState[] {
         continue;
       }
       const pid = s.activePlayerId!;
-      const heuristic = !allRandom && pid === s.players[0].id;
-      const action = (heuristic ? chooseAIAction(s, pid) : null)
-        ?? actWithPolicy(s, pid, (_obs, mask) => sampleLegal(mask, rngNext(rng)));
+      const action = actWithPolicy(s, pid, (_obs, mask) => sampleLegal(mask, rngNext(rng)));
       if (!action) throw new Error(`no action for ${pid} in ${s.subPhase}`);
       s = applyAction(s, action);
     }

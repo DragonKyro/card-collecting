@@ -14,15 +14,46 @@ import { SspFlipProvider, useFlipAnchor } from './cardFlip';
 import { OpponentMoveAnim } from './OpponentMoveAnim';
 import { MultiLine, GroupedBar, StackedBar, HBarGrouped, Pie } from './SvgCharts';
 import { useSspTiming, formatElapsed } from './timingStore';
+import { AI_LEVELS, aiLevelOf, prepareAiLevel } from './aiLevels';
 import './ssp.css';
 
 function LobbyConfig({ config, seats, onChange }: { config: SspConfig; seats: Seat[]; onChange: (c: SspConfig) => void }) {
-  void seats;
   const exp = config.expansions ?? {};
   const setExp = (patch: Partial<NonNullable<SspConfig['expansions']>>) =>
     onChange({ ...config, expansions: { ...exp, ...patch } });
+  const hasAI = seats.some((s) => s.isAI);
+  const level = aiLevelOf(config);
+  // Start fetching the chosen level's policy while the lobby is still open
+  // (the Start button awaits it either way).
+  useEffect(() => {
+    if (hasAI) prepareAiLevel(level).catch(() => {});
+  }, [hasAI, level]);
   return (
     <div className="game-config">
+      {hasAI && (
+        <>
+          <h4 style={{ margin: '0 0 6px', fontSize: 13, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--fg-muted)' }}>
+            AI difficulty
+          </h4>
+          <div role="radiogroup" aria-label="AI difficulty" style={{ display: 'flex', gap: 6 }}>
+            {AI_LEVELS.map((l) => (
+              <button
+                key={l.id}
+                role="radio"
+                aria-checked={level === l.id}
+                className={level === l.id ? undefined : 'secondary'}
+                onClick={() => onChange({ ...config, aiLevel: l.id })}
+              >
+                {l.label}
+              </button>
+            ))}
+          </div>
+          <p className="lobby-hint" style={{ margin: '6px 0 14px' }}>
+            {AI_LEVELS.find((l) => l.id === level)?.blurb}
+          </p>
+        </>
+      )}
+
       <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <span>Target score:</span>
         <input

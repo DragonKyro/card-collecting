@@ -292,11 +292,6 @@ export function tentativeScore(hand: SspCard[], table: SspCard[], opts: TotalSco
   return totalScore(allCards(hand, table), opts).total;
 }
 
-/** A card's nominal point contribution for AI heuristics — see ai.ts for the full model. */
-export function isFamily(card: SspCard, family: SspCardFamily): boolean {
-  return card.family === family;
-}
-
 /** Per-category point breakdown for a player's end-of-round tableau. Useful
  *  for post-match analytics. Order matches cardPoints() internals so the sum
  *  of categories equals cardPoints (and total = sum + mermaidClaim + colorBonus
