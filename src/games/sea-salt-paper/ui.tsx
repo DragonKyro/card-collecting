@@ -249,9 +249,10 @@ function Rules() {
               <h3>Mermaids &amp; color bonus</h3>
               <p>
                 Mermaids score no points themselves. For each mermaid held, claim
-                your largest <em>unused</em> color group as a bonus.
+                your largest <em>unused</em> color group as a bonus — the
+                mermaids&apos; own white counts as a group.
               </p>
-              <RulesTile icon="🧜" label="4 mermaids = instant win" hint="Mermaids are always white." accent="#f9f6ed" />
+              <RulesTile icon="🧜" label="4 mermaids = instant win" hint="Mermaids are white — and white counts as a color group too." accent="#f9f6ed" />
             </>
           ),
         },
