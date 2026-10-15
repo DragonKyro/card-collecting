@@ -149,6 +149,14 @@ describe('playPair effects', () => {
   });
 });
 
+/** Replace both discard tops with a lone boat each, so the draws a test makes
+ *  can't change anyone's card points. (Seed 12345 otherwise turns up a
+ *  mermaid on pile 0, whose colour claim swings LAST CHANCE bets.) */
+function neutralTops(s: SspState): void {
+  s.discards[0] = [card(300, 'boat')];
+  s.discards[1] = [card(301, 'boat')];
+}
+
 describe('stop / lastChance / round end', () => {
   it('stop requires 7+ points', () => {
     let s = freshState();
@@ -186,6 +194,7 @@ describe('stop / lastChance / round end', () => {
       card(103, 'shell'), card(104, 'shell'),  // 5 shells = 8 pts
     ];
     b.hand = [card(200, 'crab')]; // 0 pts
+    neutralTops(s);
     s = applyAction(s, { type: 'drawFromDiscard', pile: 0 });
     s = applyAction(s, { type: 'lastChance' });
     // b takes one final turn — just pass through (use pile 1 to avoid contention).
@@ -217,6 +226,7 @@ describe('stop / lastChance / round end', () => {
       card(203, 'octopus'), card(204, 'octopus'),  // 5 octopus = 12 pts
       card(205, 'shell'), card(206, 'shell'),      // 2 shells = +2 = 14
     ];
+    neutralTops(s);
     s = applyAction(s, { type: 'drawFromDiscard', pile: 0 });
     s = applyAction(s, { type: 'lastChance' });
     s = applyAction(s, { type: 'drawFromDiscard', pile: 1 });

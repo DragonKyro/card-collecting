@@ -2,13 +2,14 @@
 
 import type { GameModule } from '@/core/module';
 import type { Seat, PlayerId } from '@/core/types';
-import { createRng } from '@/core/rng';
-import type { SspState, SspAction, SspConfig, SspPlayer } from './types';
-import { applyAction, setupNewMatch } from './reducer';
+import type { SspState, SspAction, SspConfig } from './types';
+import { applyAction } from './reducer';
 import { chooseAIAction } from './ai';
 import { defaultTargetScore } from './cards';
-import { buildEventDeck } from './events';
+import { createSspState } from './setup';
 import { SeaSaltPaperThumbnail } from './Thumbnail';
+
+export { attachSeatsAndStart } from './setup';
 
 export const seaSaltPaperModule: GameModule<SspState, SspAction, SspConfig> = {
   id: 'sea-salt-paper',
@@ -31,35 +32,7 @@ export const seaSaltPaperModule: GameModule<SspState, SspAction, SspConfig> = {
   },
 
   createInitialState(config, seed, seats) {
-    const rngState = createRng(seed);
-    const usingPepper = !!config.expansions?.extraPepper;
-    const state: SspState = {
-      phase: 'playing',
-      seats: [],
-      activePlayerId: null,
-      finalScores: null,
-      rngState,
-      config,
-      round: 1,
-      deck: [],
-      discards: [[], []],
-      pendingDraw: [],
-      players: [],
-      subPhase: 'awaitingAction',
-      lastChanceFrom: null,
-      lastChanceRemaining: [],
-      lastRoundSummary: null,
-      roundHistory: [],
-      mermaidWinnerId: null,
-      pendingLobsterPick: [],
-      nextTurnLockedPlayerId: null,
-      event: usingPepper
-        ? { deck: buildEventDeck(rngState), current: null }
-        : null,
-      log: [],
-      logSeq: 0,
-    };
-    return attachSeatsAndStart(state, seats ?? []);
+    return createSspState(config, seed, seats ?? []);
   },
 
   applyAction(state, action) {
@@ -77,17 +50,3 @@ export const seaSaltPaperModule: GameModule<SspState, SspAction, SspConfig> = {
     return mod.bundle;
   },
 };
-
-/** Helper to attach seats and start the match. Called by the lobby on game start. */
-export function attachSeatsAndStart(state: SspState, seats: Seat[]): SspState {
-  state.seats = seats;
-  state.players = seats.map<SspPlayer>((s) => ({
-    id: s.id,
-    hand: [],
-    table: [],
-    roundScore: 0,
-    matchScore: 0,
-  }));
-  setupNewMatch(state);
-  return state;
-}

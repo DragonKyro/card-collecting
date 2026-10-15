@@ -1,20 +1,20 @@
 // Sea Salt & Paper AI — heuristic, single difficulty.
 //
-// Approach
-// --------
-// Maintain a perfect-memory model of everything that's publicly observable:
+// Information
+// -----------
+// Plays fair: it only uses what a person in its seat could know, via
+// knowledge.ts — own hand, every table, visible pile tops, a memory of each
+// discard pile (uncertain after an opponent's unseen crab dig), and the
+// opponent cards it saw them take off a pile top or steal from it. It never
+// reads an opponent's hand or the deck; opponent scores are estimates.
 //
-//   - Per-family unseen count: total deck − everything currently visible (own
-//     hand + every player's table + all cards still in either discard pile,
-//     including BURIED cards — buried cards are still in the pile array even
-//     though the UI only shows the top).
-//   - Per-color unseen count: same accounting, used for mermaid bonus
-//     prediction (a color we can see is "spent" toward our top group; a color
-//     we still need is more likely to be drawn live).
-//   - Per-opponent demand profile: every time an opponent takes a face-up card
-//     (drawDiscard / crabPick / sharkSteal / lobsterPick / angelfishDraw) we
-//     record the family + ALSO the specific card id (so we know exactly what
-//     color they hold and which color groups they're building toward).
+// From that it keeps:
+//
+//   - Per-family / per-color unseen counts: total deck − everything it can
+//     place (fractional where a remembered buried card may have been dug out).
+//     Used for draw expectations and mermaid-bonus prediction.
+//   - Per-opponent profile: the cards known to be in their hand plus the
+//     families they keep pulling off pile tops (a demand signal).
 //
 // On each decision the AI:
 //   1. Recomputes per-family + per-color marginal values for itself.
@@ -33,177 +33,127 @@
 //     Boat now looks at concrete next-action options (take an existing top,
 //     finish a collector set, complete a hand pair) rather than just expected
 //     unseen draw.
-//   - Crab: pick the card with the highest NET (my gain − best opponent gain
-//     if we left it on top).
-//   - STOP / LAST CHANCE: based on card-points bet evaluation + match-lead
+//   - Crab: per the rulebook, choose a pile from memory, then look through it
+//     and take the card with the highest NET (my gain − best opponent gain).
+//   - STOP / LAST CHANCE: card-points bet against an ESTIMATED opponent score
+//     (known cards + sampled stand-ins for the unknown ones) + match-lead
 //     pressure.
 
 import type { PlayerId } from '@/core/types';
-import type { SspState, SspAction, SspCard, SspCardFamily, SspColor, SspPlayer, SspLogEntry } from './types';
-import { FAMILY, FAMILY_ORDER, FAMILY_COLORS, duoPartner, isCollectorFamily, isDuoFamily } from './cards';
+import { createRng, rngInt } from '@/core/rng';
+import type { SspState, SspAction, SspCard, SspCardFamily, SspColor, SspPlayer } from './types';
+import { FAMILY_ORDER, buildDeck, duoPartner, isCollectorFamily, isDuoFamily } from './cards';
 import {
   collectorPoints, isValidDuoPair, mermaidColorBonus, specialColorBonus, tentativeScore, totalScore,
 } from './scoring';
-
-const STOP_THRESHOLD = 7;
+import { canEndRound, scoringOptsFor, stopThresholdFor } from './reducer';
+import { eventAppliesTo } from './events';
+import { buriedStillThere, knowledgeOf, type PileMemory } from './knowledge';
 
 interface Knowledge {
-  /** Cards we can see (own hand + tables + every card still in either discard
-   *  pile + pendingDraw if we're acting). */
-  seenIds: Set<number>;
-  /** Per-family count of unseen cards (still in deck OR in opponents' hands). */
+  /** Per-family expected count of cards we can't place (deck + opponents'
+   *  unknown hand cards). Fractional when a remembered card may be gone. */
   unseenByFamily: Map<SspCardFamily, number>;
-  /** Per-color count of unseen cards. */
+  /** Per-color expected unseen count. */
   unseenByColor: Map<SspColor, number>;
   /** Total unseen cards. */
   unseenTotal: number;
-  /** Per-opponent inferred hand size + observed acquisitions. */
+  /** Per-opponent known cards + demand signals. */
   opponentProfiles: Map<PlayerId, OpponentProfile>;
+  /** What we remember of each discard pile. */
+  piles: [PileMemory, PileMemory];
+  /** Concrete cards we can't place — the pool opponents' unknown cards come from. */
+  unplaced: SspCard[];
 }
 
 interface OpponentProfile {
-  /** Families we've seen them deliberately pick up from face-up sources
-   *  (drawFromDiscard, crabPick, sharkSteal, lobsterPick, angelfishDraw).
-   *  Strong signal of what they're building. */
+  /** Cards we know are in their hand (taken off a pile top, or stolen from us). */
+  knownCards: SspCard[];
+  /** Family counts of `knownCards`. */
   knownTaken: Partial<Record<SspCardFamily, number>>;
-  /** Specific card ids we know they hold (from face-up acquisitions where we
-   *  can identify the exact card — e.g. drawDiscard tells us they took the
-   *  exact card we last saw on the pile top). */
-  knownCardIds: Set<number>;
-  /** Hand size at the moment we built knowledge. */
+  /** Public hand size. */
   handSize: number;
-  /** How many distinct times they pulled this family from a discard pile.
+  /** How many times this round they pulled this family off a pile top.
    *  Used for defensive blocking — repeated picks of the same family are a
    *  much stronger signal than a one-off. */
   discardPullsByFamily: Partial<Record<SspCardFamily, number>>;
 }
 
-/** Build a snapshot of everything the AI knows publicly. Perfect memory of all
- *  public information: cards still in piles (including buried), every card in
- *  own hand, every card on every table, and per-opponent acquisition history. */
-function buildKnowledge(state: SspState, meId: PlayerId): Knowledge {
+const ALL_COLORS: SspColor[] = [
+  'white', 'yellow', 'green', 'pink', 'purple', 'teal', 'darkblue', 'black', 'gray', 'orange', 'tan',
+];
+
+/** Build a snapshot of everything this seat can know. `lookingAt` = the pile
+ *  it is crab-digging through right now (seen in full). */
+function buildKnowledge(state: SspState, meId: PlayerId, lookingAt: 0 | 1 | null = null): Knowledge {
   const me = state.players.find((p) => p.id === meId)!;
-  const seen = new Set<number>();
-  for (const c of me.hand) seen.add(c.id);
-  for (const p of state.players) {
-    for (const c of p.table) seen.add(c.id);
-  }
-  for (const pile of state.discards) {
-    for (const c of pile) seen.add(c.id);
-  }
-  if (state.activePlayerId === meId) {
-    for (const c of state.pendingDraw) seen.add(c.id);
-  }
-
-  const totalByFamily: Record<SspCardFamily, number> = {} as Record<SspCardFamily, number>;
-  for (const f of FAMILY_ORDER) totalByFamily[f] = FAMILY[f].count;
-
-  const seenByFamily: Record<SspCardFamily, number> = {} as Record<SspCardFamily, number>;
-  for (const f of FAMILY_ORDER) seenByFamily[f] = 0;
-  const seenByColor: Record<SspColor, number> = {
-    white: 0, yellow: 0, green: 0, pink: 0, purple: 0,
-    teal: 0, darkblue: 0, black: 0, gray: 0, orange: 0, tan: 0,
-  };
-
-  // Total color distribution of the FULL deck (Salt-aware).
+  const seat = knowledgeOf(state, meId, { lookingAt });
   const extraSalt = !!state.config.expansions?.extraSalt;
-  const totalByColor: Record<SspColor, number> = {
-    white: 0, yellow: 0, green: 0, pink: 0, purple: 0,
-    teal: 0, darkblue: 0, black: 0, gray: 0, orange: 0, tan: 0,
-  };
-  for (const f of FAMILY_ORDER) {
-    if (FAMILY[f].expansion === 'extraSalt' && !extraSalt) continue;
-    const palette = FAMILY_COLORS[f];
-    const count = FAMILY[f].count;
-    for (let i = 0; i < count; i++) {
-      const color = palette[i % palette.length] ?? 'darkblue';
-      totalByColor[color] += 1;
-    }
-  }
+  const deck = buildDeck({ extraSalt });
 
-  const accum = (cards: SspCard[]) => {
+  const seenByFamily = new Map<SspCardFamily, number>();
+  const seenByColor = new Map<SspColor, number>();
+  const placed = new Set<number>();
+  const see = (cards: SspCard[], weight = 1) => {
     for (const c of cards) {
-      seenByFamily[c.family] += 1;
-      seenByColor[c.color] += 1;
+      seenByFamily.set(c.family, (seenByFamily.get(c.family) ?? 0) + weight);
+      seenByColor.set(c.color, (seenByColor.get(c.color) ?? 0) + weight);
+      placed.add(c.id);
     }
   };
-  accum(me.hand);
-  for (const p of state.players) accum(p.table);
-  for (const pile of state.discards) accum(pile);
-  if (state.activePlayerId === meId) accum(state.pendingDraw);
-
-  // Cards we know specific opponents are holding (face-up acquisitions) — also
-  // count those colors as seen even though the card has left the pile and
-  // returned to a private hand. They're known facts and shouldn't be double-
-  // counted in unseen tallies.
-  //
-  // IMPORTANT: scope the log walk to the CURRENT round only. Cards acquired
-  // in prior rounds were shuffled back into the deck at round start and are
-  // no longer in any hand. Walking the full log (a) double-counts those cards
-  // (the deck is fresh) and (b) scales with game length, which is the dominant
-  // cost of the AI's per-action time by round 5+.
-  const currentRound = state.round;
-  const currentLog = (state.log ?? []).filter((e) => e.round === currentRound);
-  for (const e of currentLog) {
-    if (e.kind !== 'drawDiscard' && e.kind !== 'crabPick'
-        && e.kind !== 'sharkSteal' && e.kind !== 'lobsterPick'
-        && e.kind !== 'angelfishDraw') continue;
-    seenByFamily[(e as { family: SspCardFamily }).family] += 1;
+  see(me.hand);
+  for (const p of state.players) see(p.table);
+  if (state.activePlayerId === meId) {
+    see(state.pendingDraw);
+    if (state.subPhase === 'awaitingLobsterPick') see(state.pendingLobsterPick ?? []);
   }
+  for (const pile of seat.piles) {
+    if (pile.top) see([pile.top]);
+    see(pile.buried, buriedStillThere(pile));
+  }
+  seat.knownHands.forEach((cards) => see(cards));
 
   const unseenByFamily = new Map<SspCardFamily, number>();
+  const unseenByColor = new Map<SspColor, number>();
+  for (const c of deck) {
+    unseenByFamily.set(c.family, (unseenByFamily.get(c.family) ?? 0) + 1);
+    unseenByColor.set(c.color, (unseenByColor.get(c.color) ?? 0) + 1);
+  }
   let unseenTotal = 0;
   for (const f of FAMILY_ORDER) {
-    const u = Math.max(0, totalByFamily[f] - seenByFamily[f]);
+    const u = Math.max(0, (unseenByFamily.get(f) ?? 0) - (seenByFamily.get(f) ?? 0));
     unseenByFamily.set(f, u);
     unseenTotal += u;
   }
-  const unseenByColor = new Map<SspColor, number>();
-  for (const c of [
-    'white', 'yellow', 'green', 'pink', 'purple', 'teal', 'darkblue', 'black', 'gray', 'orange', 'tan',
-  ] as SspColor[]) {
-    unseenByColor.set(c, Math.max(0, totalByColor[c] - seenByColor[c]));
+  for (const c of ALL_COLORS) {
+    unseenByColor.set(c, Math.max(0, (unseenByColor.get(c) ?? 0) - (seenByColor.get(c) ?? 0)));
   }
 
   const opponentProfiles = new Map<PlayerId, OpponentProfile>();
-  for (const p of state.players) {
-    if (p.id === meId) continue;
-    opponentProfiles.set(p.id, {
-      knownTaken: {},
-      knownCardIds: new Set<number>(),
-      handSize: p.hand.length,
-      discardPullsByFamily: {},
-    });
-  }
-  // Same scoping as above — opponent profile reflects what they're holding
-  // THIS round, not cumulative cards across the whole match.
-  for (const e of currentLog) {
-    const fam = familyFromLogEntry(e);
-    if (!fam) continue;
-    const pid = (e as { playerId?: PlayerId }).playerId;
-    if (!pid || pid === meId) continue;
-    const prof = opponentProfiles.get(pid);
-    if (!prof) continue;
-    prof.knownTaken[fam] = (prof.knownTaken[fam] ?? 0) + 1;
-    if (e.kind === 'drawDiscard' || e.kind === 'crabPick') {
-      prof.discardPullsByFamily[fam] = (prof.discardPullsByFamily[fam] ?? 0) + 1;
+  state.players.forEach((p, i) => {
+    if (p.id === meId) return;
+    const knownTaken: Partial<Record<SspCardFamily, number>> = {};
+    for (const c of seat.knownHands[i]) knownTaken[c.family] = (knownTaken[c.family] ?? 0) + 1;
+    const discardPullsByFamily: Partial<Record<SspCardFamily, number>> = {};
+    for (const c of seat.publicPulls[i]) {
+      discardPullsByFamily[c.family] = (discardPullsByFamily[c.family] ?? 0) + 1;
     }
-  }
+    opponentProfiles.set(p.id, {
+      knownCards: seat.knownHands[i],
+      knownTaken,
+      handSize: p.hand.length,
+      discardPullsByFamily,
+    });
+  });
 
-  return { seenIds: seen, unseenByFamily, unseenByColor, unseenTotal, opponentProfiles };
-}
-
-/** Pull the family out of a log entry if it represents a card acquisition by a
- *  specific player from a public source (so we know exactly what they took). */
-function familyFromLogEntry(e: SspLogEntry): SspCardFamily | null {
-  switch (e.kind) {
-    case 'drawDiscard':    return e.family;
-    case 'crabPick':       return e.family;
-    case 'sharkSteal':     return e.family;
-    case 'lobsterPick':    return e.family;
-    case 'angelfishDraw':  return e.family;
-    default: return null;
-  }
+  return {
+    unseenByFamily,
+    unseenByColor,
+    unseenTotal,
+    opponentProfiles,
+    piles: seat.piles,
+    unplaced: deck.filter((c) => !placed.has(c.id)),
+  };
 }
 
 /** Marginal score gain to ME if I add one extra card of `family` to my pool.
@@ -276,25 +226,18 @@ function abilityEV(family: SspCardFamily): number {
   return 0;
 }
 
-/** Marginal value the family would have for OPPONENT `op`. Uses their
- *  knownTaken profile as their virtual hand. */
+/** Marginal value the family would have for OPPONENT `op`. Uses the cards we
+ *  know they hold as their virtual hand. */
 function marginalValueForOpponent(
   op: SspPlayer, profile: OpponentProfile, family: SspCardFamily, know: Knowledge,
 ): number {
   const virtual: SspPlayer = {
     id: op.id,
-    hand: [],
+    hand: profile.knownCards.slice(),
     table: op.table.slice(),
     roundScore: op.roundScore,
     matchScore: op.matchScore,
   };
-  let pid = -1;
-  for (const fam of FAMILY_ORDER) {
-    const n = profile.knownTaken[fam] ?? 0;
-    for (let i = 0; i < n; i++) {
-      virtual.hand.push({ id: pid--, family: fam, color: 'yellow' });
-    }
-  }
   let v = marginalValue(virtual, family, know);
   // Defensive multiplier — if they've REPEATEDLY pulled this family from a
   // discard pile, that's strong evidence they're committed to it. Boost the
@@ -505,12 +448,14 @@ function valueDuoPair(state: SspState, me: SspPlayer, pair: [SspCard, SspCard], 
   }
 
   if (families.has('crab') || families.has('lobster')) {
-    // Crab/lobster lets us reach into a discard pile. Find the SPECIFIC card
-    // (across all visible cards in both piles) with the highest value to us.
+    // Crab lets us dig through a discard pile. Value = the best card we
+    // remember there, discounted when an unseen dig may have taken it.
     let bestVis = 0;
-    for (const pile of state.discards) {
-      for (const c of pile) {
-        bestVis = Math.max(bestVis, valueOfConcreteCard(me, c, know));
+    for (const pile of know.piles) {
+      if (pile.top) bestVis = Math.max(bestVis, valueOfConcreteCard(me, pile.top, know));
+      const stillThere = buriedStillThere(pile);
+      for (const c of pile.buried) {
+        bestVis = Math.max(bestVis, stillThere * valueOfConcreteCard(me, c, know));
       }
     }
     v += bestVis;
@@ -542,23 +487,73 @@ function valueDuoPair(state: SspState, me: SspPlayer, pair: [SspCard, SspCard], 
   return v;
 }
 
-function biggestOpponentScore(state: SspState, meId: PlayerId): number {
+/** Stand-in hands drawn per opponent when estimating their score. (Crediting
+ *  the stand-ins extra for opponents keeping the better of each two draws
+ *  made no measurable difference in eval, so they're plain random draws.) */
+const OPPONENT_SAMPLES = 24;
+
+/** Expected round score (card points + mermaid claims) of `op`: their table
+ *  and the cards we know they hold, plus their unknown cards filled in with
+ *  random draws from the cards we can't place. Deterministic for a given
+ *  public position. */
+function estimateOpponentScore(state: SspState, me: SspPlayer, op: SspPlayer, know: Knowledge): number {
+  const prof = know.opponentProfiles.get(op.id);
+  if (!prof) return 0;
+  const opts = scoringOptsFor(state, op);
+  const unknown = Math.max(0, prof.handSize - prof.knownCards.length);
+  const base = [...prof.knownCards, ...op.table];
+  const pool = know.unplaced;
+  if (unknown === 0 || pool.length === 0) return totalScore(base, opts).total;
+
+  const take = Math.min(unknown, pool.length);
+  const rng = createRng(publicSeed(state, me, op));
+  const scratch = pool.slice();
+  let sum = 0;
+  for (let s = 0; s < OPPONENT_SAMPLES; s++) {
+    // Partial Fisher–Yates: the first `take` slots become the sample.
+    for (let i = 0; i < take; i++) {
+      const j = i + rngInt(rng, scratch.length - i);
+      [scratch[i], scratch[j]] = [scratch[j], scratch[i]];
+    }
+    sum += totalScore([...base, ...scratch.slice(0, take)], opts).total;
+  }
+  return sum / OPPONENT_SAMPLES;
+}
+
+function estimatedOpponentMax(state: SspState, me: SspPlayer, know: Knowledge): number {
   let max = 0;
-  for (const p of state.players) {
-    if (p.id === meId) continue;
-    max = Math.max(max, tentativeScore(p.hand, p.table));
+  for (const op of state.players) {
+    if (op.id !== me.id) max = Math.max(max, estimateOpponentScore(state, me, op, know));
   }
   return max;
 }
 
-function biggestOpponentCardScore(state: SspState, meId: PlayerId): number {
-  let max = 0;
-  for (const p of state.players) {
-    if (p.id === meId) continue;
-    const sc = totalScore([...p.hand, ...p.table]);
-    max = Math.max(max, sc.cardPoints);
-  }
-  return max;
+/** Seed from public facts only, so the estimate never depends on hidden cards. */
+function publicSeed(state: SspState, me: SspPlayer, op: SspPlayer): number {
+  let h = Math.imul((state.logSeq ?? 0) ^ 0x9e3779b9, 0x85ebca6b) ^ state.round;
+  for (const ch of me.id + '|' + op.id) h = Math.imul(h ^ ch.charCodeAt(0), 0x01000193);
+  return h >>> 0;
+}
+
+/** Crab target value: my gain plus a share of what leaving it would give an opponent. */
+function crabNet(state: SspState, me: SspPlayer, card: SspCard, know: Knowledge): number {
+  return valueOfConcreteCard(me, card, know) + 0.4 * bestOpponentValueForFamily(state, me, card.family, know);
+}
+
+/** Which pile to dig through, judged on what we remember of each: the top
+ *  is certain, a buried card is discounted by the chance it was dug out
+ *  unseen. Null when both piles are empty. */
+function chooseCrabPile(state: SspState, me: SspPlayer, know: Knowledge): 0 | 1 | null {
+  const values = know.piles.map((pile) => {
+    if (pile.size === 0) return -Infinity;
+    let best = pile.top ? crabNet(state, me, pile.top, know) : -Infinity;
+    const stillThere = buriedStillThere(pile);
+    for (const c of pile.buried) best = Math.max(best, stillThere * crabNet(state, me, c, know));
+    return best;
+  });
+  if (values[0] === -Infinity && values[1] === -Infinity) return null;
+  if (Math.abs(values[0] - values[1]) < 0.001) return tieBreakHash(state, me);
+  return values[0] > values[1] ? 0 : 1;
 }
 
 /** Maximum across opponents of the marginal value `family` has for THEM. Used
@@ -594,9 +589,12 @@ export function chooseAIAction(state: SspState, playerId: PlayerId): SspAction |
   if (state.activePlayerId !== playerId) return null;
 
   const know = buildKnowledge(state, playerId);
+  // Extra Salt jellyfish lock: this turn is deck-draw → keep → pass, nothing else.
+  const locked = state.nextTurnLockedPlayerId === playerId;
 
   switch (state.subPhase) {
     case 'awaitingAction': {
+      if (locked) return { type: 'drawPair' };
       // Inspect both discard tops AND each option's NET value (my gain MINUS
       // opportunity cost from leaving the card for opponents). Combine that
       // with expected unseen-draw value for the deck.
@@ -651,6 +649,7 @@ export function chooseAIAction(state: SspState, playerId: PlayerId): SspAction |
     }
 
     case 'awaitingPlayOrEnd': {
+      if (locked) return { type: 'pass' };
       // 1. Play any valuable pair we can — pick the highest-value one. A pair
       // always scores ≥ 1 point so it's always worth playing.
       const pairs = findHandPairs(me);
@@ -664,21 +663,19 @@ export function chooseAIAction(state: SspState, playerId: PlayerId): SspAction |
         return { type: 'playPair', cardIds: [best[0].id, best[1].id] };
       }
 
-      // 2. End-turn decisions.
-      if (state.lastChanceFrom !== null) {
+      // 2. End-turn decisions. Eligibility comes from the reducer's own rules
+      // (LAST CHANCE window, lock, event-adjusted score vs threshold).
+      if (!canEndRound(state)) {
         return { type: 'pass' };
       }
 
-      const myScore = tentativeScore(me.hand, me.table);
-      const oppMax = biggestOpponentScore(state, me.id);
+      const myScore = tentativeScore(me.hand, me.table, scoringOptsFor(state, me));
+      const oppMax = estimatedOpponentMax(state, me, know);
       const matchTarget = state.config.targetScore;
       const myMatchLeadAfter = (me.matchScore + myScore) - Math.max(...state.players.filter((p) => p.id !== me.id).map((p) => p.matchScore));
 
-      const myEvent = state.event?.current;
-      const hasEvent = (id: 'treasureChest' | 'diodonFish') =>
-        (me.heldEvents ?? []).includes(id) || myEvent === id;
-      const stopThreshold = hasEvent('treasureChest') ? 10 : STOP_THRESHOLD;
-      const canStop = !hasEvent('diodonFish');
+      const stopThreshold = stopThresholdFor(state, me);
+      const canStop = !eventAppliesTo(state, me, 'diodonFish');
 
       // End-round decision tree.
       //
@@ -720,13 +717,11 @@ export function chooseAIAction(state: SspState, playerId: PlayerId): SspAction |
         //     opps keep ONLY their bonus). Ties go to the caller.
         //   - OR we trail in MATCH and need to swing — even a borderline bet
         //     is justified because passing won't close the gap.
-        const myCards = totalScore([...me.hand, ...me.table]).cardPoints;
-        const oppMaxCards = biggestOpponentCardScore(state, me.id);
         // Be MILDLY pessimistic about the opponent's next turn — they could
         // gain 1 expected unseen draw worth of card value. We don't multiply
         // by 1.2 anymore; that was overly cautious.
-        const expectedOpponentCardsAfter = oppMaxCards + 0.9 * expectedUnseenDrawValue(me, know);
-        const betWinMargin = myCards - expectedOpponentCardsAfter;
+        const expectedOpponentCardsAfter = oppMax + 0.9 * expectedUnseenDrawValue(me, know);
+        const betWinMargin = myScore - expectedOpponentCardsAfter;
 
         // Adjust threshold by match-lead pressure: trailing in match → lower
         // bar; ahead in match → raise the bar (don't risk a lost bet).
@@ -754,27 +749,18 @@ export function chooseAIAction(state: SspState, playerId: PlayerId): SspAction |
     }
 
     case 'awaitingCrabPick': {
-      // Pick the visible card whose NET value (my gain + denial bonus) is
-      // highest. Crab digs into ANY visible card in either pile, so we have
-      // perfect choice — we use concrete card identity (family + color), not
-      // just family aggregates.
-      type Cand = { card: SspCard; pile: 0 | 1; net: number };
-      const candidates: Cand[] = [];
-      for (let i = 0 as 0 | 1; i < 2; i = (i + 1) as 0 | 1) {
-        const pile = state.discards[i];
-        for (const c of pile) {
-          const myV = valueOfConcreteCard(me, c, know);
-          const denyV = bestOpponentValueForFamily(state, me, c.family, know);
-          const net = myV + 0.4 * denyV;
-          candidates.push({ card: c, pile: i, net });
-        }
-      }
-      if (candidates.length === 0) return null;
+      // Rulebook: choose a pile, look through it, take any card. The pile is
+      // chosen from memory; only then do we see that pile as it really is.
+      const pileIdx = chooseCrabPile(state, me, know);
+      if (pileIdx === null) return null;
+      const looking = buildKnowledge(state, playerId, pileIdx);
+      let best: SspCard | null = null;
       let bestNet = -Infinity;
-      for (const c of candidates) if (c.net > bestNet) bestNet = c.net;
-      const top = candidates.filter((x) => Math.abs(x.net - bestNet) < 0.001);
-      const pick = top[tieBreakHash(state, me) % top.length];
-      return { type: 'crabPick', pile: pick.pile, cardId: pick.card.id };
+      for (const c of state.discards[pileIdx]) {
+        const net = crabNet(state, me, c, looking);
+        if (net > bestNet + 0.001) { best = c; bestNet = net; }
+      }
+      return best ? { type: 'crabPick', pile: pileIdx, cardId: best.id } : null;
     }
 
     case 'awaitingSharkSteal': {
@@ -823,5 +809,5 @@ export function chooseAIAction(state: SspState, playerId: PlayerId): SspAction |
 // Reference exports for tests + future debugging.
 export const __test__ = {
   buildKnowledge, marginalValue, chooseDiscardPile, valueDuoPair, isCollectorFamily,
-  valueOfConcreteCard, bestOpponentValueForFamily,
+  valueOfConcreteCard, bestOpponentValueForFamily, chooseCrabPile, estimateOpponentScore,
 };

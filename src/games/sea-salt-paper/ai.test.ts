@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { chooseAIAction } from './ai';
+import { createRng } from '@/core/rng';
+import { chooseAIAction, __test__ } from './ai';
+import { sampleStates, scrambleHidden } from './testSupport';
 import { seaSaltPaperModule } from './module';
 import { applyAction } from './reducer';
 import type { Seat } from '@/core/types';
@@ -90,9 +92,9 @@ describe('AI driver', () => {
     // Build opponent profile via log entries — 'b' grabbed 3 shells from
     // discards previously.
     s.log = [
-      { seq: 1, round: 1, kind: 'drawDiscard', playerId: 'b', pile: 0, family: 'shell' },
-      { seq: 2, round: 1, kind: 'drawDiscard', playerId: 'b', pile: 0, family: 'shell' },
-      { seq: 3, round: 1, kind: 'drawDiscard', playerId: 'b', pile: 0, family: 'shell' },
+      { seq: 1, round: 1, kind: 'drawDiscard', playerId: 'b', pile: 0, family: 'shell', card: { id: 3001, family: 'shell', color: 'teal' } },
+      { seq: 2, round: 1, kind: 'drawDiscard', playerId: 'b', pile: 0, family: 'shell', card: { id: 3002, family: 'shell', color: 'black' } },
+      { seq: 3, round: 1, kind: 'drawDiscard', playerId: 'b', pile: 0, family: 'shell', card: { id: 3003, family: 'shell', color: 'green' } },
     ];
     s.logSeq = 3;
     const a = chooseAIAction(s, 'a') as SspAction | null;
@@ -103,6 +105,21 @@ describe('AI driver', () => {
       expect(a.keepIndex).toBe(0);
       // And bury the shell pile (pile 0) by discarding the sailor onto it.
       expect(a.discardToPile).toBe(0);
+    }
+  });
+
+  it('only makes legal moves with Extra Salt and Extra Pepper on (jellyfish lock, event thresholds)', () => {
+    for (let seed = 1; seed <= 40; seed++) {
+      let s = seaSaltPaperModule.createInitialState(
+        { targetScore: 40, expansions: { extraSalt: true, extraPepper: seed % 2 === 0 } }, seed, aiSeats(),
+      );
+      for (let i = 0; i < 4000 && s.phase === 'playing'; i++) {
+        const pid = s.subPhase === 'roundEnd' ? s.players[0].id : s.activePlayerId!;
+        const action = chooseAIAction(s, pid);
+        expect(action, `seed ${seed} step ${i}: no action in ${s.subPhase}`).not.toBeNull();
+        s = applyAction(s, action!);
+      }
+      expect(s.phase).toBe('gameOver');
     }
   });
 
@@ -122,4 +139,45 @@ describe('AI driver', () => {
     const a = chooseAIAction(s, 'a') as SspAction | null;
     expect(a?.type).toBe('nextRound');
   });
+});
+
+describe('AI plays fair', () => {
+  const configs = [
+    { name: '2p base', players: 2, extraSalt: false, matches: 6 },
+    { name: '2p Extra Salt', players: 2, extraSalt: true, matches: 10 },
+    { name: '2p Salt + Pepper', players: 2, extraSalt: true, extraPepper: true, matches: 5 },
+    { name: '3p Extra Salt', players: 3, extraSalt: true, matches: 3 },
+  ];
+  for (const cfg of configs) {
+    it(`picks the same move whatever the hidden cards are (${cfg.name})`, () => {
+      const rng = createRng(99);
+      let decisions = 0;
+      let changes = 0;
+      let crabPiles = 0;
+      for (const state of sampleStates({ ...cfg, seed: 555, every: 2 })) {
+        if (state.phase !== 'playing' || state.subPhase === 'roundEnd') continue;
+        const pid = state.activePlayerId!;
+        const crab = state.subPhase === 'awaitingCrabPick';
+        // Mid-crab the AI may see the real contents of the pile it digs into,
+        // so the piles stay put for the full move...
+        const { s, changes: n } = scrambleHidden(state, pid, rng, { keepPiles: crab });
+        changes += n;
+        expect(chooseAIAction(s, pid), `${state.subPhase}`).toEqual(chooseAIAction(state, pid));
+        decisions++;
+        // ...but WHICH pile it digs into must come from memory alone.
+        if (crab) {
+          const { s: s2 } = scrambleHidden(state, pid, rng);
+          const pick = (st: typeof state) => {
+            const me = st.players.find((p) => p.id === pid)!;
+            return __test__.chooseCrabPile(st, me, __test__.buildKnowledge(st, pid));
+          };
+          expect(pick(s2)).toBe(pick(state));
+          crabPiles++;
+        }
+      }
+      expect(decisions).toBeGreaterThan(100);
+      expect(changes).toBeGreaterThan(decisions);
+      if (cfg.matches >= 5) expect(crabPiles).toBeGreaterThan(0);
+    });
+  }
 });
