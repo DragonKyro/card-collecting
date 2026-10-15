@@ -48,6 +48,10 @@ export interface GameModule<
   /** Allowed player counts (inclusive). */
   readonly minPlayers: number;
   readonly maxPlayers: number;
+  /** Set false for games whose action model can't survive the action-broadcast
+   *  net layer (real-time races need host-authoritative arbitration). The lobby
+   *  then hides "Host online" for this game. Defaults to true. */
+  readonly onlineSupported?: boolean;
 
   /** Build the lobby config component's initial value. Pure. */
   defaultConfig(seats: Seat[]): C;
@@ -64,6 +68,12 @@ export interface GameModule<
 
   /** Optional AI hook — return next action for `playerId`, or null to pass/end. */
   chooseAIAction?(state: S, playerId: PlayerId): A | null;
+
+  /** Optional async setup the shell awaits before starting a match on the
+   *  device that drives the AI (local play, or the online host) — e.g.
+   *  fetching trained policy files. Once it resolves, `chooseAIAction` must be
+   *  able to answer synchronously. Rejecting aborts the start with the error. */
+  prepare?(config: C, seats: Seat[]): Promise<void>;
 
   /** Optional thumbnail rendered on the game picker. Game-agnostic shell never imports
    *  game art directly — modules render their own SVG inline. */

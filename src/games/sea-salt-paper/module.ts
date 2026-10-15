@@ -2,13 +2,20 @@
 
 import type { GameModule } from '@/core/module';
 import type { Seat, PlayerId } from '@/core/types';
-import { createRng } from '@/core/rng';
-import type { SspState, SspAction, SspConfig, SspPlayer } from './types';
-import { applyAction, setupNewMatch } from './reducer';
-import { chooseAIAction } from './ai';
+import type { SspState, SspAction, SspConfig } from './types';
+import { applyAction } from './reducer';
 import { defaultTargetScore } from './cards';
-import { buildEventDeck } from './events';
+import { createSspState } from './setup';
 import { SeaSaltPaperThumbnail } from './Thumbnail';
+
+export { attachSeatsAndStart } from './setup';
+
+const AI_LEVEL_IDS = ['easy', 'normal', 'hard'];
+
+// The trained AI (encoder + network runtime) is loaded on demand by prepare(),
+// keeping it out of the game-picker bundle.
+type AiLevels = typeof import('./aiLevels');
+let aiLevels: AiLevels | null = null;
 
 export const seaSaltPaperModule: GameModule<SspState, SspAction, SspConfig> = {
   id: 'sea-salt-paper',
@@ -21,45 +28,19 @@ export const seaSaltPaperModule: GameModule<SspState, SspAction, SspConfig> = {
     return {
       targetScore: defaultTargetScore(seats.length || 2),
       expansions: { extraSalt: false, extraPepper: false },
+      aiLevel: 'normal',
     };
   },
 
   validateConfig(config) {
-    return config.targetScore >= 20 && config.targetScore <= 100
-      ? []
-      : ['Target score must be 20–100.'];
+    const errors: string[] = [];
+    if (!(config.targetScore >= 20 && config.targetScore <= 100)) errors.push('Target score must be 20–100.');
+    if (config.aiLevel !== undefined && !AI_LEVEL_IDS.includes(config.aiLevel)) errors.push('Unknown AI difficulty.');
+    return errors;
   },
 
   createInitialState(config, seed, seats) {
-    const rngState = createRng(seed);
-    const usingPepper = !!config.expansions?.extraPepper;
-    const state: SspState = {
-      phase: 'playing',
-      seats: [],
-      activePlayerId: null,
-      finalScores: null,
-      rngState,
-      config,
-      round: 1,
-      deck: [],
-      discards: [[], []],
-      pendingDraw: [],
-      players: [],
-      subPhase: 'awaitingAction',
-      lastChanceFrom: null,
-      lastChanceRemaining: [],
-      lastRoundSummary: null,
-      roundHistory: [],
-      mermaidWinnerId: null,
-      pendingLobsterPick: [],
-      nextTurnLockedPlayerId: null,
-      event: usingPepper
-        ? { deck: buildEventDeck(rngState), current: null }
-        : null,
-      log: [],
-      logSeq: 0,
-    };
-    return attachSeatsAndStart(state, seats ?? []);
+    return createSspState(config, seed, seats ?? []);
   },
 
   applyAction(state, action) {
@@ -67,7 +48,13 @@ export const seaSaltPaperModule: GameModule<SspState, SspAction, SspConfig> = {
   },
 
   chooseAIAction(state, playerId: PlayerId) {
-    return chooseAIAction(state, playerId);
+    return aiLevels ? aiLevels.chooseLeveledAction(state, playerId) : null;
+  },
+
+  async prepare(config, seats) {
+    if (!seats.some((s) => s.isAI)) return;
+    aiLevels ??= await import('./aiLevels');
+    await aiLevels.prepareAiLevel(aiLevels.aiLevelOf(config));
   },
 
   Thumbnail: SeaSaltPaperThumbnail,
@@ -77,17 +64,3 @@ export const seaSaltPaperModule: GameModule<SspState, SspAction, SspConfig> = {
     return mod.bundle;
   },
 };
-
-/** Helper to attach seats and start the match. Called by the lobby on game start. */
-export function attachSeatsAndStart(state: SspState, seats: Seat[]): SspState {
-  state.seats = seats;
-  state.players = seats.map<SspPlayer>((s) => ({
-    id: s.id,
-    hand: [],
-    table: [],
-    roundScore: 0,
-    matchScore: 0,
-  }));
-  setupNewMatch(state);
-  return state;
-}

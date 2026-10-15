@@ -9,7 +9,10 @@
     "preview": "vite preview",
     "test": "vitest",
     "test:run": "vitest run --passWithNoTests",
-    "typecheck": "tsc"
+    "typecheck": "tsc",
+    "train:build": "vite build --config training/vite.config.ts",
+    "ssp:eval": "npm run train:build && node training/dist/ssp-eval.mjs",
+    "ssp:analyze": "npm run train:build && node training/dist/ssp-analyze.mjs"
   },
   "dependencies": {
     "react": "^19.0.0",

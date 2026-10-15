@@ -1,0 +1,443 @@
+/* Set — scoped styles. Card faces are deliberately light against the app's dark
+   shell, the way the physical cards read on a table. */
+
+.set-art-defs {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+/* ---------- layout ---------- */
+
+.set-root {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 258px;
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .set-root { grid-template-columns: minmax(0, 1fr); }
+}
+
+.set-main {
+  min-width: 0;
+}
+
+.set-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  margin-bottom: 10px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  color: var(--fg-muted);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.set-banner.is-good {
+  color: #9ed27c;
+  border-color: #3f6b34;
+  background: #1e2a1c;
+}
+
+.set-banner.is-error {
+  color: var(--danger);
+  border-color: #6b3434;
+  background: #2a1c1c;
+}
+
+.set-banner.is-done {
+  color: var(--warning);
+  border-color: #6b5a34;
+  background: #2a261c;
+}
+
+.set-help-line {
+  margin: 10px 2px 0;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+/* ---------- board ---------- */
+
+.set-board {
+  display: grid;
+  gap: 8px;
+}
+
+.set-board-rows {
+  grid-template-rows: repeat(3, auto);
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+}
+
+.set-board-columns {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.set-chain-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px dashed var(--border);
+}
+
+.set-chain-label {
+  flex: 0 0 auto;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--fg-muted);
+}
+
+.set-chain-cards {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 110px);
+  gap: 8px;
+  min-width: 0;
+}
+
+/* ---------- card ---------- */
+
+.set-card {
+  position: relative;
+  aspect-ratio: 1.55;
+  min-width: 0;
+  padding: 4%;
+  border: 3px solid #262b36;
+  border-radius: 10px;
+  background: #f4f1e8;
+  color: inherit;
+  font: inherit;
+  font-weight: 400;
+  cursor: default;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  transition: transform 0.12s, box-shadow 0.12s;
+}
+
+.set-card:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.set-card:hover {
+  filter: none;
+}
+
+.set-card.is-clickable {
+  cursor: pointer;
+}
+
+.set-card.is-clickable:hover {
+  box-shadow: 0 0 0 3px rgba(106, 160, 255, 0.35);
+}
+
+.set-card.is-selected {
+  box-shadow: 0 0 0 4px var(--accent);
+  transform: translateY(-3px);
+}
+
+.set-card.is-hinted {
+  box-shadow: 0 0 0 4px var(--warning);
+}
+
+.set-card.is-wrong {
+  box-shadow: 0 0 0 4px var(--danger);
+  animation: set-shake 0.28s ease-in-out;
+}
+
+@keyframes set-shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-4px); }
+  75% { transform: translateX(4px); }
+}
+
+/* Absolutely positioned so the symbol row always has a definite box to size
+   against — a percentage height on an in-flow child would depend on the card's
+   content height, which is the symbols themselves. */
+.set-card-symbols {
+  position: absolute;
+  inset: 8% 5%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+}
+
+.set-symbol {
+  height: 100%;
+  width: auto;
+  max-width: 28%;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.set-card-back {
+  width: 100%;
+  height: 100%;
+  border-radius: 6px;
+  background:
+    repeating-linear-gradient(45deg, #2f3a52 0 8px, #263044 8px 16px);
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.08);
+}
+
+.set-card-key {
+  position: absolute;
+  top: 3px;
+  left: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #7a7468;
+  pointer-events: none;
+}
+
+/* ---------- sidebar ---------- */
+
+.set-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.set-panel {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+}
+
+.set-panel-h {
+  margin: 0 0 8px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--fg-muted);
+}
+
+.set-mode-name {
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.set-mode-blurb {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--fg-muted);
+}
+
+.set-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.set-stat {
+  display: flex;
+  flex-direction: column;
+}
+
+.set-stat-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--fg-muted);
+}
+
+.set-stat-value {
+  font-size: 17px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.set-score-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.set-seat-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+}
+
+.set-seat-chip:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.set-seat-chip.is-active {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.set-seat-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  flex: 0 0 auto;
+}
+
+.set-seat-name {
+  flex: 1;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.set-seat-score {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.set-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.set-hint-text {
+  margin: 8px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--fg-muted);
+}
+
+.set-seat-stats {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.set-seat-stats-head {
+  font-weight: 700;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+
+.set-split-chart {
+  width: 100%;
+  height: 46px;
+  margin-top: 8px;
+}
+
+/* ---------- lobby ---------- */
+
+.set-lobby {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.set-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.set-field > span {
+  color: var(--fg-muted);
+}
+
+.set-field select {
+  flex: 1;
+  max-width: 260px;
+}
+
+.set-lobby-blurb {
+  margin: 0;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+.set-lobby-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.set-fact {
+  display: flex;
+  flex-direction: column;
+}
+
+.set-fact-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--fg-muted);
+}
+
+.set-fact-value {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.set-lobby-sample {
+  display: grid;
+  grid-template-columns: repeat(3, 88px);
+  align-items: start;
+  gap: 8px;
+}
+
+.set-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.set-lobby-note {
+  margin: 0;
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+/* ---------- rules ---------- */
+
+.set-rules-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+/* Explicit box: as a flex item the card's cross size would otherwise stretch to
+   the line, and the line's height would come back from the symbols' percentage
+   height — a cycle that collapses them to nothing. */
+.set-rules-row .set-card {
+  width: 104px;
+  height: 67px;
+  flex: 0 0 auto;
+}

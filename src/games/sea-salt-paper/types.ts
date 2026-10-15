@@ -62,11 +62,16 @@ export interface SspExpansionConfig {
   extraPepper: boolean;
 }
 
+/** Difficulty of the AI seats — each is a trained policy (see aiLevels.ts). */
+export type SspAiLevel = 'easy' | 'normal' | 'hard';
+
 export interface SspConfig {
   /** Match-ending threshold. Default scales with player count. */
   targetScore: number;
   /** Optional expansions; omitted = base game only. */
   expansions?: Partial<SspExpansionConfig>;
+  /** Difficulty of every AI seat in the match; omitted = 'normal'. */
+  aiLevel?: SspAiLevel;
 }
 
 export type SspSubPhase =
@@ -160,18 +165,26 @@ export interface SspEventDeckState {
 }
 
 /** Structured game-log entry. Rendered as text in the history sidebar; kept as
- *  a discriminated union so the renderer can show pretty names + icons. */
+ *  a discriminated union so the renderer can show pretty names + icons.
+ *
+ *  `card` on card-movement entries is the exact card moved (optional only so
+ *  hand-built test logs and pre-existing states stay valid). Visibility is a
+ *  reader concern — see knowledge.ts for what each seat may learn from an entry.
+ *  `fromTop` on crabPick: the card was the pile's visible top, so everyone saw
+ *  it go; a card dug from lower in the pile is seen only by the picker.
+ *  `auto` on crabPick: taken by the Hermit Crab event without looking through
+ *  the pile. */
 export type SspLogEntry =
   | { seq: number; round: number; kind: 'drawDeck';        playerId: PlayerId; keptFamily: SspCardFamily; discardedFamily: SspCardFamily; toPile: 0 | 1 }
-  | { seq: number; round: number; kind: 'drawDiscard';     playerId: PlayerId; pile: 0 | 1; family: SspCardFamily }
+  | { seq: number; round: number; kind: 'drawDiscard';     playerId: PlayerId; pile: 0 | 1; family: SspCardFamily; card?: SspCard }
   | { seq: number; round: number; kind: 'playPair';        playerId: PlayerId; families: [SspCardFamily, SspCardFamily] }
   | { seq: number; round: number; kind: 'playTrio';        playerId: PlayerId; families: [SspCardFamily, SspCardFamily, SspCardFamily] }
-  | { seq: number; round: number; kind: 'crabPick';        playerId: PlayerId; pile: 0 | 1; family: SspCardFamily }
-  | { seq: number; round: number; kind: 'sharkSteal';      playerId: PlayerId; targetPlayerId: PlayerId; family: SspCardFamily }
+  | { seq: number; round: number; kind: 'crabPick';        playerId: PlayerId; pile: 0 | 1; family: SspCardFamily; card?: SspCard; fromTop?: boolean; auto?: boolean }
+  | { seq: number; round: number; kind: 'sharkSteal';      playerId: PlayerId; targetPlayerId: PlayerId; family: SspCardFamily; card?: SspCard }
   | { seq: number; round: number; kind: 'fishDraw';        playerId: PlayerId; family: SspCardFamily }
   | { seq: number; round: number; kind: 'lobsterPick';     playerId: PlayerId; family: SspCardFamily }
   | { seq: number; round: number; kind: 'jellyfishLock';   playerId: PlayerId; targetPlayerId: PlayerId }
-  | { seq: number; round: number; kind: 'angelfishDraw';   playerId: PlayerId; family: SspCardFamily }
+  | { seq: number; round: number; kind: 'angelfishDraw';   playerId: PlayerId; family: SspCardFamily; card?: SspCard }
   | { seq: number; round: number; kind: 'eventReveal';     eventId: SspEventId }
   | { seq: number; round: number; kind: 'eventAwarded';    eventId: SspEventId; playerId: PlayerId | null }
   | { seq: number; round: number; kind: 'stop';            playerId: PlayerId; score: number }

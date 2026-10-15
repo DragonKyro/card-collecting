@@ -4,3 +4,6 @@ dist
 *.log
 .vite
 coverage
+training/dist
+__pycache__
+training/runs

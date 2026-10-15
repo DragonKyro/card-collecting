@@ -196,7 +196,7 @@ describe('isValidDuoPair', () => {
 });
 
 describe('totalScore', () => {
-  it('cards column = collector points + mermaid claims; bonus = white count', () => {
+  it('cards column = collector points + mermaid claims; bonus = largest colour group', () => {
     const cards = [
       card(1, 'shell', 'yellow'), card(2, 'shell', 'yellow'),       // 2 shells (set) = 2
       card(3, 'mermaid', 'white'),                                  // claims top non-white group
@@ -204,10 +204,11 @@ describe('totalScore', () => {
     ];
     const t = totalScore(cards);
     // Cards = shell set (2) + mermaid claim of yellow (2) = 4.
-    // Bonus = 1 white card.
+    // Bonus = largest single colour group (yellow ×2), but it only counts on LAST CHANCE.
     expect(t.cardPoints).toBe(4);
-    expect(t.colorBonus).toBe(1);
-    expect(t.total).toBe(5);
+    expect(t.colorBonus).toBe(2);
+    expect(t.total).toBe(4);
+    expect(totalScore(cards, { lastChanceColorBonus: true }).total).toBe(6);
   });
 
   it('two mermaids claim two distinct non-white color groups', () => {
@@ -220,10 +221,11 @@ describe('totalScore', () => {
     // Cards = pairs (boats: 0 since 1, etc — only fish+fish? no, just 1 fish.
     // No duo pairs formed. Just collector set scoring: 1 shell → 0, 1 octopus → 0.
     // Mermaid claims = top 2 non-white groups = 3 (yellow) + 2 (green) = 5.
-    // Bonus = 2 whites.
+    // Bonus = largest single colour group = 3 (yellow beats the 2 whites).
     expect(t.cardPoints).toBe(5);
-    expect(t.colorBonus).toBe(2);
-    expect(t.total).toBe(7);
+    expect(t.colorBonus).toBe(3);
+    expect(t.total).toBe(5);
+    expect(totalScore(cards, { lastChanceColorBonus: true }).total).toBe(8);
   });
 });
 

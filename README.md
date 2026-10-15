@@ -10,6 +10,7 @@ Shipping targets:
 - **7 Wonders** (with all 5 expansions: Leaders, Cities, Babel, Armada, Edifice)
 - **7 Wonders Duel** (standalone 2-player variant — pyramid draft + three supremacy paths)
 - **Air, Land & Sea**
+- **Set** (all 16 variants: Junior, Set-Chain, UltraSet, GhostSet, 4Set, MegaSet, Puzzle, Shuffle, Memory, …)
 - More to follow.
 
 ## Tech stack
@@ -38,6 +39,7 @@ src/
     seven-wonders/              7 Wonders + 5 expansions (Leaders, Cities, Babel, Armada, Edifice).
     seven-wonders-duel/         7 Wonders Duel (standalone two-player).
     air-land-sea/               Air, Land & Sea (+ Spies, Lies, & Supplies scaffolding).
+    set/                        Set — cards as vectors, 16 modes off one rule engine.
 ```
 
 Each game lives in its own folder behind the `GameModule<S, A, C>` contract from `src/core/module.ts`. To add a new game: create `src/games/<id>/`, export a module, add it to `src/games/registry.ts`. **No other file needs to change.**
@@ -80,7 +82,7 @@ npm run test:run    # vitest single run
 - [x] **Phase 2** — Sushi Go! Party engine (simultaneous-pick + hand-pass loop, menu builder, base party cards + specials).
 - [x] **Phase 3** — Online multiplayer wired up for SSP + Sushi Go (Trystero `/torrent` room, lobby sync, action broadcast, snapshot on join, lobby + in-game chat, host-only AI driver, spectator fallback).
 - [x] **Phase 4** — 7 Wonders base game (3-age draft, simultaneous pick, hand rotation CW/CCW by age, payment to neighbors with discounts, military resolution between ages, final scoring across 7 categories).
-- [x] **Phase 5** — AI heuristics per game (`chooseAIAction` on every module). Each AI scores legal moves with context-aware values — Sushi Go tracks unseen cards by kind so the marginal value of wasabi / sashimi / eel updates as picks reveal information; Sea Salt & Paper builds per-family unseen pools to value drawing from the discard pile vs. a face-down draw; 7 Wonders weighs cards on resources gained, military shields when behind a neighbor, and science set completion; 7 Wonders Duel ranks each available pyramid card across build/bury/discard outcomes against opponent production; Air, Land & Sea scores every legal deploy/improvise by control-margin swing + per-ability value. The host runs the AI driver and dispatches actions on a small delay so moves remain visible.
+- [x] **Phase 5** — AI heuristics per game (`chooseAIAction` on every module). Each AI scores legal moves with context-aware values — Sushi Go tracks unseen cards by kind so the marginal value of wasabi / sashimi / eel updates as picks reveal information; Sea Salt & Paper's heuristic has since been replaced by trained easy / normal / hard policies (see `training/README.md`); 7 Wonders weighs cards on resources gained, military shields when behind a neighbor, and science set completion; 7 Wonders Duel ranks each available pyramid card across build/bury/discard outcomes against opponent production; Air, Land & Sea scores every legal deploy/improvise by control-margin swing + per-ability value. The host runs the AI driver and dispatches actions on a small delay so moves remain visible.
 - [x] **Phase 6** — Sea Salt & Paper expansions, togglable per match in the lobby:
   - *Extra Salt* — 8 new cards / 5 new effects shuffled into the main deck (jellyfish + swimmer next-turn lock, lobster + crab top-5 peek, basket of crabs multiplier, starfish trio, seahorse collector wildcard).
   - *Extra Pepper* — separate event deck. One event flipped at round start applies to all (or the current holder); awarded at round end to the leader (`+`) or laggard (`−`). Six event cards implemented (Three Mermaids, Stop at Five, Angelfish, Stormy Seas, Calm Waters, Pepper Burn) — the framework supports the remaining six pending authoritative text.
@@ -92,6 +94,7 @@ npm run test:run    # vitest single run
   - [x] *Edifice* — 3 central project tiles (one per age) drawn from a pool of 8 at match setup. A player contributes to age N's project by building any wonder stage during that age. At endgame, projects whose threshold of contributors is met reward each contributor and penalize each non-contributor. Outcomes (VP, shields, science, coins, debt tokens) are surfaced as an "edifice" column in final scoring.
 - [x] **Phase 8** — Air, Land & Sea (2-player; 3-theater battles; Deploy / Improvise (face-down) / Withdraw; instant + ongoing abilities; best-to-12 across rotating battles). Spies, Lies, & Supplies expansion scaffolded — its 3 new theaters (Intel/Diplo/Econ) and 18 cards are playable with raw strengths; per-card abilities are placeholder no-ops pending authoritative rulebook text. Epic Mode (5 theaters, 9-card hands) wired through the lobby toggle.
 - [ ] **Phase 9** — Additional games as desired.
+  - [x] *Set* — solo / shared-screen, all 16 variants of the classic pattern game. Cards are modelled as vectors over a product of cyclic groups, so "all the same or all different" is just `sum ≡ 0 (mod 3)` and every variant is the same algebra with different numbers: 3/4/5 features, 3 or 4 variants each, groups of 3 / 4 / 6 cards, and the chain / puzzle / shuffle / face-down twists. Own card art (four shapes, four fills, three borders). Session-only split-time stats. **Not yet:** online racing (concurrent claims need host-authoritative arbitration, so "Host online" is hidden for Set), AI opponents, and Kyle's custom drilling modes — the mode registry in `set/modes.ts` is the seam for those.
   - [x] *7 Wonders Duel* — standalone 2-player variant. Separate game module under `src/games/seven-wonders-duel/`; shares zero state with the base 7 Wonders module. Pyramid draft (face-up + face-down rows of cards, "available when uncovered"), 12 unique wonders (8 drafted per match, 4 each), 5 of 10 Progress Tokens (claimed by matching a 2nd science symbol), single-line two-sided military track. Three victory conditions: Civilian Victory (most VP at endgame), Military Supremacy (pawn at ±9), Science Supremacy (6 different science symbols). Effects modeled v1; the wonder-only "extra turn" and "pick from discard" mechanics are stubbed pending follow-up.
 
 Game-specific design notes live in each game's `types.ts` and in [CLAUDE.md](CLAUDE.md).

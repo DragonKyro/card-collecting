@@ -140,7 +140,7 @@ export function GameHost({ onExit }: Props) {
   // gameStore on their end). In solo / hot-seat anyone can hit Play Again.
   const canPlayAgain = isGameOver && (role === 'solo' || role === 'host');
 
-  function playAgain() {
+  async function playAgain() {
     if (!canPlayAgain) return;
     const cur = useGameStore.getState();
     if (!cur.module || !cur.matchConfig) {
@@ -148,6 +148,12 @@ export function GameHost({ onExit }: Props) {
       return;
     }
     const cfg = cur.matchConfig as { config: unknown; seats: Seat[] };
+    try {
+      await cur.module.prepare?.(cfg.config, cfg.seats);
+    } catch (e) {
+      alert('Could not load the AI: ' + (e as Error).message);
+      return;
+    }
     const seed = randomSeed();
     const initial = cur.module.createInitialState(cfg.config, seed, cfg.seats);
     cur.loadGame(cur.module, initial, cur.localPlayerId, cfg);

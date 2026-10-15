@@ -4,7 +4,7 @@ Context for Claude working in this repo.
 
 ## What this is
 
-A personal multi-game card-collecting web app, hosted on GitHub Pages, played hot-seat or with friends over WebRTC. Ships with Sushi Go! Party, Sea Salt & Paper, 7 Wonders (base + 5 expansions), 7 Wonders Duel, and Air, Land & Sea (base + SLS scaffolding). No backend.
+A personal multi-game card-collecting web app, hosted on GitHub Pages, played hot-seat or with friends over WebRTC. Ships with Sushi Go! Party, Sea Salt & Paper, 7 Wonders (base + 5 expansions), 7 Wonders Duel, Air, Land & Sea (base + SLS scaffolding), and Set (all 16 variants, solo / shared-screen). No backend.
 
 ## Tech stack (locked)
 
@@ -19,6 +19,9 @@ Five layers, separated by directory:
 - **`src/net/`** — Trystero wrapper (`room.ts`, stubbed), stable identity (`identity.ts` — localStorage UUID + `?fresh` escape hatch), wire envelopes (`types.ts`).
 - **`src/store/`** — Zustand stores (`gameStore`, `networkStore`). `gameStore` holds the active module + state and exposes `dispatch` (broadcasts) and `applyLocal` (silent receiver path).
 - **`src/ui/`** — Game-agnostic shell: `App.tsx` (route between picker / lobby / playing), `GameLobby.tsx` (seat builder + game's `LobbyConfig`), `GameHost.tsx` (mounts the active game's `GameView`).
+- **`src/ai/`** — Game-agnostic pieces for learned agents that act over a fixed action-slot space + legality mask: `masked.ts` (masked argmax / uniform / softmax sampling) and `mlp.ts` (dependency-free dense-network runtime for exported policy files, format `card-collecting/mlp@1`: layers of `act(W·x + b)`, W row-major [out][in] as base64 little-endian float32 — PyTorch `nn.Linear` layout).
+
+Outside `src/`: **`training/`** — offline, never shipped. Headless match simulator, seat-swapped eval harness, a vectorized env server, and the Python (PyTorch) trainer + evaluator that drive it over stdio. Bundled to `training/dist/` (git-ignored) by `npm run train:build`. See `training/README.md`.
 
 ## GameModule contract
 
@@ -26,15 +29,18 @@ The single rule that makes the multi-game design work:
 
 ```ts
 GameModule<S, A, C> {
-  id, name, tagline, minPlayers, maxPlayers
+  id, name, tagline, minPlayers, maxPlayers, onlineSupported?
   defaultConfig(seats) → C
   validateConfig(config) → string[]
   createInitialState(config, seed) → S
   applyAction(state, action) → S          // pure, deterministic
   chooseAIAction?(state, playerId) → A | null
+  prepare?(config, seats) → Promise<void>  // async setup before a match (e.g. fetch AI policies)
   ui() → Promise<{ LobbyConfig, GameView }>   // lazy-loaded
 }
 ```
+
+`prepare` runs on the device that drives the AI (local play, online host): the lobby awaits it on Start (the button shows "Loading AI…") and `GameHost` on Play again. After it resolves, `chooseAIAction` must answer synchronously — the AI driver only re-runs on state changes, so returning null while "not ready" would stall the match.
 
 **Hard invariants every module must uphold:**
 - `applyAction` is pure. No `Date.now`, no `Math.random`, no I/O. RNG draws from `state.rngState`.
@@ -43,6 +49,8 @@ GameModule<S, A, C> {
 - The full state is replicated; hidden-information rules (other players' hands) are a UI concern. Friends-only honor, no anti-cheat.
 
 The shell, store, and net layer never name a specific game. Adding a new game means: drop a folder, register it, done.
+
+`onlineSupported: false` opts a module out of the online path — the lobby hides "Host online" for it. Only Set sets it (real-time claims need arbitration the action-broadcast net layer can't do). Default is `true`/absent.
 
 ## Multiplayer model
 
@@ -60,14 +68,15 @@ The shell, store, and net layer never name a specific game. Adding a new game me
 
 ## AI heuristics
 
-Every module exports a `chooseAIAction(state, playerId) → action | null`. All AIs are deterministic, single-difficulty heuristics — no search, no MCTS. They score the legal moves available to `playerId` and return the highest scorer. Smoke tests under `<game>/ai.test.ts` drive end-to-end AI vs AI matches to make sure no AI returns illegal actions or stalls the state machine.
+Every module exports a `chooseAIAction(state, playerId) → action | null`. Except for Sea Salt & Paper (trained policies, below), all AIs are deterministic, single-difficulty heuristics — no search, no MCTS. They score the legal moves available to `playerId` and return the highest scorer. Smoke tests under `<game>/ai.test.ts` drive end-to-end AI vs AI matches to make sure no AI returns illegal actions or stalls the state machine.
 
 Key contextual signals each AI consumes:
 
 - **Sushi Go!** — builds a `Knowledge` snapshot every pick: per-kind unseen cards (deck composition − everything visible on tables and in own hand), picks remaining this round, and own picks remaining. Wasabi value scales with `P(see another nigiri)`, sashimi with `P(see 1 / 2 more sashimi)`, eel with `P(see a second eel)`, chopsticks/spoon/menu with future-picks remaining, tea with how much room is left to grow the most-played kind. Tempura discounts a new pair start by partner probability. Combined with a from-scratch round re-score that adds the card to the table (so wasabi-before-nigiri ordering, edamame neighbors, soy-sauce color count, etc. all factor in). Chopsticks/spoon double-pick triggers only when top-2 value exceeds top-1 by `chopsticksSaveValue`.
-- **Sea Salt & Paper** — builds a per-family unseen-count map (`buildKnowledge`) the same way: deck total − everything on tables, discard piles, own hand. Uses it to compute `expectedUnseenDrawValue` (average marginal value of a face-down draw), then compares against the best face-up discard top to choose `drawPair` vs `drawFromDiscard`. Plays the highest-value duo pair in hand (boat = bonus turn ≈ next-draw value; fish = +1 free deck card; crab = best visible card in either discard; shark+swimmer = average opponent hand value). Decides `stop` / `lastChance` / `pass` from a per-player STOP threshold (5 with `stopAtFive`, else 7), how big the lead is, and whether mermaid-4 / Three Mermaids is reachable.
+- **Sea Salt & Paper** — the exception: no hand-written AI. Every difficulty is a trained neural-network policy (`aiLevels.ts`; see the SSP notes below). The old heuristic was removed after the shipped policies were trained; new training runs learn from scratch.
 - **7 Wonders** — scores each card in hand: vp/shields/coins/science/produce, end-VP cards by counting matching targets, neighbor-purchase cost via `suggestCheapestPurchase`. Strong negative when a duplicate name is already in tableau or no plan can pay. If no build is positive, picks the lowest-value card for a wonder stage (if affordable) or discards. The base AI now dispatches to `getActiveExpansions(config)`'s `chooseAIAction` for expansion-owned subphases — Leaders' `leaderDraft`, `leaderPlay`, `solomonAwaitPick` — so the host driver can drive AI through the leader draft + per-age leader play.
 - **7 Wonders Duel** — for each available pyramid card, scores build/bury/discard outcomes against opponent production (price per unit = `2 + opponent's fixed production`, flattened to 1 with the matching trade-discount card). Wonder draft ranks each wonder by approximate VP + shields + coins/science/produce; bury value uses the best unbuilt wonder's value. Progress-token pick uses a static preference list (Philosophy → Mathematics → Agriculture → Masonry → Architecture → Law → Urbanism → Strategy → Economy → Theology).
+- **Set** — no AI. Set is real-time with no turn order, so there is nothing for the `activePlayerId`-driven AI loop to hook into; `chooseAIAction` is deliberately absent and AI seats are filtered out at match setup. A pace-setter bot would need its own timer driver inside the game's view.
 - **Air, Land & Sea** — `controlMargin` per seat across all theaters; deploy/improvise scored by raw strength swing, threshold-crossing bonus (going from "behind" to "ahead" in a theater), per-ability value (instants 2–4 pts, ongoings 3–4 pts). Burning a 5-6 strength card on a full hand penalty. Improvise heavy penalty if any Containment is in play. Withdraws when control margin is below half-theaters and `vpForWithdraw(handSize) < FULL_BATTLE_VP`. Ability follow-up subphases (flip / transport / redeploy / reinforce) score by maximizing strength swung onto our losing theaters.
 
 ## Game-specific design notes (deferred implementation)
@@ -84,8 +93,27 @@ Each turn: draw 2 (keep 1 or both), optional play-pair-for-ability, then STOP / 
 - *Extra Salt* — adds jellyfish/lobster/starfish/seahorse/crabBasket to the deck (8 cards). New duo pairings (jellyfish+swimmer, lobster+crab) handled in `isValidDuoPair`/`duoPartner`. Starfish trios are a new action type `playTrio` and stored as `player.trios` so scoring can flatly award 3 pts and skip the duo ability. Lobster reveal lives in `subPhase: 'awaitingLobsterPick'` with `pendingLobsterPick` buffer. Jellyfish lock uses `state.nextTurnLockedPlayerId`; the locked player's turn-handlers throw on anything but drawPair → pass.
 - *Extra Pepper* — separate event deck (`state.event`). One event revealed per round (`startNewRound`), applied via predicates in `events.ts` (`playerHasEvent`, `isRoundEvent`). At round end (`awardEventCard`), `+` events go to leader, `−` to laggard, `global` events are discarded. Six events implemented in `EVENT_BY_ID` — add more by extending that map + `ALL_EVENT_IDS`; the reducer wiring (threshold lookups, mermaid-count lookup, color-bonus doubling, score-modifier) is already in place.
 
+**Hidden-information rules** (`src/games/sea-salt-paper/knowledge.ts`, under the learned agent's observation — the single source of truth for what a seat may know). `knowledgeOf(state, seatId, { lookingAt })` replays this round's log:
+- *Opponents' hands*: known only via cards taken off a pile's visible top (discard draws, crab picks of the top card, Angelfish) and cards they stole from this seat — tracked by card id until played to a table or stolen back. Deck keeps, fish draws, lobster picks, crab digs below the top, and steals between two other players are hidden.
+- *Discard piles*: remembered in full (every card landed face-up) until an opponent's crab digs out a buried card. The seat then knows the pile is a card short (`unknownRemovals`) but not which one, until that card shows up on a table, the seat steals it, or the seat digs through that pile itself (and learns what's gone — and so what the digger holds).
+- Log entries carry the exact `card` moved, `fromTop` on crab picks, `auto` on Hermit Crab picks. Reading `entry.card` is only legitimate where the rules above say the seat saw it.
+
+**AI difficulty levels** (`aiLevels.ts`, `SspConfig.aiLevel`, default `normal`; one level for every AI seat in the match, picked in the SSP lobby): easy / normal / hard = `policies/easy-update10.json` / `normal-update40.json` / `hard-update1000.json`, all checkpoints of `training/runs/main` (10 imitation updates; + 30 PPO; + 990 PPO). Measured over 4000 seat-swapped Extra Salt matches vs the old heuristic: 16% / 73% / 87.5%; hard beats normal ~72% and easy ~97%. Every level loads the same way: Vite emits each ~1.3 MB JSON as a hashed asset (`?url` import, never in a JS chunk), `module.prepare` dynamic-imports `aiLevels` (keeping the network code out of the picker bundle) and fetches the chosen level once per page; the lobby starts that fetch as soon as a level is picked. Trained on 2-player Extra Salt; plays 2–4 players and any expansions legally (`aiLevels.test.ts` plays full 2/3/4-player matches on every level). The policy files are also the eval tools' benchmarks (`bench:hard-update1000` etc.). **Any ENCODER_VERSION / ACTION_SPACE_VERSION bump makes the shipped files fail to load (the test catches it) — retrain and re-freeze them.**
+
+**Learned-agent pipeline** (`src/games/sea-salt-paper/nn/`, 2-player base + Extra Salt; Pepper is legal but untested strategically):
+- `observation.ts` — `observe(state, viewerId, { crabLookPile })` is the **only** place the agent pipeline reads `SspState`. It returns a seat-relative `SspObservation` built on `knowledgeOf`: own hand, every table, pile views (top, size, remembered buried cards, `unknownRemovals`), deck size, hand sizes, scores, events, own pending draw / lobster reveal, `knownCards` per opponent (and, for the viewer, what the opponents know about its hand). `observation.test.ts` scrambles everything hidden (incl. which card an unseen crab dig took) and asserts observation / features / mask are unchanged. Keep that test passing when adding fields.
+- `actions.ts` — 66 action slots (decisions, not physical cards: "play a crab pair", "keep card 0 and discard to pile 1"), `legalMask(obs)`, `decodeSlot(obs, slot)`, inverse `slotForAction`. A crab pick is two decisions: `crabPile:N` (decodes to a `CrabLook`, not a reducer action), then — re-observing with `crabLookPile` set, which reveals that pile — `crab:<family>`. `actWithPolicy` and the vec env drive both steps. `actions.test.ts` is a two-way oracle against the reducer (everything the reducer accepts is masked in; everything masked in decodes to something the reducer accepts).
+- `encode.ts` — 632-float feature vector from the observation only (counts, remembered pile contents, unseen pool, known opponent cards, per-family score deltas). Layout comes from the writer itself (`featureLayout()`), so it can't drift.
+- `ENCODER_VERSION` / `ACTION_SPACE_VERSION` are pinned in tests next to `OBS_DIM` / `NUM_SLOTS`. Bump on any layout change; trained weights must carry both and be refused on mismatch.
+- `agent.ts` — `actWithPolicy(state, pid, (obs, mask) → slot)` adapts any slot policy to the `chooseAIAction` shape (and runs the crab two-step).
+- `policy.ts` — `loadSspPolicy(file)` validates a trained policy file (game, `encoderVersion`, `actionSpaceVersion`, dims) and refuses mismatches; `greedyPolicy` / `sampledPolicy` turn it into a slot policy.
+- Training lives in `training/ssp/` (`train.py`: PPO from scratch, self-play + past-checkpoint opponents; `evaluate.py` for match / baselines / ladder + Elo / analyze). See `training/README.md`.
+
 ### 7 Wonders (`src/games/seven-wonders/`)
 3 Ages × 6 picks per Age. Simultaneous: each player submits a `pendingPick` (build / wonder-stage / discard); reducer reveals + applies in batch, rotates hands (CW Ages I/III, CCW Age II), resolves military at Age end. Final scoring across 7 categories at Age III end. Expansions (Leaders, Cities, Babel, Armada, Edifice) will live under `src/games/seven-wonders/expansions/` and contribute extra decks + post-action hooks. No `if (expansion === ...)` conditionals — add a module hook instead.
+
+### Set (`src/games/set/`)
+Real-time pattern-finding, currently **solo / shared-screen only**. All 16 variants of the classic game come from one algebra plus four orthogonal twists — see the dedicated section below.
 
 ### Air, Land & Sea (`src/games/air-land-sea/`)
 Strict 2-player; alternating single-action turns. Each turn: **Deploy** (face-up to the matching theater; Instant abilities fire on placement, Ongoing abilities persist while face-up), **Improvise** (face-down to any theater, strength 2, no ability), or **Withdraw** (battle ends; opponent scores VP per the withdrawing player's hand-size chart: 6→2, 4-5→3, 2-3→4, 0-1→6; full-play loss = 6). Battle ends when either player withdraws or both hands are empty. Winner controls more than half the theaters (2/3 or 3/5); ties go to the 1st player. Match ends at 12 VP. Between battles the theater row rotates one step (rightmost→front) and 1st player swaps.
@@ -115,6 +143,13 @@ Hidden info follows the project's "full state replication + UI gating" pattern �
 - `npm run typecheck` — `tsc` no-emit
 - `npm run test` — Vitest watch
 - `npm run test:run` — Vitest single run
+- `npm run train:build` — bundle `training/` entry points to `training/dist/*.mjs`
+- `npm run ssp:eval -- --a nn:<policy.json> --b random --games 2000 --salt` — seat-swapped SSP head-to-head over worker threads
+- `python training/ssp/env_client.py` — random-agent smoke test of the Python ↔ Node env bridge (needs `train:build` first)
+- `conda env create -f training/environment.yml` — Python training env (`train`: PyTorch CUDA from conda-forge, numpy, tensorboard, pytest)
+- `python training/ssp/train.py --run <name> [--resume]` — train the SSP agent (outputs in `training/runs/<name>/`, git-ignored)
+- `python training/ssp/evaluate.py {match A B | baselines RUN | ladder RUN | freeze RUN@N --name X | benchmarks | analyze A --vs B,C}` — seat-swapped evals; agents are `random`, `bench:<name>` (the game's shipped policies in `src/games/sea-salt-paper/policies/`), a policy `.json`, a run dir, or `RUN@N`. `analyze` tallies decisions per side (draw sources, pairs, steals, when/how rounds end, point sources) — also `npm run ssp:analyze`.
+- `python -m pytest training/ssp -q` — Python-side tests (TS ↔ PyTorch export parity, train → checkpoint → resume → evaluate)
 
 ## Deployment
 
@@ -130,7 +165,7 @@ Hidden info follows the project's "full state replication + UI gating" pattern �
 
 ## Roadmap
 
-See [README.md](README.md#project-plan--roadmap). Current status: **Phases 0–5 + 6 (partial) + 7 (5/5 expansions) + 8 (partial) + 9 (Duel) complete.** SSP + Sushi Go + 7 Wonders (base + all 5 expansions togglable) + 7 Wonders Duel (standalone) + Air, Land & Sea (base with all abilities + SLS scaffolding) playable hot-seat and online. Trystero room, lobby sync, action broadcast, snapshot on join, lobby + in-game chat, host-only AI driver, spectator fallback all wired. SSP has both Extra Salt (full) and Extra Pepper (6/12 events) togglable in the lobby. 7 Wonders has the Leaders expansion (all 36 leaders, draft + per-age play + Bilkis activated ability + Solomon recruit-from-discard, all effect categories modeled), the Cities expansion (27 black cards + debt tokens + diplomacy mechanic + Tourist Office / Gambling Hall scoring extras), partial Babel (15 orange cards + 3 themed scoring rules) and Armada (15 navy cards + 3 themed scoring rules) expansions, and the Edifice expansion (3 central project tiles with contributor-tracking via wonder-stage builds; reward/penalty resolved at endgame). Babel's central Tower / Great Projects boards and Armada's shipyards / naval combat / island cards / pirate track are NOT modeled in v1. 7 Wonders Duel ships as a separate top-level game module (`src/games/seven-wonders-duel/`) with no shared code — pyramid draft, 12 wonders, 5/10 Progress Tokens, three supremacy paths. ALS has the Spies, Lies, & Supplies expansion togglable (theater swap + Epic Mode wired) but its per-card abilities are no-ops until rulebook text is in hand.
+See [README.md](README.md#project-plan--roadmap). Current status: **Phases 0–5 + 6 (partial) + 7 (5/5 expansions) + 8 (partial) + 9 (Duel, Set) complete.** SSP + Sushi Go + 7 Wonders (base + all 5 expansions togglable) + 7 Wonders Duel (standalone) + Air, Land & Sea (base with all abilities + SLS scaffolding) playable hot-seat and online. Trystero room, lobby sync, action broadcast, snapshot on join, lobby + in-game chat, host-only AI driver, spectator fallback all wired. SSP has both Extra Salt (full) and Extra Pepper (6/12 events) togglable in the lobby. 7 Wonders has the Leaders expansion (all 36 leaders, draft + per-age play + Bilkis activated ability + Solomon recruit-from-discard, all effect categories modeled), the Cities expansion (27 black cards + debt tokens + diplomacy mechanic + Tourist Office / Gambling Hall scoring extras), partial Babel (15 orange cards + 3 themed scoring rules) and Armada (15 navy cards + 3 themed scoring rules) expansions, and the Edifice expansion (3 central project tiles with contributor-tracking via wonder-stage builds; reward/penalty resolved at endgame). Babel's central Tower / Great Projects boards and Armada's shipyards / naval combat / island cards / pirate track are NOT modeled in v1. 7 Wonders Duel ships as a separate top-level game module (`src/games/seven-wonders-duel/`) with no shared code — pyramid draft, 12 wonders, 5/10 Progress Tokens, three supremacy paths. ALS has the Spies, Lies, & Supplies expansion togglable (theater swap + Epic Mode wired) but its per-card abilities are no-ops until rulebook text is in hand. Set ships all 16 classic variants for solo / shared-screen play off a single vector-algebra rule engine; it is the one module with `onlineSupported: false` (real-time races need claim arbitration) and the one with no AI.
 
 ### 7 Wonders implementation notes
 
@@ -211,11 +246,28 @@ See [README.md](README.md#project-plan--roadmap). Current status: **Phases 0–5
 - **AI**: `ai.ts` ranks each available card by (build value − total cost), considers bury (only if any unbuilt wonder is affordable) + discard, picks the best. Wonder draft AI ranks by approximate VP value. Progress pick AI has a static preference order (Philosophy > Mathematics > Agriculture > Masonry > Architecture > Law > Urbanism > Strategy > Economy > Theology).
 - **Resource purchase**: in Duel there's only one opponent. Price per unit = `2 + opponent's fixed production of that resource`, flattened to `1` if buyer has the appropriate trade-discount card. Opponent's coins gained via trade are routed through the Economy progress token check (with Economy: opponent gets the coins; without: coins go to the bank, Duel rule).
 
+### Set module notes
+
+Rebuilt from scratch (reference implementation: the local `../setwithfriends/` project, which is React + Firebase; no code was ported) so that custom drilling modes can be added and the whole thing hosts statically.
+
+- **Cards are vectors.** `traits.ts` defines `TraitAxis` and two implementations: `Mod3Axis` (3 variants → 1 coordinate mod 3) and `Klein4Axis` (4 variants → 2 coordinates mod 2, i.e. the Klein four-group). `cards.ts`'s `CardSpace` concatenates the axes into a coordinate vector, and `CardId` is the digit string (`"1202"`) — compact, JSON-safe, usable as a map key. Axis order is fixed: colour, shape, shading, border, count (count always last; traits drop from the middle as `traitCount` shrinks).
+- **Rules are linear algebra.** `rules.ts`: `ZeroSumRule(n)` = n cards whose vectors sum to zero — `n=3` over Z_3 is Set ("all the same or all different" ⟺ `a+b+c ≡ 0 mod 3`), `n=6` is GhostSet, `n=4` over Z_2 is 4Set (AAAA / ABCD / AABB ⟺ XOR = 0). `PairSumRule(2)` = four cards splittable into two pairs with equal sums = UltraSet. `CardSpace.completion()` (solve for the missing card) replaces the reference's two separate conjugate helpers and makes searches cheap: a zero-sum search picks `size-1` cards and looks the last one up; UltraSet buckets pairs by completion for O(board²) instead of O(board³).
+- **Modes are data.** `modes.ts` holds all 16 specs (`family`, `traitCount`, `variants`, `chain`, `puzzle`, `shuffle`, `faceDown`, `minBoardSize`) and `ModeEngine` compiles a spec into space + rule + the anchored/excluded searches. `engineFor(id)` is memoised. **This registry is the seam for new drill modes** — a drill should be a new spec (plus, if it needs one, an objective field the reducer reads), not a new reducer branch. Adding a 6th feature or a `Mod5Axis` is likewise data-only.
+- **Board model.** `board.ts`: the board is a window on the deck (`deck.slice(0, boardSize)`). `findBoardSize` grows by rows of three until a legal group exists; `removeFromBoard` back-fills holes inside the protected prefix from beyond it so surviving cards keep their on-screen position. `shufflePrefix` reshuffles only the face-up cards (Shuffle mode), drawing from `state.rngState`.
+- **Selection lives in state.** A click is `toggleCard`, and the reducer resolves the group the moment the selection reaches `rule.size` — score / mistake / timing split / board advance all in one pure place. `activePlayerId` is always `null`. Wall-clock time is folded into the action payload (`atMs`), the same way player-chosen randomness is elsewhere, so `applyAction` stays pure.
+- **Stats are session-only** (`stats.ts`, derived from `state.history`): split times per find, accuracy, best/median, plus a split-time bar chart on the game-over panel. Nothing is persisted — the "no saves between sessions" non-goal stands.
+- **Art is hand-drawn** in `art.tsx`: four shape paths (squiggle / oval / diamond / hourglass), stripe + checker fills via masks (so the ink colour stays a plain `fill`), three border styles for MegaSet's fifth feature, four inks. A single hidden `<defs>` block is mounted by `SetArtDefs` and every card `<use>`s it. Note: symbols are sized inside an absolutely-positioned row (`inset` on `.set-card-symbols`) — an in-flow percentage height would depend on the card's content height, which is the symbols, and collapses them.
+- **Shared screen:** 1–4 seats, all human. With more than one seat, the finder picks their name (or presses its number) so the claim is credited to them; `claimantId` tracks it and a mid-selection switch resets the selection. Single-seat play never shows any of this.
+- **NOT modelled:** online play (see `onlineSupported: false` — two peers claiming overlapping cards would diverge under action-broadcast; the fix is host-authoritative claim arbitration plus reconcile snapshots), AI/bot opponents, and Kyle's own drill modes.
+
 ## Where to start next
 
-1. **7 Wonders central-board expansion mechanics** — Babel's Tower of Babel + Great Projects, Armada's shipyards + naval combat + island cards + pirate track. Currently those expansions contribute only a card pool + scoring rules. Adding the central boards is a self-contained next step (`applyAction` hook + new subPhase + UI overlay per expansion).
+0. **SSP trained AI** — shipped: easy / normal / hard levels (see the SSP notes). Training plateaued around update 1000 of `runs/main`. Possible follow-ups: fp16 / int8 policy files (each is ~1.3 MB, ~970 KB gzipped), per-seat difficulty (would need a game-agnostic seat field), retraining with 3–4 player matches, and checking the LAST CHANCE scoring against the rulebook — the trained AI's whole edge is LAST CHANCE bets.
+1. **Set custom drill modes** — Kyle's reason for rebuilding. Add specs to `set/modes.ts`; anything with an objective or failure condition (sprint to N, blitz clock, streak/sudden-death, metronome) wants one new optional field on `SetModeSpec` plus a check in the reducer's resolution path. Board-generating drills (flashcard boards containing exactly one group, complete-the-set, near-miss decoys) can be built on `CardSpace.completion()` + rejection sampling from `state.rngState`.
+2. **Set online racing** — needs host-authoritative claim arbitration: guests' claims are requests, the host reduces and rebroadcasts (the `snap` channel already supports broadcast; `gameStore` would want a light `replaceState` next to `applyLocal`). Then flip `onlineSupported`.
+3. **7 Wonders central-board expansion mechanics** — Babel's Tower of Babel + Great Projects, Armada's shipyards + naval combat + island cards + pirate track. Currently those expansions contribute only a card pool + scoring rules. Adding the central boards is a self-contained next step (`applyAction` hook + new subPhase + UI overlay per expansion).
 2. **7 Wonders Duel polish** — model the wonder-only `extraTurn` and `pickFromDiscard` effects (currently stubbed). Adding `extraTurn` would skip the seat swap after a wonder build; `pickFromDiscard` would introduce a new `discardPick` subphase (the type is already in the SwSubPhase union for future use).
 3. **7 Wonders polish** — model the deferred wonder stage effects (Olympia A "free per age", Halicarnassus "build from discard" — likely sharable with Solomon's `solomonAwaitPick` flow, Babylon A "play last card", Olympia B "copy guild", Babylon B "choose science"). Also: Tomyris (defeat-token redirect) needs a hook into `resolveMilitary`.
 4. **Finish Pepper** — add the remaining 6 event cards to `events.ts` once authoritative rule text is in hand. Each new event needs an id in `SspEventId`, an entry in `EVENT_BY_ID`/`ALL_EVENT_IDS`, and (if it has a per-player rule effect) a hook into the reducer.
-5. **AI heuristics polish** — each game now has a working heuristic AI with smoke tests (see the **AI heuristics** section above). Possible follow-ups: round-aware weighting in 7W (early-Age military matters less than late-Age; science snowballs late), opponent-modelling in SSP (currently treats opponents as "average unseen hand"), look-ahead for Sushi Go's pass direction (cards we play this tick are seen by neighbors before they pick).
+5. **AI heuristics polish** — each game except SSP now has a working heuristic AI with smoke tests (see the **AI heuristics** section above). Possible follow-ups: round-aware weighting in 7W (early-Age military matters less than late-Age; science snowballs late), opponent-modelling in SSP (currently treats opponents as "average unseen hand"), look-ahead for Sushi Go's pass direction (cards we play this tick are seen by neighbors before they pick).
 6. **ALS card text from rulebook** — confirm Sea 4 / Sea 5 ability assignments against the authoritative rulebook (Investigation, Salvage in `cards.ts` are best-guess assignments) and fill in the 18 SLS abilities. The dispatch in `abilities.ts` (`intel1` … `econ6`) is already wired; each branch just needs its real effect (or a follow-up sub-phase + pending-ability shape if it needs a target).

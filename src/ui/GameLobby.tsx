@@ -86,6 +86,8 @@ export function GameLobby({ module, onBack, onStart }: Props) {
   const [config, setConfig] = useState<unknown>(() => module.defaultConfig(seats));
   const [bundle, setBundle] = useState<GameUiBundle<GameStateShape, unknown, unknown> | null>(null);
   const [joinCode, setJoinCode] = useState('');
+  /** True while module.prepare (e.g. loading AI policy files) runs before a start. */
+  const [preparing, setPreparing] = useState(false);
   const [localName, setLocalName] = useState('You');
   const [showRules, setShowRules] = useState(false);
 
@@ -133,9 +135,25 @@ export function GameLobby({ module, onBack, onStart }: Props) {
     setHotSeats(seats.map((s) => (s.id === id ? { ...s, ...patch } : s)));
   }
 
-  function startLocal() {
+  /** Run the module's pre-match setup; false (after telling the user) if it failed. */
+  async function prepareMatch(matchSeats: Seat[]): Promise<boolean> {
+    if (!module.prepare) return true;
+    setPreparing(true);
+    try {
+      await module.prepare(config, matchSeats);
+      return true;
+    } catch (e) {
+      alert('Could not load the AI: ' + (e as Error).message);
+      return false;
+    } finally {
+      setPreparing(false);
+    }
+  }
+
+  async function startLocal() {
     const errors = module.validateConfig(config);
     if (errors.length) { alert(errors.join('\n')); return; }
+    if (!(await prepareMatch(seats))) return;
     const seed = randomSeed();
     const initial = module.createInitialState(config, seed, seats);
     useGameStore.getState().loadGame(module, initial, localUuid, { config, seats });
@@ -166,10 +184,11 @@ export function GameLobby({ module, onBack, onStart }: Props) {
     }
   }
 
-  function startOnline() {
+  async function startOnline() {
     if (!isOnlineHost) return;
     const errors = module.validateConfig(config);
     if (errors.length) { alert(errors.join('\n')); return; }
+    if (!(await prepareMatch(hotSeats))) return;
     const seed = randomSeed();
     const initial = module.createInitialState(config, seed, hotSeats);
     const seatUuids = hotSeats.map((s) => s.id);
@@ -297,16 +316,20 @@ export function GameLobby({ module, onBack, onStart }: Props) {
         <div style={{ marginTop: 16, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {!isOnline && (
             <>
-              <button onClick={startLocal} disabled={!canStartLocal}>Start (hot-seat)</button>
-              <button className="secondary" onClick={hostOnline} disabled={status === 'connecting'}>
-                {status === 'connecting' ? 'Connecting…' : 'Host online'}
+              <button onClick={startLocal} disabled={!canStartLocal || preparing}>
+                {preparing ? 'Loading AI…' : 'Start (hot-seat)'}
               </button>
+              {module.onlineSupported !== false && (
+                <button className="secondary" onClick={hostOnline} disabled={status === 'connecting'}>
+                  {status === 'connecting' ? 'Connecting…' : 'Host online'}
+                </button>
+              )}
             </>
           )}
           {isOnlineHost && (
             <>
-              <button onClick={startOnline} disabled={!canStartOnline}>
-                Start match
+              <button onClick={startOnline} disabled={!canStartOnline || preparing}>
+                {preparing ? 'Loading AI…' : 'Start match'}
               </button>
               <button className="secondary" onClick={() => { useNetworkStore.getState().leave(); }}>
                 End room

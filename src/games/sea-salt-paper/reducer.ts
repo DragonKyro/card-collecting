@@ -46,7 +46,7 @@ const STOP_THRESHOLD_TREASURE = 10;  // when Treasure Chest applies
 
 /** Per-player STOP/LAST-CHANCE threshold, raised to 10 if Treasure Chest is in
  *  force (round event) or held by the player. */
-function stopThresholdFor(state: SspState, p: SspPlayer): number {
+export function stopThresholdFor(state: SspState, p: SspPlayer): number {
   if (eventAppliesTo(state, p, 'treasureChest')) return STOP_THRESHOLD_TREASURE;
   return STOP_THRESHOLD;
 }
@@ -58,7 +58,7 @@ function mermaidWinCountFor(state: SspState, p: SspPlayer): number {
 }
 
 /** Build the per-player scoring opts (trios + event scoring overrides). */
-function scoringOptsFor(state: SspState, p: SspPlayer) {
+export function scoringOptsFor(state: SspState, p: SspPlayer) {
   const trioCancelledIds = new Set<number>();
   for (const trio of p.trios ?? []) for (const id of trio) trioCancelledIds.add(id);
   return {
@@ -140,8 +140,8 @@ function scoreRound(state: SspState, summaryKind: SspRoundSummary['endedBy'], en
   //
   // Display split:
   //   cardPoints column = duo/collector/multiplier/trio scoring + mermaid claims
-  //   colorBonus column = number of WHITE cards held (== mermaid count)
-  // The two together equal the round's total points.
+  //   colorBonus column = cards in the player's largest single colour group
+  //                       (scoring.specialColorBonus) — counted on LAST CHANCE only
   const isLastChance = summaryKind === 'lastChance';
   const baseScores = state.players.map((p) => {
     const cards = allCards(p.hand, p.table);
@@ -484,7 +484,7 @@ function applyDuoEffect(state: SspState, p: SspPlayer, family: DuoFamily, other:
         // Take the TOP of each pile (deterministic, no UI choice needed).
         const taken = pile.pop()!;
         p.hand.push(taken);
-        pushLog(state, { kind: 'crabPick', playerId: p.id, pile: pileIdx, family: taken.family });
+        pushLog(state, { kind: 'crabPick', playerId: p.id, pile: pileIdx, family: taken.family, card: { ...taken }, fromTop: true, auto: true });
       }
       state.subPhase = 'awaitingPlayOrEnd';
       return;
@@ -541,7 +541,7 @@ function maybeAngelfishDraw(state: SspState, p: SspPlayer): void {
   // Take the top of pile 0 by default (deterministic for AI / replay).
   const taken = state.discards[0].pop()!;
   p.hand.push(taken);
-  pushLog(state, { kind: 'angelfishDraw', playerId: p.id, family: taken.family });
+  pushLog(state, { kind: 'angelfishDraw', playerId: p.id, family: taken.family, card: { ...taken } });
 }
 
 export function applyAction(state: SspState, action: SspAction): SspState {
@@ -626,7 +626,7 @@ export function applyAction(state: SspState, action: SspAction): SspState {
       const c = pile.pop()!;
       const p = requireActivePlayer(s);
       p.hand.push(c);
-      pushLog(s, { kind: 'drawDiscard', playerId: p.id, pile: action.pile, family: c.family });
+      pushLog(s, { kind: 'drawDiscard', playerId: p.id, pile: action.pile, family: c.family, card: { ...c } });
       const mm = checkMermaidWin(s);
       if (mm) {
         s.mermaidWinnerId = mm;
@@ -722,10 +722,11 @@ export function applyAction(state: SspState, action: SspAction): SspState {
       const pile = s.discards[action.pile];
       const idx = pile.findIndex((c) => c.id === action.cardId);
       if (idx === -1) throw new Error('crabPick: card not in pile');
+      const fromTop = idx === pile.length - 1;
       const card = pile.splice(idx, 1)[0];
       const p = requireActivePlayer(s);
       p.hand.push(card);
-      pushLog(s, { kind: 'crabPick', playerId: p.id, pile: action.pile, family: card.family });
+      pushLog(s, { kind: 'crabPick', playerId: p.id, pile: action.pile, family: card.family, card: { ...card }, fromTop });
       const mm = checkMermaidWin(s);
       if (mm) {
         s.mermaidWinnerId = mm;
@@ -756,7 +757,7 @@ export function applyAction(state: SspState, action: SspAction): SspState {
       const stolen = target.hand.splice(idx, 1)[0];
       const p = requireActivePlayer(s);
       p.hand.push(stolen);
-      pushLog(s, { kind: 'sharkSteal', playerId: p.id, targetPlayerId: target.id, family: stolen.family });
+      pushLog(s, { kind: 'sharkSteal', playerId: p.id, targetPlayerId: target.id, family: stolen.family, card: { ...stolen } });
 
       const mm = checkMermaidWin(s);
       if (mm) {
@@ -867,7 +868,7 @@ export function canEndRound(state: SspState): boolean {
   return tentativeScore(p.hand, p.table, opts) >= stopThresholdFor(state, p);
 }
 
-/** Exposed for tests + AI heuristics. */
+/** Exposed for tests. */
 export const _internals = {
   STOP_THRESHOLD,
   scoreRound,
