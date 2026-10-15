@@ -19,9 +19,9 @@ Five layers, separated by directory:
 - **`src/net/`** — Trystero wrapper (`room.ts`, stubbed), stable identity (`identity.ts` — localStorage UUID + `?fresh` escape hatch), wire envelopes (`types.ts`).
 - **`src/store/`** — Zustand stores (`gameStore`, `networkStore`). `gameStore` holds the active module + state and exposes `dispatch` (broadcasts) and `applyLocal` (silent receiver path).
 - **`src/ui/`** — Game-agnostic shell: `App.tsx` (route between picker / lobby / playing), `GameLobby.tsx` (seat builder + game's `LobbyConfig`), `GameHost.tsx` (mounts the active game's `GameView`).
-- **`src/ai/`** — Game-agnostic helpers for learned agents that act over a fixed action-slot space + legality mask (`masked.ts`: masked argmax / sampling). Trained-network runtime goes here too.
+- **`src/ai/`** — Game-agnostic pieces for learned agents that act over a fixed action-slot space + legality mask: `masked.ts` (masked argmax / uniform / softmax sampling) and `mlp.ts` (dependency-free dense-network runtime for exported policy files, format `card-collecting/mlp@1`: layers of `act(W·x + b)`, W row-major [out][in] as base64 little-endian float32 — PyTorch `nn.Linear` layout).
 
-Outside `src/`: **`training/`** — offline, never shipped. Headless match simulator, seat-swapped eval harness, and a vectorized env server a Python learner drives over stdio. Bundled to `training/dist/` (git-ignored) by `npm run train:build`. See `training/README.md`.
+Outside `src/`: **`training/`** — offline, never shipped. Headless match simulator, seat-swapped eval harness, a vectorized env server, and the Python (PyTorch) trainer + evaluator that drive it over stdio. Bundled to `training/dist/` (git-ignored) by `npm run train:build`. See `training/README.md`.
 
 ## GameModule contract
 
@@ -100,7 +100,9 @@ Each turn: draw 2 (keep 1 or both), optional play-pair-for-ability, then STOP / 
 - `actions.ts` — 66 action slots (decisions, not physical cards: "play a crab pair", "keep card 0 and discard to pile 1"), `legalMask(obs)`, `decodeSlot(obs, slot)`, inverse `slotForAction`. A crab pick is two decisions: `crabPile:N` (decodes to a `CrabLook`, not a reducer action), then — re-observing with `crabLookPile` set, which reveals that pile — `crab:<family>`. `actWithPolicy` and the vec env drive both steps. `actions.test.ts` is a two-way oracle against the reducer (everything the reducer accepts is masked in; everything masked in decodes to something the reducer accepts).
 - `encode.ts` — 632-float feature vector from the observation only (counts, remembered pile contents, unseen pool, known opponent cards, per-family score deltas). Layout comes from the writer itself (`featureLayout()`), so it can't drift.
 - `ENCODER_VERSION` / `ACTION_SPACE_VERSION` are pinned in tests next to `OBS_DIM` / `NUM_SLOTS`. Bump on any layout change; trained weights must carry both and be refused on mismatch.
-- `agent.ts` — `actWithPolicy(state, pid, (obs, mask) → slot)` adapts any slot policy to the `chooseAIAction` shape.
+- `agent.ts` — `actWithPolicy(state, pid, (obs, mask) → slot)` adapts any slot policy to the `chooseAIAction` shape (and runs the crab two-step).
+- `policy.ts` — `loadSspPolicy(file)` validates a trained policy file (game, `encoderVersion`, `actionSpaceVersion`, dims) and refuses mismatches; `greedyPolicy` / `sampledPolicy` turn it into a slot policy.
+- Training lives in `training/ssp/` (`train.py` PPO with a heuristic-imitation warm start, self-play + heuristic + past-checkpoint opponents; `evaluate.py` for match / baselines / ladder + Elo). See `training/README.md`. A trained policy is NOT wired into the game UI yet.
 
 ### 7 Wonders (`src/games/seven-wonders/`)
 3 Ages × 6 picks per Age. Simultaneous: each player submits a `pendingPick` (build / wonder-stage / discard); reducer reveals + applies in batch, rotates hands (CW Ages I/III, CCW Age II), resolves military at Age end. Final scoring across 7 categories at Age III end. Expansions (Leaders, Cities, Babel, Armada, Edifice) will live under `src/games/seven-wonders/expansions/` and contribute extra decks + post-action hooks. No `if (expansion === ...)` conditionals — add a module hook instead.
@@ -139,7 +141,10 @@ Hidden info follows the project's "full state replication + UI gating" pattern �
 - `npm run train:build` — bundle `training/` entry points to `training/dist/*.mjs`
 - `npm run ssp:eval -- --a heuristic --b random --games 2000 --salt` — seat-swapped SSP head-to-head over worker threads
 - `python training/ssp/env_client.py` — random-agent smoke test of the Python ↔ Node env bridge (needs `train:build` first)
-- `conda env create -f training/environment.yml` — Python training env (`ssp-train`: PyTorch CUDA from conda-forge, numpy, tensorboard)
+- `conda env create -f training/environment.yml` — Python training env (`train`: PyTorch CUDA from conda-forge, numpy, tensorboard, pytest)
+- `python training/ssp/train.py --run <name> [--resume]` — train the SSP agent (outputs in `training/runs/<name>/`, git-ignored)
+- `python training/ssp/evaluate.py {match A B | baselines RUN | ladder RUN}` — seat-swapped evals; agents are `random`, `heuristic`, a policy `.json`, a run dir, or `RUN@N`
+- `python -m pytest training/ssp -q` — Python-side tests (TS ↔ PyTorch export parity, train → checkpoint → resume → evaluate)
 
 ## Deployment
 
@@ -252,7 +257,7 @@ Rebuilt from scratch (reference implementation: the local `../setwithfriends/` p
 
 ## Where to start next
 
-0. **SSP trained agent** — encoder, slots, mask, headless env and eval harness are in place (`training/README.md`). Next: a PyTorch learner (behaviour-clone the heuristic via `slotForAction` to validate the pipeline, then PPO self-play with an opponent pool), weight export, an MLP forward pass in `src/ai/`, a `nn:<weights>` agent spec in `training/ssp/agents.ts`, and a lobby toggle. Gate shipping on a seat-swapped eval vs `heuristic`.
+0. **SSP trained agent** — the whole loop works (`training/README.md`): a 40-update probe run reached 72% vs the heuristic by switching from STOP to LAST CHANCE. Next: a long run, then ship — copy a policy into the app (lazy-loaded, e.g. via `ui()`), add an AI-kind choice to the SSP lobby, and have `chooseAIAction` use `greedyPolicy` with the heuristic as fallback while the file loads. Gate shipping on a ≥4000-match seat-swapped eval vs `heuristic` with the CI's lower bound above 50%. The policy JSON is ~1 MB at 256×2; consider fp16 / int8 before shipping.
 1. **Set custom drill modes** — Kyle's reason for rebuilding. Add specs to `set/modes.ts`; anything with an objective or failure condition (sprint to N, blitz clock, streak/sudden-death, metronome) wants one new optional field on `SetModeSpec` plus a check in the reducer's resolution path. Board-generating drills (flashcard boards containing exactly one group, complete-the-set, near-miss decoys) can be built on `CardSpace.completion()` + rejection sampling from `state.rngState`.
 2. **Set online racing** — needs host-authoritative claim arbitration: guests' claims are requests, the host reduces and rebroadcasts (the `snap` channel already supports broadcast; `gameStore` would want a light `replaceState` next to `applyLocal`). Then flip `onlineSupported`.
 3. **7 Wonders central-board expansion mechanics** — Babel's Tower of Babel + Great Projects, Armada's shipyards + naval combat + island cards + pirate track. Currently those expansions contribute only a card pool + scoring rules. Adding the central boards is a self-contained next step (`applyAction` hook + new subPhase + UI overlay per expansion).

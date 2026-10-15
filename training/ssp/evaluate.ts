@@ -2,7 +2,7 @@
 // seats swapped, so both agents see the same opening deck from both chairs —
 // that cancels first-player advantage and a good part of the deal luck.
 
-import { agentFactory, agentSeed, type SspAgent } from './agents';
+import { agentFactory, agentLabel, agentSeed, type SspAgent } from './agents';
 import { playMatch, type MatchResult, type SimOptions } from './sim';
 
 export interface EvalJob {
@@ -142,8 +142,8 @@ export function summarize(spec: MatchupSpec, results: JobResult[]): EvalSummary 
 
   return {
     matches: n,
-    a: side(spec.a, true),
-    b: side(spec.b, false),
+    a: side(agentLabel(spec.a), true),
+    b: side(agentLabel(spec.b), false),
     aScore,
     aScoreCi95: wilson(aScore, n),
     seat0WinRate: seat0,

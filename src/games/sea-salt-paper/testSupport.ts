@@ -7,10 +7,13 @@
 //                  corners (lobster picks, trios, locked turns, deep crab digs).
 //   scrambleHidden rewrites everything one seat must NOT know, so a fair AI's
 //                  view (and choice) has to come out identical.
+//   randomPolicyFile  a small randomly initialised policy file, for exercising
+//                  the trained-policy path without a trained network.
 
 import type { PlayerId, Seat } from '@/core/types';
 import { createRng, rngInt, rngNext, shuffle, type RngState } from '@/core/rng';
 import { sampleLegal } from '@/ai/masked';
+import { MLP_FORMAT, encodeFloat32 } from '@/ai/mlp';
 import type { SspCard, SspCardFamily, SspState } from './types';
 import { FAMILY_ORDER } from './cards';
 import { applyAction } from './reducer';
@@ -18,6 +21,9 @@ import { chooseAIAction } from './ai';
 import { createSspState } from './setup';
 import { roundLog } from './knowledge';
 import { actWithPolicy } from './nn/agent';
+import { ACTION_SPACE_VERSION, NUM_SLOTS } from './nn/actions';
+import { ENCODER_VERSION, OBS_DIM } from './nn/encode';
+import { SSP_POLICY_GAME, type SspPolicyFile } from './nn/policy';
 
 export interface SampleOptions {
   players?: number;
@@ -145,4 +151,22 @@ export function scrambleHidden(
     }
   }
   return { s, changes };
+}
+
+/** A randomly initialised OBS_DIM → 32 → NUM_SLOTS policy. */
+export function randomPolicyFile(seed: number): SspPolicyFile {
+  const rng = createRng(seed);
+  const rand = (n: number, scale: number) => Array.from({ length: n }, () => (rngNext(rng) * 2 - 1) * scale);
+  return {
+    format: MLP_FORMAT,
+    game: SSP_POLICY_GAME,
+    encoderVersion: ENCODER_VERSION,
+    actionSpaceVersion: ACTION_SPACE_VERSION,
+    inputDim: OBS_DIM,
+    outputDim: NUM_SLOTS,
+    layers: [
+      { in: OBS_DIM, out: 32, activation: 'relu', weight: encodeFloat32(rand(OBS_DIM * 32, 0.1)), bias: encodeFloat32(rand(32, 0.1)) },
+      { in: 32, out: NUM_SLOTS, activation: 'linear', weight: encodeFloat32(rand(32 * NUM_SLOTS, 1)), bias: encodeFloat32(rand(NUM_SLOTS, 1)) },
+    ],
+  };
 }

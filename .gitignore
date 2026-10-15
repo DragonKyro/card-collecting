@@ -6,3 +6,4 @@ dist
 coverage
 training/dist
 __pycache__
+training/runs

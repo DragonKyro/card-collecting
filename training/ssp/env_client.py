@@ -11,6 +11,10 @@ this side only ever sees encoded observations, legal masks and rewards.
             actions = policy(batch.obs, batch.mask)      # one slot per row
             batch = env.step(actions)
 
+For many env processes in parallel, split each step into `send_step` (all
+workers) then `recv_batch` (all workers) — every node process works while the
+others are being written to.
+
 Run this file directly for a random-agent smoke test of the bridge:
 
     python training/ssp/env_client.py --episodes 200 --envs 32
@@ -40,6 +44,7 @@ class Batch:
     mask: np.ndarray  # (n, num_slots) bool -- True = legal
     reward: np.ndarray  # (n, 2) float32 -- per-seat reward since the previous batch
     done: np.ndarray  # (n,) bool -- an episode ended; obs is already the next episode's first decision
+    teacher: np.ndarray  # (n,) int16 -- heuristic's slot for the row, -1 if none / teacher off
     episodes: list  # summaries of the episodes that ended
 
 
@@ -66,10 +71,13 @@ class SspEnv:
         self.encoder_version: int = spec["encoderVersion"]
         self.action_space_version: int = spec["actionSpaceVersion"]
 
-    def _call(self, msg: dict) -> dict:
-        assert self._proc.stdin and self._proc.stdout
+    def _send(self, msg: dict) -> None:
+        assert self._proc.stdin
         self._proc.stdin.write(json.dumps(msg) + "\n")
         self._proc.stdin.flush()
+
+    def _recv(self) -> dict:
+        assert self._proc.stdout
         line = self._proc.stdout.readline()
         if not line:
             raise RuntimeError(f"env server exited (code {self._proc.poll()})")
@@ -77,6 +85,10 @@ class SspEnv:
         if not reply.get("ok"):
             raise RuntimeError(f"env server: {reply.get('error')}")
         return reply
+
+    def _call(self, msg: dict) -> dict:
+        self._send(msg)
+        return self._recv()
 
     def _batch(self, r: dict) -> Batch:
         n = r["n"]
@@ -86,6 +98,7 @@ class SspEnv:
             mask=np.frombuffer(base64.b64decode(r["mask"]), dtype=np.uint8).reshape(n, self.num_slots).astype(bool),
             reward=np.asarray(r["reward"], dtype=np.float32).reshape(n, 2),
             done=np.asarray(r["done"], dtype=bool),
+            teacher=np.asarray(r.get("teacher", [-1] * n), dtype=np.int16),
             episodes=r["episodes"],
         )
 
@@ -100,8 +113,10 @@ class SspEnv:
         learner_seat: str | int = "alternate",
         round_reward: float = 0.0,
         max_steps: int = 10_000,
+        teacher: bool = False,
     ) -> Batch:
-        """opponent: 'self' (both seats are the learner), 'heuristic' or 'random'."""
+        """opponent: 'self' (both seats are the learner), 'heuristic', 'random',
+        'nn:<policy.json>' or 'nn-sample:<policy.json>'."""
         options = {
             "numEnvs": num_envs,
             "seed": seed,
@@ -112,11 +127,34 @@ class SspEnv:
             "learnerSeat": learner_seat,
             "roundReward": round_reward,
             "maxSteps": max_steps,
+            "teacher": teacher,
         }
         return self._batch(self._call({"cmd": "reset", "options": options}))
 
     def step(self, actions) -> Batch:
-        return self._batch(self._call({"cmd": "step", "actions": [int(a) for a in actions]}))
+        self.send_step(actions)
+        return self.recv_batch()
+
+    def send_step(self, actions) -> None:
+        self._send({"cmd": "step", "actions": [int(a) for a in actions]})
+
+    def recv_batch(self) -> Batch:
+        return self._batch(self._recv())
+
+    def configure(self, opponent: str | None = None, teacher: bool | None = None) -> None:
+        """New fixed opponent for matches that start from now on, and/or teacher labels on/off."""
+        options: dict = {}
+        if opponent is not None:
+            options["opponent"] = opponent
+        if teacher is not None:
+            options["teacher"] = teacher
+        self._call({"cmd": "configure", "options": options})
+
+    def policy_logits(self, policy_path: str, obs: np.ndarray) -> np.ndarray:
+        """Logits from the TypeScript forward pass of an exported policy (parity checks)."""
+        payload = base64.b64encode(np.ascontiguousarray(obs, dtype="<f4").tobytes()).decode()
+        reply = self._call({"cmd": "policyLogits", "path": os.path.abspath(policy_path), "obs": payload})
+        return np.asarray(reply["logits"], dtype=np.float32)
 
     def close(self) -> None:
         if self._proc.poll() is None:

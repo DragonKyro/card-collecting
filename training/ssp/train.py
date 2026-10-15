@@ -1,0 +1,575 @@
+"""PPO trainer for the Sea Salt & Paper agent (2 players, Extra Salt by default).
+
+    conda activate train
+    python training/ssp/train.py --run first-try        # Ctrl+C any time: it checkpoints, then exits
+    python training/ssp/train.py --run first-try --resume
+    tensorboard --logdir training/runs
+
+Each update:
+  1. Collect `--rollout` decisions from every env — `--workers` node processes
+     × `--envs-per-worker` matches. Self-play workers train on both seats; the
+     rest play the heuristic or a past checkpoint drawn from the pool.
+  2. Learn from every finished transition: PPO, or for the first
+     `--bc-updates` imitation of the heuristic (a warm start for the policy
+     and the value estimate).
+  3. Every `--save-every`: a resumable checkpoint (ckpt/update_N.pt) and an
+     exported policy (policies/update_N.json) the TypeScript side can play —
+     `evaluate.py` and the opponent pool use these.
+  4. Every `--eval-every`: in the background, a seat-swapped eval of the new
+     policy vs the heuristic, random, and the checkpoint `--eval-past-gap`
+     saves earlier → tensorboard `eval/*` and evals.jsonl.
+
+Outputs go to training/runs/<run>/: config.json, metrics.jsonl, evals.jsonl,
+tensorboard events, ckpt/, policies/.
+"""
+
+from __future__ import annotations
+
+import argparse
+import collections
+import json
+import os
+import queue
+import random
+import shutil
+import subprocess
+import threading
+import time
+from dataclasses import dataclass, field
+
+import numpy as np
+import torch
+import torch.nn.functional as F
+from torch.utils.tensorboard import SummaryWriter
+
+import evaluate as ev
+from env_client import Batch, SspEnv
+from model import (PolicyValueNet, export_policy, load_checkpoint, masked_logits, net_from_checkpoint,
+                   save_checkpoint)
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.normpath(os.path.join(HERE, "..", ".."))
+DEFAULT_RUNS = os.path.join(REPO, "training", "runs")
+
+
+def default_workers() -> int:
+    """Leave a few cores for the learner and the background eval."""
+    return max(1, min(12, (os.cpu_count() or 4) - 4))
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    run = p.add_argument_group("run")
+    run.add_argument("--run", default=None, help="run name (default: a timestamp)")
+    run.add_argument("--runs-dir", default=DEFAULT_RUNS)
+    run.add_argument("--resume", action="store_true", help="continue the run from its latest checkpoint")
+    run.add_argument("--updates", type=int, default=2000, help="train until this many updates in total")
+    run.add_argument("--seed", type=int, default=1)
+    run.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    run.add_argument("--no-build", action="store_true", help="skip rebuilding training/dist")
+
+    game = p.add_argument_group("game / envs")
+    game.add_argument("--base-game", action="store_true", help="train without Extra Salt")
+    game.add_argument("--target", type=int, default=40)
+    game.add_argument("--workers", type=int, default=default_workers(), help="node env processes")
+    game.add_argument("--envs-per-worker", type=int, default=32)
+    game.add_argument("--rollout", type=int, default=64, help="decisions per env per update")
+    game.add_argument("--self-play", type=float, default=0.5, help="share of workers in self-play")
+    game.add_argument("--past-share", type=float, default=0.5,
+                      help="share of the other workers that face past checkpoints (the rest face the heuristic)")
+    game.add_argument("--pool", type=int, default=20, help="newest checkpoints past opponents are drawn from")
+    game.add_argument("--pool-refresh", type=int, default=10, help="updates between past-opponent re-draws")
+    game.add_argument("--round-reward", type=float, default=0.02,
+                      help="shaping per round: this × (own − opponent round points); the match result is ±1")
+
+    learn = p.add_argument_group("learning")
+    learn.add_argument("--hidden", type=int, default=256)
+    learn.add_argument("--layers", type=int, default=2)
+    learn.add_argument("--lr", type=float, default=3e-4)
+    learn.add_argument("--anneal-lr", action="store_true", help="decay lr linearly to 0 at --updates")
+    learn.add_argument("--epochs", type=int, default=4)
+    learn.add_argument("--minibatch", type=int, default=4096)
+    learn.add_argument("--gamma", type=float, default=0.995)
+    learn.add_argument("--lam", type=float, default=0.95)
+    learn.add_argument("--clip", type=float, default=0.2)
+    learn.add_argument("--ent-coef", type=float, default=0.01)
+    learn.add_argument("--vf-coef", type=float, default=0.5)
+    learn.add_argument("--max-grad-norm", type=float, default=0.5)
+    learn.add_argument("--bc-updates", type=int, default=20,
+                       help="first N updates imitate the heuristic (0 = learn from scratch)")
+
+    save = p.add_argument_group("checkpoints / eval")
+    save.add_argument("--save-every", type=int, default=10)
+    save.add_argument("--keep-ckpt", type=int, default=5, help="resumable .pt files to keep (policies are all kept)")
+    save.add_argument("--eval-every", type=int, default=20, help="0 = no background eval")
+    save.add_argument("--eval-games", type=int, default=1000)
+    save.add_argument("--eval-workers", type=int, default=4)
+    save.add_argument("--eval-past-gap", type=int, default=5, help="compare with the checkpoint this many saves back")
+    return p.parse_args(argv)
+
+
+# ---------------------------------------------------------------- envs
+
+@dataclass
+class Worker:
+    role: str  # 'self' | 'heuristic' | 'past'
+    env: SspEnv
+    opponent: str
+    batch: Batch | None = None
+
+
+def worker_roles(n: int, self_share: float, past_share: float) -> list[str]:
+    n_self = min(n, max(0, round(n * self_share)))
+    n_past = round((n - n_self) * past_share)
+    return ["self"] * n_self + ["past"] * n_past + ["heuristic"] * (n - n_self - n_past)
+
+
+def build_typescript() -> None:
+    vite = os.path.join(REPO, "node_modules", "vite", "bin", "vite.js")
+    node = shutil.which("node")
+    if not node or not os.path.isfile(vite):
+        raise FileNotFoundError("need node on PATH and `npm install` run in the repo")
+    subprocess.run([node, vite, "build", "--config", os.path.join("training", "vite.config.ts")],
+                   cwd=REPO, check=True)
+
+
+# ---------------------------------------------------------------- rollout storage
+
+class Rollout:
+    """Transitions for one update, in chronological order. Each env seat is a
+    stream: `next[i]` links a transition to that seat's following decision in
+    the same match, so rewards and GAE follow the seat that earned them. A
+    seat's newest transition is still collecting reward when the rollout ends
+    — it is carried into the next update instead of being trained on."""
+
+    def __init__(self, capacity: int, obs_dim: int, num_slots: int):
+        self.obs = np.zeros((capacity, obs_dim), np.float32)
+        self.mask = np.zeros((capacity, num_slots), bool)
+        self.action = np.zeros(capacity, np.int64)
+        self.logp = np.zeros(capacity, np.float32)
+        self.value = np.zeros(capacity, np.float32)
+        self.teacher = np.full(capacity, -1, np.int16)
+        self.reward = np.zeros(capacity, np.float32)
+        self.done = np.zeros(capacity, bool)
+        self.next = np.full(capacity, -1, np.int64)
+        self.n = 0
+
+    FIELDS = ("obs", "mask", "action", "logp", "value", "teacher", "reward", "done")
+
+    def clear(self) -> None:
+        self.reward[: self.n] = 0
+        self.done[: self.n] = False
+        self.next[: self.n] = -1
+        self.n = 0
+
+    def add(self, **rows: np.ndarray) -> np.ndarray:
+        k = len(rows["obs"])
+        at = np.arange(self.n, self.n + k)
+        for name, values in rows.items():
+            getattr(self, name)[at] = values
+        self.n += k
+        return at
+
+    def take(self, idx: np.ndarray) -> dict:
+        return {name: getattr(self, name)[idx].copy() for name in self.FIELDS}
+
+
+# ---------------------------------------------------------------- background eval
+
+class Evaluator:
+    """Runs evaluate.evaluate() jobs one at a time on a thread (each is a
+    node process), so training never waits for an eval."""
+
+    def __init__(self, games: int, workers: int, salt: bool):
+        self.games, self.workers, self.salt = games, workers, salt
+        self.jobs: queue.Queue = queue.Queue()
+        self.results: queue.Queue = queue.Queue()
+        self.thread = threading.Thread(target=self._loop, daemon=True)
+        self.thread.start()
+
+    def _loop(self) -> None:
+        while True:
+            job = self.jobs.get()
+            if job is None:
+                return
+            update, tag, a, b, games = job
+            try:
+                summary = ev.evaluate(a, b, games=games, salt=self.salt, workers=self.workers)
+                self.results.put((update, tag, b, summary, None))
+            except Exception as e:  # noqa: BLE001 — reported, training carries on
+                self.results.put((update, tag, b, None, str(e)))
+
+    def submit(self, update: int, policy: str, past: str | None) -> bool:
+        if self.jobs.qsize() > 2:
+            return False
+        self.jobs.put((update, "heuristic", policy, "heuristic", self.games))
+        self.jobs.put((update, "random", policy, "random", min(200, self.games)))
+        if past:
+            self.jobs.put((update, "past", policy, past, self.games))
+        return True
+
+    def drain(self) -> list[tuple]:
+        out = []
+        while True:
+            try:
+                out.append(self.results.get_nowait())
+            except queue.Empty:
+                return out
+
+    def close(self, drop_queued: bool) -> None:
+        """Wait for the running eval, and for queued ones unless `drop_queued`."""
+        while drop_queued:
+            try:
+                self.jobs.get_nowait()
+            except queue.Empty:
+                break
+        self.jobs.put(None)
+        self.thread.join()
+
+
+# ---------------------------------------------------------------- trainer
+
+@dataclass
+class Trainer:
+    args: argparse.Namespace
+    run_dir: str = ""
+    workers: list[Worker] = field(default_factory=list)
+    update: int = 0
+    decisions: int = 0
+    episodes: int = 0
+
+    def setup(self) -> None:
+        a = self.args
+        name = a.run or time.strftime("%Y%m%d-%H%M%S")
+        self.run_dir = os.path.join(a.runs_dir, name)
+        if os.path.isdir(os.path.join(self.run_dir, "ckpt")) and not a.resume:
+            raise SystemExit(f"{self.run_dir} already has checkpoints — pass --resume or pick another --run")
+        os.makedirs(self.run_dir, exist_ok=True)
+        if not a.no_build:
+            build_typescript()
+        random.seed(a.seed)
+        np.random.seed(a.seed)
+        torch.manual_seed(a.seed)
+        if a.device == "cpu":
+            torch.set_num_threads(min(4, os.cpu_count() or 1))
+        self.device = torch.device(a.device)
+
+        probe = SspEnv()
+        self.obs_dim, self.num_slots = probe.obs_dim, probe.num_slots
+        self.versions = {"encoderVersion": probe.encoder_version, "actionSpaceVersion": probe.action_space_version}
+        probe.close()
+
+        ckpt_dir = os.path.join(self.run_dir, "ckpt")
+        ckpts = sorted(f for f in os.listdir(ckpt_dir) if f.endswith(".pt")) if a.resume and os.path.isdir(ckpt_dir) else []
+        if ckpts:
+            ck = load_checkpoint(os.path.join(self.run_dir, "ckpt", ckpts[-1]), self.device)
+            if ck["versions"] != self.versions:
+                raise SystemExit(f"checkpoint was trained on {ck['versions']}, this build is {self.versions}")
+            self.net = net_from_checkpoint(ck, self.device)
+            self.opt = torch.optim.Adam(self.net.parameters(), lr=a.lr, eps=1e-5)
+            self.opt.load_state_dict(ck["optimizer"])
+            self.update, self.decisions, self.episodes = ck["update"], ck["decisions"], ck["episodes"]
+            print(f"resumed {name} at update {self.update} ({self.decisions:,} decisions)")
+        else:
+            self.net = PolicyValueNet(self.obs_dim, self.num_slots, a.hidden, a.layers).to(self.device)
+            self.opt = torch.optim.Adam(self.net.parameters(), lr=a.lr, eps=1e-5)
+
+        with open(os.path.join(self.run_dir, "config.json"), "w", encoding="utf-8") as f:
+            json.dump({**vars(a), **self.versions, "obsDim": self.obs_dim, "numSlots": self.num_slots,
+                       "arch": {"hidden": self.net.hidden, "layers": self.net.layers}}, f, indent=2)
+
+        roles = worker_roles(a.workers, a.self_play, a.past_share)
+        teacher = self.update < a.bc_updates
+        for w, role in enumerate(roles):
+            env = SspEnv()
+            seed = a.seed * 10_007 + w * 7_919 + self.update * 104_729
+            opponent = "self" if role == "self" else "heuristic"
+            worker = Worker(role, env, opponent)
+            worker.batch = env.reset(num_envs=a.envs_per_worker, seed=seed, extra_salt=not a.base_game,
+                                     target_score=a.target, opponent=opponent, round_reward=a.round_reward,
+                                     teacher=teacher)
+            self.workers.append(worker)
+        self.n_envs = a.workers * a.envs_per_worker
+        self.slices = [slice(i * a.envs_per_worker, (i + 1) * a.envs_per_worker) for i in range(a.workers)]
+        self.teacher_on = teacher
+        print(f"run {self.run_dir}\n  {a.workers} workers ({', '.join(f'{roles.count(r)} {r}' for r in dict.fromkeys(roles))})"
+              f" x {a.envs_per_worker} envs | obs {self.obs_dim} | slots {self.num_slots} | device {self.device}")
+
+        self.buf = Rollout(self.n_envs * (a.rollout + 2), self.obs_dim, self.num_slots)
+        self.last = np.full((self.n_envs, 2), -1, np.int64)
+        self.carry: dict | None = None
+        self.carry_streams: np.ndarray | None = None
+        self.writer = SummaryWriter(os.path.join(self.run_dir, "tb"))
+        self.evaluator = Evaluator(a.eval_games, a.eval_workers, not a.base_game) if a.eval_every > 0 else None
+        self.win_window: dict[str, collections.deque] = collections.defaultdict(lambda: collections.deque(maxlen=400))
+
+    # ------------------------------------------------------------ collection
+
+    def collect(self, bc: bool) -> np.ndarray:
+        """Fill the rollout; returns a mask of the transitions that are still
+        pending (carried to the next update, not trained on now)."""
+        a, buf, last = self.args, self.buf, self.last
+        buf.clear()
+        last[:] = -1
+        if self.carry is not None:
+            rows = buf.add(**self.carry)
+            last[self.carry_streams[:, 0], self.carry_streams[:, 1]] = rows
+        envs = np.arange(self.n_envs)
+
+        for _ in range(a.rollout):
+            batches = [w.batch for w in self.workers]
+            obs = np.concatenate([b.obs for b in batches])
+            mask = np.concatenate([b.mask for b in batches])
+            seat = np.concatenate([b.seat for b in batches]).astype(np.int64)
+            teacher = np.concatenate([b.teacher for b in batches])
+            with torch.no_grad():
+                logits, value = self.net(torch.from_numpy(obs).to(self.device))
+                logits = masked_logits(logits, torch.from_numpy(mask).to(self.device))
+                dist = torch.distributions.Categorical(logits=logits)
+                action = dist.sample()
+                if bc:
+                    t = torch.from_numpy(teacher.astype(np.int64)).to(self.device)
+                    action = torch.where(t >= 0, t, action)
+                logp = dist.log_prob(action)
+            action_np = action.cpu().numpy()
+            rows = buf.add(obs=obs, mask=mask, action=action_np, logp=logp.cpu().numpy(),
+                           value=value.cpu().numpy(), teacher=teacher)
+            prev = last[envs, seat]
+            linked = prev >= 0
+            buf.next[prev[linked]] = rows[linked]
+            last[envs, seat] = rows
+
+            for w, sl in zip(self.workers, self.slices):
+                w.env.send_step(action_np[sl])
+            for w in self.workers:
+                w.batch = w.env.recv_batch()
+            reward = np.concatenate([w.batch.reward for w in self.workers])
+            done = np.concatenate([w.batch.done for w in self.workers])
+            for s in (0, 1):
+                ok = last[:, s] >= 0
+                buf.reward[last[ok, s]] += reward[ok, s]
+                buf.done[last[ok & done, s]] = True
+            last[done] = -1
+            for w in self.workers:
+                for ep in w.batch.episodes:
+                    self.episodes += 1
+                    # While imitating, the teacher picks the moves — its results say nothing about the net.
+                    if not bc and w.role != "self" and ep["winnerSeat"] is not None:
+                        self.win_window[w.role].append(float(ep["winnerSeat"] in ep["learnerSeats"]))
+            self.decisions += self.n_envs
+
+        pending = np.zeros(buf.n, bool)
+        streams = np.argwhere(last >= 0)
+        pending[last[streams[:, 0], streams[:, 1]]] = True
+        self.carry = buf.take(last[streams[:, 0], streams[:, 1]])
+        self.carry_streams = streams
+        return pending
+
+    def advantages(self, pending: np.ndarray) -> np.ndarray:
+        a, buf = self.args, self.buf
+        adv = np.zeros(buf.n, np.float32)
+        for i in range(buf.n - 1, -1, -1):
+            if pending[i]:
+                continue
+            if buf.done[i]:
+                next_value = next_adv = 0.0
+            else:
+                j = buf.next[i]
+                next_value = buf.value[j]
+                next_adv = 0.0 if pending[j] else adv[j]
+            delta = buf.reward[i] + a.gamma * next_value - buf.value[i]
+            adv[i] = delta + a.gamma * a.lam * next_adv
+        return adv
+
+    # ------------------------------------------------------------ learning
+
+    def learn(self, pending: np.ndarray, adv: np.ndarray, bc: bool) -> dict:
+        a, buf, dev = self.args, self.buf, self.device
+        idx = np.flatnonzero(~pending)
+        obs = torch.from_numpy(buf.obs[idx]).to(dev)
+        mask = torch.from_numpy(buf.mask[idx]).to(dev)
+        action = torch.from_numpy(buf.action[idx]).to(dev)
+        old_logp = torch.from_numpy(buf.logp[idx]).to(dev)
+        advantage = torch.from_numpy(adv[idx]).to(dev)
+        returns = advantage + torch.from_numpy(buf.value[idx]).to(dev)
+        # Normalised once over the whole update (a tiny last minibatch has no usable std).
+        norm_adv = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
+        teacher = torch.from_numpy(buf.teacher[idx].astype(np.int64)).to(dev)
+        n = len(idx)
+        stats = collections.defaultdict(list)
+        for _ in range(a.epochs):
+            perm = torch.randperm(n, device=dev)
+            for start in range(0, n, a.minibatch):
+                b = perm[start:start + a.minibatch]
+                logits, value = self.net(obs[b])
+                logp_all = F.log_softmax(masked_logits(logits, mask[b]), dim=-1)
+                entropy = -(logp_all.exp() * logp_all).sum(-1).mean()
+                if bc:
+                    labelled = teacher[b] >= 0
+                    if not labelled.any():
+                        continue
+                    pi_loss = F.nll_loss(logp_all[labelled], teacher[b][labelled])
+                    stats["bc_accuracy"].append((logp_all[labelled].argmax(-1) == teacher[b][labelled])
+                                                .float().mean().item())
+                else:
+                    new_logp = logp_all.gather(1, action[b, None]).squeeze(1)
+                    log_ratio = new_logp - old_logp[b]
+                    ratio = log_ratio.exp()
+                    adv_b = norm_adv[b]
+                    pi_loss = -torch.min(ratio * adv_b, ratio.clamp(1 - a.clip, 1 + a.clip) * adv_b).mean()
+                    stats["approx_kl"].append(((ratio - 1) - log_ratio).mean().item())
+                    stats["clipfrac"].append(((ratio - 1).abs() > a.clip).float().mean().item())
+                v_loss = 0.5 * (value - returns[b]).pow(2).mean()
+                loss = pi_loss + a.vf_coef * v_loss - (0.0 if bc else a.ent_coef) * entropy
+                if not torch.isfinite(loss):
+                    stats["skipped_steps"].append(1.0)
+                    continue
+                self.opt.zero_grad()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.net.parameters(), a.max_grad_norm)
+                self.opt.step()
+                stats["policy_loss"].append(pi_loss.item())
+                stats["value_loss"].append(v_loss.item())
+                stats["entropy"].append(entropy.item())
+        out = {k: float(np.sum(v) if k == "skipped_steps" else np.mean(v)) for k, v in stats.items()}
+        ret_np, val_np = returns.cpu().numpy(), buf.value[idx]
+        out["explained_variance"] = float(1 - np.var(ret_np - val_np) / (np.var(ret_np) + 1e-8))
+        out["transitions"] = n
+        return out
+
+    # ------------------------------------------------------------ checkpoints
+
+    def save(self) -> str:
+        a, u = self.args, self.update
+        state = {"update": u, "decisions": self.decisions, "episodes": self.episodes,
+                 "versions": self.versions, "args": vars(a)}
+        ckpt_dir = os.path.join(self.run_dir, "ckpt")
+        save_checkpoint(os.path.join(ckpt_dir, f"update_{u:06d}.pt"), self.net, self.opt, state)
+        for old in sorted(f for f in os.listdir(ckpt_dir) if f.endswith(".pt"))[:-a.keep_ckpt]:
+            os.remove(os.path.join(ckpt_dir, old))
+        path = os.path.join(self.run_dir, "policies", f"update_{u:06d}.json")
+        export_policy(self.net, path, self.versions["encoderVersion"], self.versions["actionSpaceVersion"],
+                      meta={"run": os.path.basename(self.run_dir), "update": u, "decisions": self.decisions})
+        return path
+
+    def refresh_past_opponents(self) -> None:
+        pool = [p for _, p in ev.list_policies(self.run_dir)][-self.args.pool:]
+        if not pool:
+            return
+        for w in self.workers:
+            if w.role == "past":
+                w.opponent = "nn-sample:" + os.path.abspath(random.choice(pool))
+                w.env.configure(opponent=w.opponent)
+
+    # ------------------------------------------------------------ logging
+
+    def log_update(self, stats: dict, seconds: float, bc: bool) -> None:
+        u, w = self.update, self.writer
+        rate = self.args.rollout * self.n_envs / max(seconds, 1e-9)
+        for k, v in stats.items():
+            w.add_scalar(f"learn/{k}", v, u)
+        w.add_scalar("perf/decisions_per_sec", rate, u)
+        w.add_scalar("progress/decisions", self.decisions, u)
+        w.add_scalar("progress/episodes", self.episodes, u)
+        line = {"update": u, "decisions": self.decisions, "episodes": self.episodes, "seconds": seconds,
+                "phase": "bc" if bc else "ppo", **stats}
+        for role, window in self.win_window.items():
+            if window:
+                w.add_scalar(f"train/winrate_vs_{role}", float(np.mean(window)), u)
+                line[f"train_winrate_vs_{role}"] = float(np.mean(window))
+        with open(os.path.join(self.run_dir, "metrics.jsonl"), "a", encoding="utf-8") as f:
+            f.write(json.dumps(line) + "\n")
+        wins = " ".join(f"vs {r} {100 * np.mean(d):.0f}%" for r, d in self.win_window.items() if d)
+        head = f"bc acc {stats.get('bc_accuracy', 0):.2f}" if bc else (
+            f"pi {stats['policy_loss']:+.3f} kl {stats['approx_kl']:.4f} clip {stats['clipfrac']:.2f}")
+        print(f"u {u:5d} | {self.decisions / 1e6:6.2f}M dec | {rate / 1e3:5.1f}k/s | {head} "
+              f"v {stats['value_loss']:.3f} ent {stats['entropy']:.2f} ev {stats['explained_variance']:+.2f} | {wins}",
+              flush=True)
+
+    def log_evals(self) -> None:
+        if not self.evaluator:
+            return
+        for update, tag, opponent, s, err in self.evaluator.drain():
+            if err:
+                print(f"  eval u{update} vs {tag} failed: {err}")
+                continue
+            w = self.writer
+            lo, hi = s["aScoreCi95"]
+            w.add_scalar(f"eval/score_vs_{tag}", s["aScore"], update)
+            w.add_scalar(f"eval/score_vs_{tag}_ci_low", lo, update)
+            if tag == "heuristic":
+                w.add_scalar("eval/score_margin_vs_heuristic", s["a"]["avgScore"] - s["b"]["avgScore"], update)
+                w.add_scalar("eval/stop_per_match", s["a"]["stopsPerMatch"], update)
+                w.add_scalar("eval/lastchance_per_match", s["a"]["lastChancesPerMatch"], update)
+                if s["a"]["lastChanceWinRate"] is not None:
+                    w.add_scalar("eval/lastchance_won", s["a"]["lastChanceWinRate"], update)
+            with open(os.path.join(self.run_dir, "evals.jsonl"), "a", encoding="utf-8") as f:
+                f.write(json.dumps({"update": update, "vs": tag, "opponent": opponent,
+                                    **{k: v for k, v in s.items() if k != "report"}}) + "\n")
+            print(f"  eval u{update} vs {tag}: {100 * s['aScore']:.1f}% "
+                  f"[{100 * lo:.1f}-{100 * hi:.1f}] over {s['matches']} matches", flush=True)
+
+    # ------------------------------------------------------------ main loop
+
+    def train(self) -> None:
+        a = self.args
+        if self.update >= a.bc_updates:
+            self.refresh_past_opponents()
+        try:
+            while self.update < a.updates:
+                bc = self.update < a.bc_updates
+                if not bc and self.teacher_on:
+                    for w in self.workers:
+                        w.env.configure(teacher=False)
+                    self.teacher_on = False
+                    self.refresh_past_opponents()
+                if a.anneal_lr:
+                    for g in self.opt.param_groups:
+                        g["lr"] = a.lr * (1 - self.update / a.updates)
+                t0 = time.perf_counter()
+                pending = self.collect(bc)
+                t1 = time.perf_counter()
+                stats = self.learn(pending, self.advantages(pending), bc)
+                t2 = time.perf_counter()
+                self.update += 1
+                stats["collect_seconds"], stats["learn_seconds"] = t1 - t0, t2 - t1
+                self.log_update(stats, t2 - t0, bc)
+                if self.update % a.save_every == 0 or self.update == a.updates:
+                    policy = self.save()
+                    if self.evaluator and self.update % a.eval_every == 0:
+                        past = ev.list_policies(self.run_dir)
+                        gap = past[-1 - a.eval_past_gap][1] if len(past) > a.eval_past_gap else None
+                        if not self.evaluator.submit(self.update, policy, gap):
+                            print("  (eval skipped - previous evals still running)")
+                if self.update % a.pool_refresh == 0 and not bc:
+                    self.refresh_past_opponents()
+                self.log_evals()
+        except KeyboardInterrupt:
+            print(f"\ninterrupted - saving update {self.update}")
+            self.save()
+            self.close(finish_evals=False)
+            return
+        except BaseException:
+            self.close(finish_evals=False)
+            raise
+        self.close(finish_evals=True)
+
+    def close(self, finish_evals: bool) -> None:
+        for w in self.workers:
+            w.env.close()
+        if self.evaluator:
+            print("finishing queued evals..." if finish_evals else "finishing the running eval...", flush=True)
+            self.evaluator.close(drop_queued=not finish_evals)
+            self.log_evals()
+        self.writer.close()
+
+
+def main(argv: list[str] | None = None) -> str:
+    trainer = Trainer(parse_args(argv))
+    trainer.setup()
+    trainer.train()
+    return trainer.run_dir
+
+
+if __name__ == "__main__":
+    main()

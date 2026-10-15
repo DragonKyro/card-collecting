@@ -1,7 +1,7 @@
 # Conda env for training card-game agents (see training/README.md).
 #
 #   conda env create -f training/environment.yml
-#   conda activate ssp-train
+#   conda activate train
 #   python -c "import torch; print(torch.cuda.is_available())"
 #
 # PyTorch comes from conda-forge's CUDA builds. cuda-version is pinned to the

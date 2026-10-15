@@ -2,12 +2,12 @@
 //
 // Each env advances on its own (opponent moves, round-end click-throughs)
 // until a LEARNER seat has a decision, then reports that seat's encoded
-// observation and legal mask. A crab pick is two decisions (pile, then card
-// once that pile is visible); the first changes no game state, so the env
-// simply asks the same seat again with the pile revealed. The learner answers with one action slot per
-// env. Finished matches auto-reset: `done[i]` marks that env i's episode
-// ended during the last advance, and the obs returned is already the first
-// decision of its next episode.
+// observation and legal mask. The learner answers with one action slot per
+// env. A crab pick is two decisions (pile, then card once that pile is
+// visible); the first changes no game state, so the env simply asks the same
+// seat again with the pile revealed. Finished matches auto-reset: `done[i]`
+// marks that env i's episode ended during the last advance, and the obs
+// returned is already the first decision of its next episode.
 //
 // Rewards are per seat (always length 2) and accrue between consecutive
 // batches: credit `reward[i][s]` to seat s's most recent transition in env i.
@@ -16,12 +16,17 @@
 //     opponent's round total)
 //
 // opponent 'self' makes both seats learners (self-play); any agent spec from
-// agents.ts plays the non-learner seat otherwise.
+// agents.ts plays the non-learner seat otherwise. `configure` swaps the
+// opponent for matches that start afterwards (the self / fixed split can't
+// change mid-run) and toggles teacher labels: the slot the heuristic would
+// pick for each decision (−1 when it would do something the current decision
+// can't express, e.g. dig a different pile than the one being looked at).
 
 import type { SspState } from '@/games/sea-salt-paper/types';
 import { applyAction } from '@/games/sea-salt-paper/reducer';
 import { observe } from '@/games/sea-salt-paper/nn/observation';
-import { NUM_SLOTS, decodeSlot, legalMask } from '@/games/sea-salt-paper/nn/actions';
+import { chooseAIAction } from '@/games/sea-salt-paper/ai';
+import { NUM_SLOTS, decodeSlot, legalMask, slotForAction } from '@/games/sea-salt-paper/nn/actions';
 import { OBS_DIM, encodeObservation } from '@/games/sea-salt-paper/nn/encode';
 import { agentFactory, agentSeed, type AgentFactory, type SspAgent } from './agents';
 import { newMatch, winnerSeatOf } from './sim';
@@ -38,6 +43,8 @@ export interface VecEnvOptions {
   learnerSeat: 'alternate' | 0 | 1;
   roundReward: number;
   maxSteps: number;
+  /** Report the heuristic's choice for every decision (`VecBatch.teacher`). */
+  teacher: boolean;
 }
 
 export const DEFAULT_VEC_ENV_OPTIONS: VecEnvOptions = {
@@ -50,6 +57,7 @@ export const DEFAULT_VEC_ENV_OPTIONS: VecEnvOptions = {
   learnerSeat: 'alternate',
   roundReward: 0,
   maxSteps: 10_000,
+  teacher: false,
 };
 
 export interface Episode {
@@ -74,6 +82,8 @@ export interface VecBatch {
   /** numEnvs × 2, per-seat reward since the previous batch. */
   reward: Float32Array;
   done: Uint8Array;
+  /** Heuristic's slot for row i, or −1 (always −1 unless `teacher` is on). */
+  teacher: Int16Array;
   episodes: Episode[];
 }
 
@@ -92,7 +102,7 @@ interface EnvSlot {
 export class SspVecEnv {
   readonly opts: VecEnvOptions;
   private readonly envs: EnvSlot[] = [];
-  private readonly opponentFactory: AgentFactory | null;
+  private opponentFactory: AgentFactory | null;
   private batch: VecBatch;
 
   constructor(options: Partial<VecEnvOptions> = {}) {
@@ -106,8 +116,22 @@ export class SspVecEnv {
       mask: new Uint8Array(n * NUM_SLOTS),
       reward: new Float32Array(n * 2),
       done: new Uint8Array(n),
+      teacher: new Int16Array(n),
       episodes: [],
     };
+  }
+
+  /** Change the fixed opponent for matches that start from now on, and/or
+   *  turn teacher labels on or off. */
+  configure(update: { opponent?: string; teacher?: boolean }): void {
+    if (update.opponent !== undefined) {
+      if ((update.opponent === 'self') !== (this.opponentFactory === null)) {
+        throw new Error('configure: cannot switch between self-play and a fixed opponent mid-run');
+      }
+      if (update.opponent !== 'self') this.opponentFactory = agentFactory(update.opponent);
+      this.opts.opponent = update.opponent;
+    }
+    if (update.teacher !== undefined) this.opts.teacher = update.teacher;
   }
 
   reset(): VecBatch {
@@ -223,6 +247,12 @@ export class SspVecEnv {
       b.seat[i] = env.seat;
       encodeObservation(obs, b.obs.subarray(i * OBS_DIM, (i + 1) * OBS_DIM));
       b.mask.set(legalMask(obs), i * NUM_SLOTS);
+      let label = -1;
+      if (this.opts.teacher) {
+        const action = chooseAIAction(env.state, obs.viewerId);
+        if (action) label = slotForAction(obs, action);
+      }
+      b.teacher[i] = label;
     });
     return b;
   }

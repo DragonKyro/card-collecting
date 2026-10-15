@@ -63,4 +63,31 @@ describe('SspVecEnv', () => {
     const illegal = b.mask.findIndex((m) => m === 0);
     expect(() => env.step([illegal])).toThrow(/not legal/);
   });
+
+  it("teacher labels are the heuristic's choice, always a legal slot", () => {
+    const env = new SspVecEnv({ numEnvs: 4, opponent: 'self', teacher: true });
+    let labelled = 0;
+    let rows = 0;
+    const { done } = drive(env, 2, (b) => {
+      for (let i = 0; i < b.seat.length; i++) {
+        rows++;
+        const t = b.teacher[i];
+        if (t < 0) continue;
+        labelled++;
+        expect(b.mask[i * NUM_SLOTS + t]).toBe(1);
+      }
+    });
+    expect(done.length).toBeGreaterThanOrEqual(2);
+    expect(labelled / rows).toBeGreaterThan(0.95);
+  });
+
+  it('configure swaps the fixed opponent but not the self-play split', () => {
+    const fixed = new SspVecEnv({ numEnvs: 2, opponent: 'heuristic' });
+    fixed.reset();
+    fixed.configure({ opponent: 'random', teacher: true });
+    expect(fixed.opts.opponent).toBe('random');
+    expect(() => fixed.configure({ opponent: 'self' })).toThrow(/self-play/);
+    const self = new SspVecEnv({ numEnvs: 2, opponent: 'self' });
+    expect(() => self.configure({ opponent: 'heuristic' })).toThrow(/self-play/);
+  });
 });
