@@ -1,15 +1,14 @@
 // Sushi Go! Party card metadata and deck builder.
 //
 // Each card kind belongs to one of 5 categories: nigiri (always 1), roll
-// (choose 1), appetizer (choose 3), special (choose 3), dessert (choose 1).
+// (choose 1), appetizer (choose 3), special (choose 2), dessert (choose 1).
 // A complete menu has exactly 8 kinds: 1+1+3+2+1 = 8 (counting the nigiri set).
 //
-// Card counts per kind are fixed (from the published rulebook). Rolls, specials,
-// and most appetizers/desserts have a single count. Nigiri is a single kind with
-// three variants (egg×4, salmon×5, squid×5 → 14 cards total). Fruit has 9 cards
-// with variants distributed across pineapple/watermelon/orange.
+// Card counts per kind are fixed (from the published rulebook). Nigiri is a
+// single kind with three variants (egg×4, salmon×5, squid×3 → 12 cards).
+// Desserts are 15 cards each; a few join the deck every round (see
+// `dessertsForRound`). Fruit cards each show two fruits.
 
-import { shuffle, type RngState } from '@/core/rng';
 import type { SushiGoCard, SushiGoCardKind, SushiGoCategory } from './types';
 
 export interface KindInfo {
@@ -20,8 +19,9 @@ export interface KindInfo {
   rule: string;
   /** Total card count when this kind is included on the menu. */
   count: number;
-  /** Per-round dessert additions (only applies to desserts). 5/3/2 cards added across rounds 1/2/3. */
-  perRoundDessert?: [number, number, number];
+  /** Player-count limits from the rulebook ("only use in 3-8 player games"). */
+  minPlayers?: number;
+  maxPlayers?: number;
 }
 
 /** Default party-game menu (a reasonable starter). */
@@ -46,24 +46,24 @@ export const KIND_INFO: Record<SushiGoCardKind, KindInfo> = {
   // ---- Nigiri set (single kind, 3 variants) ----
   nigiri: {
     kind: 'nigiri', category: 'nigiri', label: 'Nigiri',
-    rule: 'Each nigiri scores its variant value (egg 1 / salmon 2 / squid 3). Wasabi placed before a nigiri triples it.',
-    count: 14,
+    rule: 'Egg 1, salmon 2, squid 3 pts. A nigiri played onto a wasabi scores triple.',
+    count: 12,
   },
 
   // ---- Rolls ----
   maki: {
     kind: 'maki', category: 'roll', label: 'Maki Roll',
-    rule: 'Most icons in round: 6 pts (split). 2nd most: 3 pts (split). Counts are 1/2/3 icons per card.',
+    rule: 'Round end: most icons 6 pts, 2nd most 3 (6–8 players: 6 / 4 / 2). Tied players all score the full points.',
     count: 12,
   },
   temaki: {
     kind: 'temaki', category: 'roll', label: 'Temaki',
-    rule: 'Most temaki in round: +4 pts. Fewest temaki: −4 pts (ties share).',
+    rule: 'Round end: most temaki +4, fewest (even 0) −4; no penalty at 2 players. Tied players all score the full points.',
     count: 12,
   },
   uramaki: {
     kind: 'uramaki', category: 'roll', label: 'Uramaki',
-    rule: 'First to 10 icons in a round: 8 pts. 2nd: 5. 3rd: 2. (Awards happen as totals are reached.)',
+    rule: 'First to 10 icons scores 8 at once and discards them; the next 5, then 2. At round end, most icons left scores the next unclaimed place.',
     count: 12,
   },
 
@@ -75,17 +75,17 @@ export const KIND_INFO: Record<SushiGoCardKind, KindInfo> = {
   },
   tempura: {
     kind: 'tempura', category: 'appetizer', label: 'Tempura',
-    rule: 'Every 2 tempura → 5 pts. Singletons score 0.',
+    rule: 'Each pair → 5 pts. A leftover single scores 0.',
     count: 8,
   },
   sashimi: {
     kind: 'sashimi', category: 'appetizer', label: 'Sashimi',
-    rule: 'Every 3 sashimi → 10 pts. Leftover cards score 0.',
+    rule: 'Each set of 3 → 10 pts. Leftovers score 0.',
     count: 8,
   },
   mizuOnigiri: {
     kind: 'mizuOnigiri', category: 'appetizer', label: 'Onigiri',
-    rule: '1 unique shape → 1, 2 → 4, 3 → 9, 4 → 16 pts. Duplicate shapes don\'t add.',
+    rule: 'Each set of different shapes: 1→1, 2→4, 3→9, 4→16 pts. A repeated shape starts another set.',
     count: 8,
   },
   tofu: {
@@ -95,77 +95,77 @@ export const KIND_INFO: Record<SushiGoCardKind, KindInfo> = {
   },
   edamame: {
     kind: 'edamame', category: 'appetizer', label: 'Edamame',
-    rule: 'Each edamame scores (neighbors with edamame), capped at 4 pts per card.',
-    count: 8,
+    rule: 'Each edamame: 1 pt per opponent with any edamame (max 4 per card). 3–8 players only.',
+    count: 8, minPlayers: 3,
   },
   eel: {
     kind: 'eel', category: 'appetizer', label: 'Eel',
     rule: '1 eel → −3 pts, 2+ → 7 pts.',
     count: 8,
   },
-  eggNigiri: {
-    kind: 'eggNigiri', category: 'appetizer', label: 'Egg Nigiri',
-    rule: 'Counts as a nigiri; scores its variant (here always egg = 1 pt).',
+  misoSoup: {
+    kind: 'misoSoup', category: 'appetizer', label: 'Miso Soup',
+    rule: '3 pts — but if more than one miso soup is played on the same turn, they are all discarded.',
     count: 8,
   },
 
   // ---- Specials ----
   soySauce: {
     kind: 'soySauce', category: 'special', label: 'Soy Sauce',
-    rule: 'At round end: +4 pts for each player who has the most distinct card colors in their table.',
+    rule: 'Round end: 4 pts if you have the most (or tied) different background colors among your played cards.',
     count: 3,
   },
   wasabi: {
     kind: 'wasabi', category: 'special', label: 'Wasabi',
-    rule: 'When played, the next nigiri YOU play scores triple.',
+    rule: 'The next nigiri you play goes on top of it and scores triple.',
     count: 3,
   },
   tea: {
     kind: 'tea', category: 'special', label: 'Tea',
-    rule: 'At round end: +1 pt per card of your most-played card kind, multiplied by tea cards.',
+    rule: 'Round end: 1 pt per card in your biggest set of one background color.',
     count: 3,
   },
   specialOrder: {
     kind: 'specialOrder', category: 'special', label: 'Special Order',
-    rule: 'Counts as a copy of one of your already-played cards (chosen when played).',
-    count: 3,
+    rule: 'When played, becomes a copy of another card you have played this round. 2–6 players only.',
+    count: 3, maxPlayers: 6,
   },
   takeoutBox: {
     kind: 'takeoutBox', category: 'special', label: 'Takeout Box',
-    rule: 'After a pick, you may flip any number of your played cards face-down to score 2 pts each (no other effect).',
+    rule: 'When played, flip any of your cards from earlier turns face-down: each is worth 2 pts.',
     count: 3,
   },
   chopsticks: {
     kind: 'chopsticks', category: 'special', label: 'Chopsticks',
-    rule: 'On a future turn you may pick 2 cards instead of 1, then return chopsticks to the hand.',
+    rule: 'On a later turn, play 2 cards from your hand, then put the chopsticks back into the hand.',
     count: 3,
   },
   spoon: {
     kind: 'spoon', category: 'special', label: 'Spoon',
-    rule: 'On a future turn, name a kind. If anyone has it in hand they pass it to you (random tiebreak).',
-    count: 3,
+    rule: 'On a later turn, name a card: the first player to your left holding it gives it to you and takes the spoon. 3–8 players only.',
+    count: 3, minPlayers: 3,
   },
   menu: {
     kind: 'menu', category: 'special', label: 'Menu',
-    rule: 'On a future turn you may peek 4 deck cards, take 1, discard the rest.',
-    count: 3,
+    rule: 'When played, draw 4 cards from the deck, play 1 of them, and shuffle the rest back. 2–6 players only.',
+    count: 3, maxPlayers: 6,
   },
 
-  // ---- Desserts (added in 5/3/2 across rounds) ----
+  // ---- Desserts (a few join the deck each round) ----
   pudding: {
     kind: 'pudding', category: 'dessert', label: 'Pudding',
-    rule: 'End of MATCH: most pudding +6 pts (split), fewest pudding −6 pts (split). Skipped at 2 players.',
-    count: 15, perRoundDessert: [5, 3, 2],
+    rule: 'Game end: most pudding +6, fewest −6 (no penalty at 2 players). Tied players all score the full points.',
+    count: 15,
   },
   greenTeaIceCream: {
     kind: 'greenTeaIceCream', category: 'dessert', label: 'Green Tea Ice Cream',
-    rule: 'End of MATCH: each set of 4 ice cream scores 12 pts.',
-    count: 15, perRoundDessert: [5, 3, 2],
+    rule: 'Game end: each set of 4 → 12 pts.',
+    count: 15,
   },
   fruit: {
     kind: 'fruit', category: 'dessert', label: 'Fruit',
-    rule: 'End of MATCH: each player scores per fruit pile (0→−2, 1→0, 2→1, 3→3, 4→6, 5→10 per kind).',
-    count: 15, perRoundDessert: [5, 3, 2],
+    rule: 'Game end, per fruit type: 0→−2, 1→0, 2→1, 3→3, 4→6, 5+→10 pts.',
+    count: 15,
   },
 };
 
@@ -175,101 +175,100 @@ export function kindsByCategory(category: SushiGoCategory): SushiGoCardKind[] {
   return ALL_KINDS.filter((k) => KIND_INFO[k].category === category);
 }
 
-/** Hand size per player count for round 1 (the rulebook table). Rounds 2-3 use the same hand size. */
-export function handSize(playerCount: number): number {
-  switch (playerCount) {
-    case 2: return 10;
-    case 3: return 9;
-    case 4: return 8;
-    case 5: return 7;
-    case 6: return 7;
-    case 7: return 7;
-    case 8: return 7;
-    default: return 8;
-  }
+/** Whether the rulebook allows this kind on the menu at `playerCount` players. */
+export function kindAllowedAt(kind: SushiGoCardKind, playerCount: number): boolean {
+  const { minPlayers = 2, maxPlayers = 8 } = KIND_INFO[kind];
+  return playerCount >= minPlayers && playerCount <= maxPlayers;
 }
 
-/** Returns the variants array for a kind, repeated to fill `count`. Each variant
+/** "3–8 players", or null when the kind has no player-count limit. */
+export function playerRangeLabel(kind: SushiGoCardKind): string | null {
+  const { minPlayers, maxPlayers } = KIND_INFO[kind];
+  if (minPlayers === undefined && maxPlayers === undefined) return null;
+  return `${minPlayers ?? 2}–${maxPlayers ?? 8} players`;
+}
+
+/** Cards dealt to each player per round (the rulebook table). */
+export function handSize(playerCount: number): number {
+  if (playerCount <= 3) return 10;
+  if (playerCount <= 5) return 9;
+  if (playerCount <= 7) return 8;
+  return 7;
+}
+
+/** Dessert cards shuffled into the deck before `round` (1-indexed): 5/3/2 at
+ *  2–5 players, 7/5/3 at 6–8. Rounds past 3 repeat the last entry. */
+export function dessertsForRound(playerCount: number, round: number): number {
+  const schedule = playerCount >= 6 ? [7, 5, 3] : [5, 3, 2];
+  return schedule[Math.min(round, schedule.length) - 1];
+}
+
+/** Resolution-order number printed in the corner of each copy (lowest goes first). */
+const ORDER_NUMBERS: Partial<Record<SushiGoCardKind, number[]>> = {
+  chopsticks: [1, 2, 3],
+  spoon: [4, 5, 6],
+  menu: [7, 8, 9],
+  takeoutBox: [10, 11, 12],
+};
+
+/** Returns the variants array for a kind, one entry per card. Each variant
  *  is the string put on SushiGoCard.variant. Single-variant kinds return ['' x count]. */
 function variantsForKind(kind: SushiGoCardKind): string[] {
+  const repeat = (pairs: [string, number][]) => pairs.flatMap(([v, n]) => Array.from({ length: n }, () => v));
+  const numbers = ORDER_NUMBERS[kind];
+  if (numbers) return numbers.map(String);
   switch (kind) {
-    case 'nigiri': {
-      // 4 egg, 5 salmon, 5 squid = 14
-      const out: string[] = [];
-      for (let i = 0; i < 4; i++) out.push('egg');
-      for (let i = 0; i < 5; i++) out.push('salmon');
-      for (let i = 0; i < 5; i++) out.push('squid');
-      return out;
-    }
-    case 'maki': {
-      // 4×1, 5×2, 3×3 icons = 12 cards
-      const out: string[] = [];
-      for (let i = 0; i < 4; i++) out.push('1');
-      for (let i = 0; i < 5; i++) out.push('2');
-      for (let i = 0; i < 3; i++) out.push('3');
-      return out;
-    }
-    case 'uramaki': {
-      // 4 of each 3/4/5-icon = 12
-      const out: string[] = [];
-      for (let i = 0; i < 4; i++) out.push('3');
-      for (let i = 0; i < 4; i++) out.push('4');
-      for (let i = 0; i < 4; i++) out.push('5');
-      return out;
-    }
-    case 'temaki':
-      return Array.from({ length: 12 }, () => '');
-    case 'fruit': {
-      // 15 cards, each card shows 2 fruits across pineapple/watermelon/orange.
-      // We'll use simple variants like 'PP', 'PW', 'WW' etc. (5 of each combo).
-      const pairs = ['PP', 'PW', 'PO', 'WW', 'WO', 'OO'];
-      const out: string[] = [];
-      const each = Math.floor(15 / pairs.length);
-      const rem = 15 % pairs.length;
-      for (const p of pairs) for (let i = 0; i < each; i++) out.push(p);
-      for (let i = 0; i < rem; i++) out.push(pairs[i]);
-      return out;
-    }
-    case 'mizuOnigiri': {
-      // 4 onigiri shapes (square/triangle/circle/rectangle), 2 of each = 8
-      const shapes = ['square', 'triangle', 'circle', 'rectangle'];
-      const out: string[] = [];
-      for (const s of shapes) { out.push(s); out.push(s); }
-      return out;
-    }
+    case 'nigiri':
+      return repeat([['egg', 4], ['salmon', 5], ['squid', 3]]);
+    case 'maki':
+      // Icon count per card.
+      return repeat([['1', 4], ['2', 5], ['3', 3]]);
+    case 'uramaki':
+      return repeat([['3', 4], ['4', 4], ['5', 4]]);
+    case 'mizuOnigiri':
+      return repeat([['circle', 2], ['triangle', 2], ['square', 2], ['rectangle', 2]]);
+    case 'fruit':
+      // Two fruits per card: W = watermelon, P = pineapple, O = orange.
+      return repeat([['WW', 2], ['PP', 2], ['OO', 2], ['WP', 3], ['WO', 3], ['PO', 3]]);
     default:
       return Array.from({ length: KIND_INFO[kind].count }, () => '');
   }
 }
 
-/** Build the round draw pile from a menu. Desserts have their own per-round add count.
- *  `round` is 1-indexed. Returns a shuffled deck. */
-export function buildRoundDeck(rng: RngState, menu: SushiGoCardKind[], round: number): SushiGoCard[] {
-  const cards: SushiGoCard[] = [];
-  let id = (round - 1) * 1000; // give cards in this round predictable id ranges
-  for (const kind of menu) {
-    const info = KIND_INFO[kind];
-    if (info.category === 'dessert') {
-      const addPerRound = info.perRoundDessert ?? [5, 3, 2];
-      const addCount = addPerRound[Math.min(round - 1, addPerRound.length - 1)];
-      // Desserts use round-independent variants; for fruit we draw from variants list.
-      const variants = variantsForKind(kind);
-      for (let i = 0; i < addCount; i++) {
-        const v = variants[(round * 17 + i) % variants.length];
-        cards.push({ id: id++, kind, variant: v });
-      }
-    } else {
-      const variants = variantsForKind(kind);
-      for (let i = 0; i < info.count; i++) {
-        cards.push({ id: id++, kind, variant: variants[i] || undefined });
-      }
-    }
-  }
-  return shuffle(rng, cards);
+/** The variations a kind comes in (egg / salmon / squid, icon counts, shapes,
+ *  fruit pairs), in deck order — what a spoon can ask for by name. [] for
+ *  single-variant kinds; the corner numbers of chopsticks / spoon / menu /
+ *  takeout box only set resolution order and don't count. */
+export function variantsOf(kind: SushiGoCardKind): string[] {
+  if (ORDER_NUMBERS[kind]) return [];
+  return [...new Set(variantsForKind(kind))].filter((v) => v !== '');
 }
 
-/** Validate a menu: must have exactly the right number of each category and no dups. */
-export function validateMenu(menu: SushiGoCardKind[]): string[] {
+/** The non-dessert cards of a round, unshuffled. Ids are unique per round.
+ *  `specialOrdersKept` special orders sit in dessert piles (they copied a
+ *  dessert) and stay out of later rounds. */
+export function roundCards(menu: SushiGoCardKind[], round: number, specialOrdersKept = 0): SushiGoCard[] {
+  const cards: SushiGoCard[] = [];
+  let id = round * 1000;
+  for (const kind of menu) {
+    if (KIND_INFO[kind].category === 'dessert') continue;
+    let variants = variantsForKind(kind);
+    if (kind === 'specialOrder') variants = variants.slice(specialOrdersKept);
+    for (const v of variants) cards.push({ id: id++, kind, variant: v || undefined });
+  }
+  return cards;
+}
+
+/** All copies of the menu's dessert, unshuffled. Ids stay clear of `roundCards`. */
+export function dessertCards(menu: SushiGoCardKind[]): SushiGoCard[] {
+  const kind = menu.find((k) => KIND_INFO[k].category === 'dessert');
+  if (!kind) return [];
+  return variantsForKind(kind).map((v, i) => ({ id: 100 + i, kind, variant: v || undefined }));
+}
+
+/** Validate a menu: must have exactly the right number of each category and no
+ *  dups, and (when the player count is known) only cards allowed at that count. */
+export function validateMenu(menu: SushiGoCardKind[], playerCount?: number): string[] {
   const errors: string[] = [];
   const seen = new Set<SushiGoCardKind>();
   for (const k of menu) {
@@ -285,24 +284,72 @@ export function validateMenu(menu: SushiGoCardKind[]): string[] {
       errors.push(`Need exactly ${CATEGORY_REQUIRED[cat]} ${cat}${CATEGORY_REQUIRED[cat] === 1 ? '' : 's'}, got ${byCat[cat]}.`);
     }
   }
+  if (playerCount !== undefined) {
+    for (const k of seen) {
+      if (!kindAllowedAt(k, playerCount)) {
+        errors.push(`${KIND_INFO[k].label} is for ${playerRangeLabel(k)} only (this match has ${playerCount}).`);
+      }
+    }
+  }
   return errors;
 }
 
-/** Color used on the card border, mostly cosmetic but also used for the soy-sauce
- *  scoring rule (counts distinct colors in your table). */
-export function cardColor(kind: SushiGoCardKind): string {
-  const info = KIND_INFO[kind];
-  switch (info.category) {
-    case 'nigiri': return '#f78b65';
-    case 'roll': return '#1c2a1a';
-    case 'appetizer': return '#f4d268';
-    case 'special': return '#b984c9';
-    case 'dessert': return '#aed5e6';
+/** A random legal menu for `playerCount` players. `rand` returns [0, 1). */
+export function randomMenu(playerCount: number, rand: () => number): SushiGoCardKind[] {
+  const menu: SushiGoCardKind[] = [];
+  for (const cat of Object.keys(CATEGORY_REQUIRED) as SushiGoCategory[]) {
+    const pool = kindsByCategory(cat).filter((k) => kindAllowedAt(k, playerCount));
+    for (let n = 0; n < CATEGORY_REQUIRED[cat]; n++) {
+      menu.push(...pool.splice(Math.floor(rand() * pool.length), 1));
+    }
   }
+  return menu;
+}
+
+/** Background color group, the thing soy sauce and tea count. Every food has
+ *  its own, except that wasabi shares nigiri's yellow. */
+export function colorGroup(kind: SushiGoCardKind): SushiGoCardKind {
+  return kind === 'wasabi' ? 'nigiri' : kind;
+}
+
+const KIND_COLOR: Record<SushiGoCardKind, string> = {
+  nigiri: '#f5c33b',
+  maki: '#e5584a',
+  temaki: '#a3b84a',
+  uramaki: '#5aaee0',
+  dumpling: '#7b90e4',
+  tempura: '#ad8fd8',
+  sashimi: '#8fd46e',
+  mizuOnigiri: '#c5ccd4',
+  tofu: '#e9dcae',
+  edamame: '#43b07c',
+  eel: '#b56aa9',
+  misoSoup: '#ea9b48',
+  soySauce: '#a7764c',
+  wasabi: '#f5c33b',
+  tea: '#d8b47e',
+  specialOrder: '#e8739c',
+  takeoutBox: '#c97b55',
+  chopsticks: '#4fc3c0',
+  spoon: '#98abc0',
+  menu: '#a24a63',
+  pudding: '#f5a9c4',
+  greenTeaIceCream: '#c4e0f0',
+  fruit: '#a8dcd1',
+};
+
+/** Card background color — one per food (see `colorGroup`). */
+export function cardColor(kind: SushiGoCardKind): string {
+  return KIND_COLOR[colorGroup(kind)];
 }
 
 export function nigiriPoints(variant: string | undefined): number {
   if (variant === 'salmon') return 2;
   if (variant === 'squid') return 3;
   return 1; // egg
+}
+
+/** Resolution-order number of a chopsticks / spoon / menu / takeout box card. */
+export function orderNumber(card: SushiGoCard): number {
+  return Number(card.copyOf?.variant ?? card.variant ?? 0);
 }

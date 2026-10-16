@@ -50,11 +50,14 @@ const COLOR_LABELS: Record<string, string> = {
 
 interface Props {
   module: AnyGameModule;
+  /** Seats + config to start from instead of the defaults — set when a
+   *  finished match returns here (`GameModule.replayInLobby`). */
+  initial?: { config: unknown; seats: Seat[] };
   onBack(): void;
   onStart(): void;
 }
 
-export function GameLobby({ module, onBack, onStart }: Props) {
+export function GameLobby({ module, initial, onBack, onStart }: Props) {
   const localUuid = useMemo(() => getOrCreateUuid(), []);
   const role = useNetworkStore((s) => s.role);
   const status = useNetworkStore((s) => s.status);
@@ -74,7 +77,8 @@ export function GameLobby({ module, onBack, onStart }: Props) {
   // Local-only seat list for the hot-seat path (and host's initial state before
   // anyone joins). Once online, the host's seats live on networkStore.lobby.
   // Seat 0 defaults to the human local player; seats added beyond default to AI.
-  const [hotSeats, setHotSeats] = useState<Seat[]>(() => [
+  // Returning from a match re-seeds from that match's lineup instead.
+  const [hotSeats, setHotSeats] = useState<Seat[]>(() => initial?.seats ?? [
     { id: localUuid, name: 'You', color: COLORS[0], isAI: false, isLocal: true },
     { id: 'seat-1', name: 'Player 2', color: COLORS[1], isAI: true, isLocal: true },
   ]);
@@ -83,7 +87,8 @@ export function GameLobby({ module, onBack, onStart }: Props) {
   // (solo + host) edits their own hotSeats and (if hosting) broadcasts on change.
   const seats: Seat[] = isOnlineGuest && remoteLobby ? remoteLobby.seats : hotSeats;
 
-  const [config, setConfig] = useState<unknown>(() => module.defaultConfig(seats));
+  const [config, setConfig] = useState<unknown>(() =>
+    initial ? initial.config : module.defaultConfig(seats));
   const [bundle, setBundle] = useState<GameUiBundle<GameStateShape, unknown, unknown> | null>(null);
   const [joinCode, setJoinCode] = useState('');
   /** True while module.prepare (e.g. loading AI policy files) runs before a start. */
@@ -151,7 +156,7 @@ export function GameLobby({ module, onBack, onStart }: Props) {
   }
 
   async function startLocal() {
-    const errors = module.validateConfig(config);
+    const errors = module.validateConfig(config, seats);
     if (errors.length) { alert(errors.join('\n')); return; }
     if (!(await prepareMatch(seats))) return;
     const seed = randomSeed();
@@ -186,7 +191,7 @@ export function GameLobby({ module, onBack, onStart }: Props) {
 
   async function startOnline() {
     if (!isOnlineHost) return;
-    const errors = module.validateConfig(config);
+    const errors = module.validateConfig(config, hotSeats);
     if (errors.length) { alert(errors.join('\n')); return; }
     if (!(await prepareMatch(hotSeats))) return;
     const seed = randomSeed();
@@ -198,7 +203,8 @@ export function GameLobby({ module, onBack, onStart }: Props) {
   }
 
   // Guests jump to the playing screen once the host starts the game; the start
-  // handler in networkStore already loaded gameStore for them.
+  // handler in networkStore already loaded gameStore for them. Host / solo never
+  // jump here (a host returning from a match has also cleared gameStore).
   const guestGameLoaded = useGameStore((s) => s.state !== null && s.module !== null);
   useEffect(() => {
     if (isOnlineGuest && guestGameLoaded) onStart();

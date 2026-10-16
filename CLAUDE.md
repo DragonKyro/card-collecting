@@ -29,9 +29,9 @@ The single rule that makes the multi-game design work:
 
 ```ts
 GameModule<S, A, C> {
-  id, name, tagline, minPlayers, maxPlayers, onlineSupported?
+  id, name, tagline, minPlayers, maxPlayers, onlineSupported?, replayInLobby?
   defaultConfig(seats) → C
-  validateConfig(config) → string[]
+  validateConfig(config, seats?) → string[]   // seats = the lineup about to start
   createInitialState(config, seed) → S
   applyAction(state, action) → S          // pure, deterministic
   chooseAIAction?(state, playerId) → A | null
@@ -51,6 +51,8 @@ GameModule<S, A, C> {
 The shell, store, and net layer never name a specific game. Adding a new game means: drop a folder, register it, done.
 
 `onlineSupported: false` opts a module out of the online path — the lobby hides "Host online" for it. Only Set sets it (real-time claims need arbitration the action-broadcast net layer can't do). Default is `true`/absent.
+
+`replayInLobby: true` makes the game-over "Play again" return to the lobby with the finished match's config and seats pre-filled (so options can change before re-dealing) instead of re-dealing at once. A host keeps the room open; guests wait on their game-over screen for the next `start`. Only Sushi Go sets it (so the menu can change between matches).
 
 ## Multiplayer model
 
@@ -72,7 +74,7 @@ Every module exports a `chooseAIAction(state, playerId) → action | null`. Exce
 
 Key contextual signals each AI consumes:
 
-- **Sushi Go!** — builds a `Knowledge` snapshot every pick: per-kind unseen cards (deck composition − everything visible on tables and in own hand), picks remaining this round, and own picks remaining. Wasabi value scales with `P(see another nigiri)`, sashimi with `P(see 1 / 2 more sashimi)`, eel with `P(see a second eel)`, chopsticks/spoon/menu with future-picks remaining, tea with how much room is left to grow the most-played kind. Tempura discounts a new pair start by partner probability. Combined with a from-scratch round re-score that adds the card to the table (so wasabi-before-nigiri ordering, edamame neighbors, soy-sauce color count, etc. all factor in). Chopsticks/spoon double-pick triggers only when top-2 value exceeds top-1 by `chopsticksSaveValue`.
+- **Sushi Go!** — builds a `Knowledge` snapshot every pick: per-kind unseen cards (deck composition − everything visible on tables, dessert piles, discards and in own hand), picks remaining this round, and own picks remaining. Wasabi value scales with `P(see another nigiri)`, sashimi with `P(see 1 / 2 more sashimi)`, eel with `P(see a second eel)`, chopsticks/spoon/menu with future-picks remaining, tea with how much room is left to grow the most-played kind. Tempura discounts a new pair start by partner probability. Combined with a from-scratch round re-score that adds the card to the table (so wasabi-before-nigiri ordering, edamame neighbors, soy-sauce color count, etc. all factor in). Chopsticks double-pick triggers only when top-2 value exceeds top-1 by `chopsticksSaveValue`. Special-card decisions reuse the same valuation: special order copies its best-valued card, menu plays its best draw, spoon asks for the best value × P(an opponent holds it) (called when that's ≥ 3 or few turns are left), a spoon giver hands over the copy worth least to the asker, takeout box greedily flips cards that score better face-down.
 - **Sea Salt & Paper** — the exception: no hand-written AI. Every difficulty is a trained neural-network policy (`aiLevels.ts`; see the SSP notes below). The old heuristic was removed after the shipped policies were trained; new training runs learn from scratch.
 - **7 Wonders** — scores each card in hand: vp/shields/coins/science/produce, end-VP cards by counting matching targets, neighbor-purchase cost via `suggestCheapestPurchase`. Strong negative when a duplicate name is already in tableau or no plan can pay. If no build is positive, picks the lowest-value card for a wonder stage (if affordable) or discards. The base AI now dispatches to `getActiveExpansions(config)`'s `chooseAIAction` for expansion-owned subphases — Leaders' `leaderDraft`, `leaderPlay`, `solomonAwaitPick` — so the host driver can drive AI through the leader draft + per-age leader play.
 - **7 Wonders Duel** — for each available pyramid card, scores build/bury/discard outcomes against opponent production (price per unit = `2 + opponent's fixed production`, flattened to 1 with the matching trade-discount card). Wonder draft ranks each wonder by approximate VP + shields + coins/science/produce; bury value uses the best unbuilt wonder's value. Progress-token pick uses a static preference list (Philosophy → Mathematics → Agriculture → Masonry → Architecture → Law → Urbanism → Strategy → Economy → Theology).
@@ -84,7 +86,13 @@ Key contextual signals each AI consumes:
 Each game's `types.ts` carries detailed notes on the eventual reducer. Short summary:
 
 ### Sushi Go! Party (`src/games/sushi-go/`)
-Simultaneous pick + pass-hands. Engine waits at `subPhase: 'selecting'` until all live players submit `submitPick`, then batch-applies and rotates hands. Specials (chopsticks/spoon/special-order/menu/takeout-box) enter a `specialResolution` sub-phase for the playing player. Multi-round (default 3); dessert pile persists across rounds, table resets. Menu builder picks 8 card kinds in the lobby; turn structure is identical across menus. `activePlayerId` is parked on whichever AI seat hasn't picked yet this tick (mirrors 7W's `picking` setup) so the GameHost AI driver wakes up for each AI in turn — without this, simultaneous-pick games would freeze when no human is around to dispatch.
+Simultaneous pick + pass-left (every round). Engine waits at `subPhase: 'selecting'` until all players submit `submitPick` (1 card, 2 with chopsticks on the table, `useSpoon` to also call a spoon), then reveals in one batch. Cards that need a decision once revealed queue in `state.resolution.steps` and are answered one at a time in `subPhase: 'resolving'`, with `activePlayerId` parked on the chooser: special orders first (`copyCard`), then spoons (`askSpoon`, then `giveSpoon` if a bare kind was asked and the giver holds several variants) / menus (`pickMenu`, 4 drawn off `state.deck` when the step comes up) / takeout boxes (`flipCards`) by the number in their corner (chopsticks 1–3, spoon 4–6, menu 7–9, takeout 10–12, stored as `variant`). A card a step puts on a table can queue more steps. End of turn: 2+ miso soups played that turn are all discarded; 10+ uramaki icons claim 8/5/2 at once (`claimUramaki`, ties share a place and skip the next; `player.uramakiPoints`, `state.uramakiNextPlace`). A special order stores `copyOf` and scores as that card (`effectiveCard`); a flipped card (`flipped: true`) scores 2 and counts as nothing else but still holds its wasabi.
+
+Rules follow the Gamewright rulebook: hand 10/9/8/7 at 2–3/4–5/6–7/8 players; desserts join the deck 5/3/2 (2–5p) or 7/5/3 (6–8p) from a shuffled 15-card `dessertSupply`, unplayed desserts carry to the next round; maki 6/3 (6/4/2 at 6–8p), maki / temaki / pudding ties take the full points; soy sauce and tea count background colors (`colorGroup` — one per food, wasabi shares nigiri yellow). Menu builder picks 8 kinds (1 nigiri + 1 roll + 3 appetizers + 2 specials + 1 dessert); `KindInfo.minPlayers/maxPlayers` keep spoon / edamame out of 2p and menu / special order out of 7–8p (`validateMenu(menu, playerCount)`, enforced via `validateConfig(config, seats)`). The lobby's Random menu button calls `randomMenu(playerCount, Math.random)` — UI-side randomness is fine there, the config is broadcast like any other edit. `activePlayerId` is parked on whichever AI seat hasn't picked yet this tick (mirrors 7W's `picking` setup) so the GameHost AI driver wakes up for each AI in turn — without this, simultaneous-pick games would freeze when no human is around to dispatch.
+
+Card art is hand-drawn SVG in `art.tsx` (flat fills, no `<defs>`, so cards never clash on ids); variants show in the art (nigiri toppings, maki / uramaki roll counts, onigiri shapes, the two fruits). Background colors (`cardColor`) are visual only — scoring reads `colorGroup`.
+
+Simplifications: the chopsticks' second card and the spoon call are chosen when submitting the pick (the rulebook calls them during the reveal); a special order picks its copy right after the reveal rather than face-down beforehand.
 
 ### Sea Salt & Paper (`src/games/sea-salt-paper/`)
 Each turn: draw 2 (keep 1 or both), optional play-pair-for-ability, then STOP / LAST CHANCE / pass. "LAST CHANCE" triggers a peer-relative final round — proposer wins bonus only if their score still leads. Multi-round; first to `targetScore` ends the match. Base families: mermaid, shark/swimmer/crab/boat/fish (duos), shell/octopus/penguin/sailor (collectors), lighthouse/shoal/penguinColony/captain (multipliers).

@@ -40,16 +40,20 @@
 
 .sgp .player-strip header {
   display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
   justify-content: space-between;
   align-items: center;
   font-weight: 600;
   margin-bottom: 6px;
 }
 
+.sgp .player-strip header > span { white-space: nowrap; }
+
 .sgp .scores {
   font-size: 12px;
   display: flex;
-  gap: 10px;
+  gap: 6px;
   color: rgba(255,255,255,0.8);
 }
 
@@ -173,7 +177,8 @@
   width: 88px;
   height: 124px;
   border-radius: 8px;
-  background: var(--cream, #fbf6ea);
+  /* Background color is per food (set inline from cardColor). */
+  background: var(--kind-color, var(--cream, #fbf6ea));
   border: 2px solid var(--ink, #1c1a2e);
   position: relative;
   display: flex;
@@ -206,18 +211,11 @@
   left: 4px;
   right: 4px;
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.4px;
   z-index: 2;
-}
-
-.sgp-card .ribbon .pts {
-  background: var(--ink, #1c1a2e);
-  color: var(--cream, #fbf6ea);
-  padding: 0 5px;
-  border-radius: 3px;
 }
 
 .sgp-card .ribbon .fam {
@@ -233,24 +231,45 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  position: relative;
+  padding-top: 10px; /* clear the corner label */
 }
+/* Small cards drop the corner label (the footer names the card) to keep the art clear. */
+.sgp-card.small .ribbon { display: none; }
+.sgp-card.small .art { padding-top: 0; }
+
+/* Resolution-order number (chopsticks / spoon / menu / takeout box). */
+.sgp-card .art .order {
+  position: absolute;
+  right: 4px;
+  bottom: 2px;
+  font-size: 10px;
+  font-weight: 700;
+  background: var(--ink, #1c1a2e);
+  color: var(--cream, #fbf6ea);
+  border-radius: 50%;
+  min-width: 15px;
+  height: 15px;
+  line-height: 15px;
+  text-align: center;
+}
+.sgp-card.small .art .order { font-size: 8px; min-width: 11px; height: 11px; line-height: 11px; right: 2px; }
 
 .sgp-card .footer {
-  height: 22px;
+  min-height: 22px;
   font-size: 9px;
   text-align: center;
   letter-spacing: 0.5px;
-  color: rgba(0,0,0,0.6);
+  color: rgba(0,0,0,0.72);
+  background: rgba(255,255,255,0.72);
+  border-bottom-left-radius: 6px;
+  border-bottom-right-radius: 6px;
   text-transform: uppercase;
-  padding: 0 2px;
+  padding: 2px 2px 0;
   line-height: 1.1;
 }
 
-.sgp-card .color-bar {
-  height: 6px;
-  border-top-left-radius: 6px;
-  border-top-right-radius: 6px;
-}
+.sgp-card.small .footer { font-size: 7px; min-height: 16px; letter-spacing: 0.2px; }
 
 .sgp-card.facedown {
   background: repeating-linear-gradient(
@@ -260,6 +279,14 @@
   border-color: var(--ink, #1c1a2e);
 }
 .sgp-card.facedown .art, .sgp-card.facedown .ribbon, .sgp-card.facedown .footer { display: none; }
+
+/* Flipped by a takeout box: worth 2, no longer its food. */
+.sgp-card.flipped {
+  background: repeating-linear-gradient(
+    45deg, #b98a5a, #b98a5a 8px,
+    #a77a4c 8px, #a77a4c 16px
+  );
+}
 
 /* Card tooltip */
 .sgp-card .card-tooltip {
@@ -293,6 +320,28 @@
 .sgp-card:hover .card-tooltip { opacity: 1; transform: translateX(-50%) translateY(0); }
 .sgp-card .card-tooltip strong { display: block; margin-bottom: 4px; }
 .sgp-card .card-tooltip .rule { color: rgba(251,246,234,0.85); }
+
+/* Special-card decision panel */
+.sgp .sgp-resolve {
+  background: rgba(0,0,0,0.3);
+  border: 1px solid rgba(255,255,255,0.18);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+.sgp .sgp-resolve.mine { border: 2px solid var(--sushi-yellow); }
+.sgp .sgp-spoon-asks {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+.sgp .sgp-spoon-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.sgp .sgp-spoon-row button { font-size: 12px; padding: 3px 8px; }
 
 /* Lobby menu builder */
 .sgp-lobby .sgp-menu-cat { margin-top: 12px; }
@@ -328,6 +377,12 @@
 .sgp-lobby .sgp-menu-pick.selected {
   border-color: var(--accent);
   background: rgba(106, 160, 255, 0.18);
+}
+.sgp-lobby .sgp-menu-pick:disabled { opacity: 0.4; cursor: not-allowed; }
+.sgp-lobby .sgp-menu-pick .range {
+  display: block;
+  font-size: 10px;
+  color: var(--fg-muted);
 }
 /* Backwards-compat for the now-removed inline rule blurb. */
 .sgp-lobby .sgp-menu-pick .rule { display: none; }

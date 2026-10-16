@@ -17,9 +17,12 @@ import { ChatPanel } from './ChatPanel';
 
 interface Props {
   onExit(): void;
+  /** "Play again" for modules with `replayInLobby`: back to that game's lobby
+   *  with the finished match's config + seats pre-filled. */
+  onReturnToLobby(gameId: string, initial: { config: unknown; seats: Seat[] }): void;
 }
 
-export function GameHost({ onExit }: Props) {
+export function GameHost({ onExit, onReturnToLobby }: Props) {
   const module = useGameStore((s) => s.module);
   const state = useGameStore((s) => s.state);
   const localPlayerId = useGameStore((s) => s.localPlayerId);
@@ -148,6 +151,14 @@ export function GameHost({ onExit }: Props) {
       return;
     }
     const cfg = cur.matchConfig as { config: unknown; seats: Seat[] };
+    if (cur.module.replayInLobby) {
+      // Re-deal from the lobby so options can change first. A host keeps the
+      // room open: the lobby rebroadcasts on mount, and guests sit on their
+      // game-over screen until the next `start` reloads them.
+      useGameStore.getState().clear();
+      onReturnToLobby(cur.module.id, cfg);
+      return;
+    }
     try {
       await cur.module.prepare?.(cfg.config, cfg.seats);
     } catch (e) {
