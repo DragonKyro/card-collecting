@@ -578,6 +578,9 @@ export function applyAction(state: SspState, action: SspAction): SspState {
       if (emptyPile !== -1 && s.discards[1 - emptyPile].length > 0 && action.discardToPile !== emptyPile) {
         throw new Error('keepFromDraw: an empty discard pile must be filled first');
       }
+      const passed = isActiveLocked(s)
+        ? undefined
+        : s.discards.flatMap((pile) => (pile.length ? [{ ...pile[pile.length - 1] }] : []));
       p.hand.push(keep);
       s.discards[action.discardToPile].push(discard);
       s.pendingDraw = [];
@@ -587,6 +590,8 @@ export function applyAction(state: SspState, action: SspAction): SspState {
         keptFamily: keep.family,
         discardedFamily: discard.family,
         toPile: action.discardToPile,
+        card: { ...discard },
+        passed,
       });
 
       // The Dolphins (Pepper): when a player discards a collector card

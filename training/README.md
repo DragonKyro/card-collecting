@@ -182,8 +182,8 @@ The game-side pieces live in `src/games/sea-salt-paper/`. `knowledge.ts`
 defines what a seat may know. In `nn/`:
 
 - `observation.ts`: the agent's view
-- `actions.ts`: 66 action slots, legal mask, decoder
-- `encode.ts`: 632 features
+- `actions.ts`: action space v3, 137 slots (crab / lobster picks name the colour), legal mask, decoder (`actionsV2.ts`: the frozen 66-slot v2 the shipped policies use)
+- `encode.ts`: encoder v3, 2030 features (`encodeV2.ts`: the frozen 632-feature v2 the shipped policies use)
 - `policy.ts`: loading policy files, greedy / sampled play
 
 `aiLevels.ts` holds the game's difficulty levels, and the network runtime is
@@ -191,8 +191,8 @@ defines what a seat may know. In `nn/`:
 receives `SspState`.
 
 A crab pick takes two decisions, as in the rulebook: first `crabPile:N`
-(chosen from memory), then `crab:<family>` once the env re-observes with that
-pile revealed. The env asks the same seat twice; the first answer changes no
+(chosen from memory), then `crab:<family>/<colour>` (or `crab:top`) once the
+env re-observes with that pile revealed. The env asks the same seat twice; the first answer changes no
 game state.
 
 ## Hidden information
@@ -200,9 +200,11 @@ game state.
 The agent's observation is built on `knowledge.ts`. A seat knows its own hand,
 all tables, pile tops and sizes, hand sizes, scores and events. It knows an
 opponent's cards only when they took them off a pile's visible top or stole
-them from this seat. It remembers each discard pile in full (every card landed
-face-up), except that after an opponent's crab digs out a buried card, it
-knows the pile is a card short but not which card. Deck order, the rest of
+them from this seat. It remembers each discard pile in full and in order (every card landed
+face-up on top), except that after an opponent's crab digs out a buried card,
+it knows the pile is a card short but not which card. It also sees this
+round's history: what each player took off a top, discarded, and passed over
+to draw from the deck, and the score a LAST CHANCE caller announced. Deck order, the rest of
 opponents' hands, the RNG and private log fields never reach it.
 `observation.test.ts` scrambles all of that, including which card an unseen
 crab dig took, and requires an identical observation, feature vector and mask.
@@ -226,6 +228,8 @@ Credit `reward[i][s]` to seat s's latest transition in env i. With
 
 `ENCODER_VERSION` (`encode.ts`) and `ACTION_SPACE_VERSION` (`actions.ts`) are
 pinned by tests together with `OBS_DIM` / `NUM_SLOTS`. Any layout change must
-bump the version. Policy files record both, and loading refuses a mismatch,
-so old checkpoints stop loading rather than playing nonsense. Retrain after
-an encoder change.
+bump the version. Policy files record both. Each file plays through the encoder version it
+names (`SSP_ENCODERS` in `policy.ts`; older encoders stay frozen while shipped
+policies use them), and loading refuses an unknown encoder or another action
+space rather than playing nonsense. Retrain after an encoder change: the
+network's input size changes, so checkpoints can't carry over.

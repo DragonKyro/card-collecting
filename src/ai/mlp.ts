@@ -1,7 +1,10 @@
 // Game-agnostic runtime for small dense networks exported by the trainers
 // under training/. Plain loops over Float32Arrays — the policies are a few
 // hundred thousand weights, so a forward pass is well under a millisecond
-// and no ML library (or its bundle weight) is needed.
+// and no ML library (or its bundle weight) is needed. Inputs are mostly
+// zeros (game observations are one-hots and counts; hidden layers are ReLU),
+// so each layer sums over its non-zero inputs only — same terms, same order,
+// same result as the dense sum.
 //
 // File format (`MLP_FORMAT`): JSON with layers applied in order, each
 // `y = activation(W·x + b)`, W stored row-major [out][in] as base64 of
@@ -36,6 +39,8 @@ interface Layer {
   weight: Float32Array;
   bias: Float32Array;
   out: Float32Array;
+  /** Scratch: indices of the non-zero inputs. */
+  nonZero: Int32Array;
 }
 
 export class Mlp {
@@ -54,7 +59,10 @@ export class Mlp {
       if (weight.length !== l.in * l.out) throw new Error(`layer ${i} weight has ${weight.length} values, expected ${l.in * l.out}`);
       if (bias.length !== l.out) throw new Error(`layer ${i} bias has ${bias.length} values, expected ${l.out}`);
       dim = l.out;
-      return { inDim: l.in, outDim: l.out, activation: l.activation, weight, bias, out: new Float32Array(l.out) };
+      return {
+        inDim: l.in, outDim: l.out, activation: l.activation, weight, bias,
+        out: new Float32Array(l.out), nonZero: new Int32Array(l.in),
+      };
     });
     if (dim !== file.outputDim) throw new Error(`network outputs ${dim} values, file says ${file.outputDim}`);
     this.inputDim = file.inputDim;
@@ -66,11 +74,21 @@ export class Mlp {
     if (x.length !== this.inputDim) throw new Error(`expected ${this.inputDim} inputs, got ${x.length}`);
     let input: ArrayLike<number> = x;
     for (const l of this.layers) {
-      const { inDim, outDim, weight, bias, out } = l;
+      const { inDim, outDim, weight, bias, out, nonZero } = l;
+      let n = 0;
+      for (let i = 0; i < inDim; i++) if (input[i] !== 0) nonZero[n++] = i;
+      const sparse = n < inDim * 0.6;
       for (let o = 0; o < outDim; o++) {
         let s = bias[o];
         const row = o * inDim;
-        for (let i = 0; i < inDim; i++) s += weight[row + i] * input[i];
+        if (sparse) {
+          for (let k = 0; k < n; k++) {
+            const i = nonZero[k];
+            s += weight[row + i] * input[i];
+          }
+        } else {
+          for (let i = 0; i < inDim; i++) s += weight[row + i] * input[i];
+        }
         out[o] = l.activation === 'relu' ? (s > 0 ? s : 0) : l.activation === 'tanh' ? Math.tanh(s) : s;
       }
       input = out;
