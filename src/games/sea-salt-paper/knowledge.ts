@@ -10,17 +10,12 @@
 //   lobster picks, a crab dig below the top, and steals between two OTHER
 //   players are all hidden.
 //
-//   Discard piles. Every card landed face-up on top, so the seat remembers
-//   each pile in full and in order — until an opponent's crab digs out a card
-//   from under the top. Then the seat knows the pile is one card short but
-//   not which card. That stays uncertain until the card appears on a table,
-//   the seat steals it, the seat crab-digs through that pile itself (and
-//   learns exactly what's gone — and so what the digger holds), or the pile
-//   is taken down past where the card sat (a pile is a stack, so a card that
-//   landed after the visible top can't still be in it).
-//
-//   History. Which cards each player discarded, took off a top, or passed
-//   over on top by drawing from the deck instead — all done in plain sight.
+//   Discard piles. Every card landed face-up, so the seat remembers each pile
+//   in full — until an opponent's crab digs out a card from under the top.
+//   Then the seat knows the pile is one card short but not which card. That
+//   stays uncertain until the card appears on a table, the seat steals it, or
+//   the seat crab-digs through that pile itself (and learns exactly what's
+//   gone — and so what the digger holds).
 //
 // Reading `entry.card` on a log entry is only allowed where the rules above
 // say this seat saw the card.
@@ -33,8 +28,7 @@ export interface PileMemory {
   top: SspCard | null;
   /** Cards in the pile now (the stack is in plain sight). */
   size: number;
-  /** Cards the seat remembers under the top, bottom first (the order they
-   *  landed, so the last one is next to be exposed). Exact unless
+  /** Cards the seat remembers under the top, sorted by id. Exact unless
    *  `unknownRemovals` > 0 — that many of them were dug out unseen. */
   buried: SspCard[];
   unknownRemovals: number;
@@ -47,15 +41,6 @@ export interface SeatKnowledge {
   /** Indexed like state.players: cards each player took off a visible pile
    *  top this round — a signal of what they're collecting. */
   publicPulls: SspCard[][];
-  /** Indexed like state.players: cards each player drew from the deck and
-   *  discarded face-up this round — what they chose not to keep. */
-  discards: SspCard[][];
-  /** Indexed like state.players: distinct pile tops each player passed over
-   *  this round by drawing from the deck instead. */
-  passedTops: SspCard[][];
-  /** Indexed like state.players: that player's unseen crab digs the seat
-   *  can't account for yet (each took one of a pile's remembered cards). */
-  hiddenDigs: number[];
   piles: [PileMemory, PileMemory];
 }
 
@@ -72,15 +57,6 @@ export function roundLog(state: SspState): SspLogEntry[] {
   return log.slice(start);
 }
 
-/** When each card landed on a discard pile this round, as a log seq. Cards
- *  missing from the map were turned up to start the pile (they sit at the
- *  bottom). Every landing is face-up, so this is public. */
-export function landingSeqs(entries: SspLogEntry[]): Map<number, number> {
-  const at = new Map<number, number>();
-  for (const e of entries) if (e.kind === 'drawDeck' && e.card) at.set(e.card.id, e.seq);
-  return at;
-}
-
 const byId = (a: SspCard, b: SspCard) => a.id - b.id;
 
 export function knowledgeOf(state: SspState, seatId: PlayerId, opts: KnowledgeOptions = {}): SeatKnowledge {
@@ -88,12 +64,9 @@ export function knowledgeOf(state: SspState, seatId: PlayerId, opts: KnowledgeOp
   const me = players.findIndex((p) => p.id === seatId);
   if (me === -1) throw new Error(`knowledgeOf: ${seatId} is not seated`);
   const seatOf = (id: PlayerId) => players.findIndex((p) => p.id === id);
-  const entries = roundLog(state);
 
   const known = players.map(() => new Map<number, SspCard>());
   const pulls = players.map((): SspCard[] => []);
-  const discards = players.map((): SspCard[] => []);
-  const passed = players.map(() => new Map<number, SspCard>());
   /** Cards dug out of each pile below the top, unseen by this seat. */
   let ghosts: Array<Array<{ card: SspCard; taker: number }>> = [[], []];
 
@@ -107,15 +80,8 @@ export function knowledgeOf(state: SspState, seatId: PlayerId, opts: KnowledgeOp
     ghosts = pile === 0 ? [[], ghosts[1]] : [ghosts[0], []];
   };
 
-  for (const e of entries) {
+  for (const e of roundLog(state)) {
     switch (e.kind) {
-      case 'drawDeck': {
-        const who = seatOf(e.playerId);
-        if (who === -1) break;
-        if (e.card) discards[who].push(e.card);
-        for (const c of e.passed ?? []) passed[who].set(c.id, c);
-        break;
-      }
       case 'drawDiscard':
       case 'angelfishDraw': {
         const who = seatOf(e.playerId);
@@ -168,43 +134,22 @@ export function knowledgeOf(state: SspState, seatId: PlayerId, opts: KnowledgeOp
   const onTable = new Set<number>();
   for (const p of players) for (const c of p.table) onTable.add(c.id);
 
-  const landed = landingSeqs(entries);
-  const landedAt = (c: SspCard) => landed.get(c.id) ?? -1;
-  const hiddenDigs = players.map(() => 0);
-
   const pileMemory = (p: 0 | 1): PileMemory => {
     const pile = state.discards[p];
-    const top = pile.length ? pile[pile.length - 1] : null;
-    const topAt = top ? landedAt(top) : -Infinity;
-    // A dug card that landed after the visible top would be above it, so it
-    // is certainly gone; only the ones that landed earlier are in doubt.
-    const unresolved = ghosts[p].filter((g) => !onTable.has(g.card.id) && landedAt(g.card) <= topAt);
-    for (const g of unresolved) hiddenDigs[g.taker] += 1;
-    // Memory in landing order: the pile as it is, with each unresolved dug
-    // card back where it sat. (Ties only arise in hand-built states without
-    // landing records; a dug card then sorts first.)
-    const remembered = [
-      ...unresolved.map((g) => ({ c: g.card, at: landedAt(g.card), rank: -1 })),
-      ...pile.slice(0, -1).map((c, i) => ({ c, at: landedAt(c), rank: i })),
-    ].sort((a, b) => a.at - b.at || a.rank - b.rank);
+    const unresolved = ghosts[p].filter((g) => !onTable.has(g.card.id)).map((g) => g.card);
     return {
-      top: top ? { ...top } : null,
+      top: pile.length ? { ...pile[pile.length - 1] } : null,
       size: pile.length,
-      buried: remembered.map((r) => ({ ...r.c })),
+      buried: [...pile.slice(0, -1).map((c) => ({ ...c })), ...unresolved.map((c) => ({ ...c }))].sort(byId),
       unknownRemovals: unresolved.length,
     };
   };
-  const piles: [PileMemory, PileMemory] = [pileMemory(0), pileMemory(1)];
 
-  const copies = (cards: Iterable<SspCard>) => [...cards].map((c) => ({ ...c }));
   return {
     knownHands: known.map((m, i) =>
-      i === me ? [] : copies([...m.values()].filter((c) => !onTable.has(c.id)).sort(byId))),
-    publicPulls: pulls.map(copies),
-    discards: discards.map(copies),
-    passedTops: passed.map((m) => copies(m.values())),
-    hiddenDigs,
-    piles,
+      i === me ? [] : [...m.values()].filter((c) => !onTable.has(c.id)).map((c) => ({ ...c })).sort(byId)),
+    publicPulls: pulls.map((cards) => cards.map((c) => ({ ...c }))),
+    piles: [pileMemory(0), pileMemory(1)],
   };
 }
 

@@ -1,28 +1,17 @@
-// Sea Salt & Paper — fixed action slots for a policy network (action space v3).
+// Sea Salt & Paper — fixed action slots for a policy network.
 //
 // Every legal SspAction maps to one of NUM_SLOTS slots. A slot names a
 // DECISION, not a physical card: "play a crab pair", "keep card 0 and
-// discard to pile 1", "take the teal crab". Wherever the choice of card
-// changes the game, the slot names it down to the colour:
-//
-//   crab:<kind>    take a card of that family and colour from the pile being
-//                  looked through — a copy beneath the top if there is one
-//                  (the deepest, so the cards about to be exposed stay put),
-//                  else the top itself;
-//   crab:top       take the top even though a twin lies beneath it (taking
-//                  the top exposes the next card; digging the twin doesn't);
-//   lobster:<kind> keep that card from the lobster reveal.
-//
-// Pair and trio plays are by family. Which copies go to the table never
-// changes the score (colours count the same in hand and on the table), so
-// `decodeSlot` plays the copies the opponents already know about first and
-// keeps the unknown ones hidden.
+// discard to pile 1". Which physical card carries out the decision is a
+// deterministic tie-break in `decodeSlot` (pairs take the first matching
+// cards in hand; crab / lobster picks take the copy whose colour the viewer
+// already holds most of, so mermaid claims and the colour bonus never lose).
 //
 // A crab pick is TWO decisions, as in the rulebook: choose a pile from
 // memory (`crabPile:N` → a CrabLook, not a reducer action), then — observing
-// again with `crabLookPile` set, which reveals that pile — choose a card in
-// it. Masking crab picks by the real pile contents up front would leak cards
-// an opponent dug out unseen.
+// again with `crabLookPile` set, which reveals that pile — choose a family in
+// it (`crab:<family>` → the crabPick action). Masking crab picks by the real
+// pile contents up front would leak cards an opponent dug out unseen.
 //
 // The mask, decoder and inverse are all functions of SspObservation only.
 // actions.test.ts checks them against the reducer: every action the reducer
@@ -31,11 +20,10 @@
 
 import type { SspAction, SspCard, SspCardFamily } from '../types';
 import { DUO_PAIRS, FAMILY_ORDER } from '../cards';
-import { FAMILY_INDEX, type SspObservation } from './observation';
-import { KINDS, kindIndex, kindName } from './kinds';
+import { FAMILY_INDEX, pileCards, type SspObservation } from './observation';
 
 /** Bump when slots are added, removed or reordered — trained weights are tied to it. */
-export const ACTION_SPACE_VERSION = 3;
+export const ACTION_SPACE_VERSION = 2;
 
 /** First half of a crab pick: look through this pile. Not a reducer action. */
 export interface CrabLook {
@@ -44,18 +32,6 @@ export interface CrabLook {
 }
 
 export type SlotDecision = SspAction | CrabLook;
-
-/** A versioned slot layout; a policy file names the one it was trained with. */
-export interface SspActionSpace {
-  version: number;
-  numSlots: number;
-  slotNames: readonly string[];
-  legalMask(obs: SspObservation): Uint8Array;
-  /** Turn a masked-in slot into a reducer action (or a CrabLook). */
-  decodeSlot(obs: SspObservation, slot: number): SlotDecision;
-  /** Inverse of decodeSlot; -1 for decisions about cards the viewer can't see. */
-  slotForAction(obs: SspObservation, action: SlotDecision): number;
-}
 
 /** Up to 4 players → up to 3 opponents to steal from. */
 const MAX_OPPONENTS = 3;
@@ -78,14 +54,12 @@ export const SLOT_LAST_CHANCE = slot('lastChance');
 export const SLOT_PASS = slot('pass');
 /** [pile] — choose which pile to dig through. */
 export const SLOT_CRAB_PILE = [slot('crabPile:0'), slot('crabPile:1')] as const;
-/** Take the top of the pile being looked through although a twin lies beneath it. */
-export const SLOT_CRAB_TOP = slot('crab:top');
-/** [kind index] — the card to take from the pile being looked through. */
-export const SLOT_CRAB_PICK = KINDS.map((k) => slot(`crab:${kindName(k)}`));
+/** [family index] — the card to take from the pile being looked through. */
+export const SLOT_CRAB_PICK = FAMILY_ORDER.map((f) => slot(`crab:${f}`));
 /** [seat offset − 1] */
 export const SLOT_SHARK_STEAL = Array.from({ length: MAX_OPPONENTS }, (_, i) => slot(`steal:+${i + 1}`));
-/** [kind index] */
-export const SLOT_LOBSTER_PICK = KINDS.map((k) => slot(`lobster:${kindName(k)}`));
+/** [family index] */
+export const SLOT_LOBSTER_PICK = FAMILY_ORDER.map((f) => slot(`lobster:${f}`));
 export const SLOT_NEXT_ROUND = slot('nextRound');
 
 export const NUM_SLOTS = names.length;
@@ -157,13 +131,7 @@ export function legalMask(obs: SspObservation): Uint8Array {
       if (obs.crabLookPile === null) {
         for (const p of [0, 1] as const) if (obs.piles[p].size > 0) mask[SLOT_CRAB_PILE[p]] = 1;
       } else {
-        const pile = obs.piles[obs.crabLookPile];
-        for (const c of pile.buried) mask[SLOT_CRAB_PICK[kindIndex(c)]] = 1;
-        if (pile.top) {
-          const k = kindIndex(pile.top);
-          if (mask[SLOT_CRAB_PICK[k]]) mask[SLOT_CRAB_TOP] = 1;
-          else mask[SLOT_CRAB_PICK[k]] = 1;
-        }
+        for (const c of pileCards(obs.piles[obs.crabLookPile])) mask[SLOT_CRAB_PICK[FAMILY_INDEX[c.family]]] = 1;
       }
       break;
 
@@ -176,7 +144,7 @@ export function legalMask(obs: SspObservation): Uint8Array {
       break;
 
     case 'awaitingLobsterPick':
-      for (const c of obs.lobsterReveal) mask[SLOT_LOBSTER_PICK[kindIndex(c)]] = 1;
+      for (const c of obs.lobsterReveal) mask[SLOT_LOBSTER_PICK[FAMILY_INDEX[c.family]]] = 1;
       break;
 
     default:
@@ -219,28 +187,24 @@ export function decodeSlot(obs: SspObservation, s: number): SlotDecision {
 
   const pairT = SLOT_PLAY_PAIR.indexOf(s);
   if (pairT !== -1) {
-    const [a, b] = pickPairCards(obs, pairT);
+    const [a, b] = pickPairCards(obs.hand, pairT);
     return { type: 'playPair', cardIds: [a.id, b.id] };
   }
   const trioT = SLOT_PLAY_TRIO.indexOf(s);
   if (trioT !== -1) {
-    const [a, b] = pickPairCards(obs, trioT);
-    const star = exposedFirst(obs).find((c) => c.family === 'starfish')!;
+    const [a, b] = pickPairCards(obs.hand, trioT);
+    const star = obs.hand.find((c) => c.family === 'starfish')!;
     return { type: 'playTrio', cardIds: [a.id, b.id, star.id] };
   }
 
   for (const p of [0, 1] as const) {
     if (s === SLOT_CRAB_PILE[p]) return { type: 'crabLook', pile: p };
   }
-  if (obs.crabLookPile !== null) {
-    const pile = obs.piles[obs.crabLookPile];
-    if (s === SLOT_CRAB_TOP) return { type: 'crabPick', pile: obs.crabLookPile, cardId: pile.top!.id };
-    const k = SLOT_CRAB_PICK.indexOf(s);
-    if (k !== -1) {
-      // `buried` is bottom first, so this is the deepest copy beneath the top.
-      const card = pile.buried.find((c) => kindIndex(c) === k) ?? pile.top!;
-      return { type: 'crabPick', pile: obs.crabLookPile, cardId: card.id };
-    }
+  const crabF = SLOT_CRAB_PICK.indexOf(s);
+  if (crabF !== -1 && obs.crabLookPile !== null) {
+    const pile = obs.crabLookPile;
+    const card = preferredCopy(obs, pileCards(obs.piles[pile]), FAMILY_ORDER[crabF]);
+    return { type: 'crabPick', pile, cardId: card.id };
   }
 
   const stealOff = SLOT_SHARK_STEAL.indexOf(s);
@@ -248,34 +212,42 @@ export function decodeSlot(obs: SspObservation, s: number): SlotDecision {
     return { type: 'sharkSteal', targetPlayerId: obs.players[stealOff + 1].id };
   }
 
-  const lobsterK = SLOT_LOBSTER_PICK.indexOf(s);
-  if (lobsterK !== -1) {
-    const card = obs.lobsterReveal.find((c) => kindIndex(c) === lobsterK)!;
+  const lobsterF = SLOT_LOBSTER_PICK.indexOf(s);
+  if (lobsterF !== -1) {
+    const card = preferredCopy(obs, obs.lobsterReveal, FAMILY_ORDER[lobsterF]);
     return { type: 'lobsterPick', cardId: card.id };
   }
 
   throw new Error(`decodeSlot: unhandled slot ${s}`);
 }
 
-/** The hand with the cards the opponents already know about first (hand
- *  order otherwise) — the order pair and trio plays take cards in. */
-function exposedFirst(obs: SspObservation): SspCard[] {
-  const known = new Set(obs.players[0].knownCards.map((c) => c.id));
-  return [...obs.hand].sort((a, b) => Number(known.has(b.id)) - Number(known.has(a.id)));
-}
-
-/** Cards forming DUO_PAIRS[t]. Caller has checked the mask. */
-function pickPairCards(obs: SspObservation, t: number): [SspCard, SspCard] {
+/** First cards in hand order that form DUO_PAIRS[t]. Caller has checked the mask. */
+function pickPairCards(hand: SspCard[], t: number): [SspCard, SspCard] {
   const [fa, fb] = DUO_PAIRS[t];
-  const hand = exposedFirst(obs);
   const a = hand.find((c) => c.family === fa)!;
   const b = hand.find((c) => c.family === fb && c.id !== a.id)!;
   return [a, b];
 }
 
+/** Among copies of `family` in `pool`, the one whose colour the viewer holds
+ *  most of; ties go to the later card in `pool` (the top, for a pile). */
+function preferredCopy(obs: SspObservation, pool: SspCard[], family: SspCardFamily): SspCard {
+  const held = new Map<string, number>();
+  for (const c of [...obs.hand, ...obs.players[0].table]) held.set(c.color, (held.get(c.color) ?? 0) + 1);
+  let best: SspCard | null = null;
+  let bestN = -1;
+  for (const c of pool) {
+    if (c.family !== family) continue;
+    const n = held.get(c.color) ?? 0;
+    if (n >= bestN) { best = c; bestN = n; }
+  }
+  if (!best) throw new Error(`preferredCopy: no ${family} in pool`);
+  return best;
+}
+
 /** Inverse of decodeSlot: which slot does this decision belong to? A
  *  crabPick maps to its pile slot until the observation is looking through
- *  that pile, then to its card slot. Returns -1 for decisions that don't
+ *  that pile, then to its family slot. Returns -1 for decisions that don't
  *  refer to cards the viewer can see. Used by tests and for labelling another
  *  agent's moves (behaviour cloning). */
 export function slotForAction(obs: SspObservation, action: SlotDecision): number {
@@ -307,13 +279,8 @@ export function slotForAction(obs: SspObservation, action: SlotDecision): number
     case 'crabPick': {
       if (obs.crabLookPile === null) return SLOT_CRAB_PILE[action.pile];
       if (obs.crabLookPile !== action.pile) return -1;
-      const pile = obs.piles[action.pile];
-      if (pile.top?.id === action.cardId) {
-        const k = kindIndex(pile.top);
-        return pile.buried.some((c) => kindIndex(c) === k) ? SLOT_CRAB_TOP : SLOT_CRAB_PICK[k];
-      }
-      const card = pile.buried.find((c) => c.id === action.cardId);
-      return card ? SLOT_CRAB_PICK[kindIndex(card)] : -1;
+      const card = pileCards(obs.piles[action.pile]).find((c) => c.id === action.cardId);
+      return card ? SLOT_CRAB_PICK[FAMILY_INDEX[card.family]] : -1;
     }
     case 'sharkSteal': {
       const off = obs.players.findIndex((p) => p.id === action.targetPlayerId);
@@ -321,7 +288,7 @@ export function slotForAction(obs: SspObservation, action: SlotDecision): number
     }
     case 'lobsterPick': {
       const card = obs.lobsterReveal.find((c) => c.id === action.cardId);
-      return card ? SLOT_LOBSTER_PICK[kindIndex(card)] : -1;
+      return card ? SLOT_LOBSTER_PICK[FAMILY_INDEX[card.family]] : -1;
     }
   }
 }
@@ -329,8 +296,3 @@ export function slotForAction(obs: SspObservation, action: SlotDecision): number
 function pairTypeOf(a: SspCardFamily, b: SspCardFamily): number {
   return DUO_PAIRS.findIndex(([x, y]) => (x === a && y === b) || (x === b && y === a));
 }
-
-/** The current action space, in the shape policy.ts dispatches on. */
-export const SSP_ACTIONS: SspActionSpace = {
-  version: ACTION_SPACE_VERSION, numSlots: NUM_SLOTS, slotNames: SLOT_NAMES, legalMask, decodeSlot, slotForAction,
-};

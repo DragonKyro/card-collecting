@@ -54,10 +54,27 @@ export interface SushiGoObservedPlayer {
   submitted: boolean;
 }
 
+/** A multi-part answer in progress, carried between policy calls (never game
+ *  state): a pick is first card → chopsticks' second card (if any) → spoon
+ *  call (if any); a takeout box flips one card at a time until done. */
+export interface SushiGoDraft {
+  /** Cards chosen so far: the pick's, or the takeout box's flips. */
+  cards: number[];
+  /** Pick: the chopsticks part is settled (second card chosen or declined). */
+  secondDone?: boolean;
+}
+
+export interface ObserveOptions {
+  draft?: SushiGoDraft | null;
+}
+
+export type PickStage = 'first' | 'second' | 'spoon';
+
 /** What the viewer has to decide right now. */
 export type SushiGoDecision =
-  /** Pick from the hand: 1 card, 2 with chopsticks, optionally calling a spoon. */
-  | { type: 'pick'; canChopsticks: boolean; canSpoon: boolean }
+  /** Pick from the hand: 1 card, 2 with chopsticks, optionally calling a spoon
+   *  — asked as `stage` steps, `chosen` holding the cards picked so far. */
+  | { type: 'pick'; stage: PickStage; chosen: SushiGoCard[]; canChopsticks: boolean; canSpoon: boolean }
   /** Own special order: which of these to copy. */
   | { type: 'copy'; cardId: number; targets: SushiGoCard[] }
   /** Own spoon: name a card. */
@@ -66,8 +83,8 @@ export type SushiGoDecision =
   | { type: 'spoonGive'; askerOffset: number; options: SushiGoCard[] }
   /** Own menu: play one of these. */
   | { type: 'menu'; cardId: number; drawn: SushiGoCard[] }
-  /** Own takeout box: flip any of these. */
-  | { type: 'takeout'; cardId: number; targets: SushiGoCard[] };
+  /** Own takeout box: flip any of `targets` (one at a time; `chosen` so far). */
+  | { type: 'takeout'; cardId: number; targets: SushiGoCard[]; chosen: SushiGoCard[] };
 
 export interface SushiGoObservation {
   viewerId: PlayerId;
@@ -100,7 +117,7 @@ export function passesThisRound(state: SushiGoState, viewerId: PlayerId): number
   return Math.max(0, state.subPhase === 'resolving' ? played - 1 : played);
 }
 
-export function observe(state: SushiGoState, viewerId: PlayerId): SushiGoObservation {
+export function observe(state: SushiGoState, viewerId: PlayerId, opts: ObserveOptions = {}): SushiGoObservation {
   const n = state.players.length;
   const viewerIdx = state.players.findIndex((p) => p.id === viewerId);
   if (viewerIdx === -1) throw new Error(`observe: ${viewerId} is not seated`);
@@ -139,7 +156,7 @@ export function observe(state: SushiGoState, viewerId: PlayerId): SushiGoObserva
     discards: state.discards.map(copyCard),
     hand: viewer.hand.map(copyCard),
     players,
-    decision: decisionFor(state, viewer, step, offsetOf),
+    decision: decisionFor(state, viewer, step, offsetOf, opts.draft ?? null),
     waitingOn: step && step.playerId !== viewerId ? { type: step.type, offset: offsetOf(step.playerId) } : null,
   };
 }
@@ -149,15 +166,19 @@ function decisionFor(
   viewer: SushiGoPlayer,
   step: SushiGoStep | null,
   offsetOf: (id: PlayerId) => number,
+  draft: SushiGoDraft | null,
 ): SushiGoDecision | null {
   if (state.phase !== 'playing') return null;
+  const picked = (pool: SushiGoCard[]) => (draft?.cards ?? []).map((id) => copyCard(pool.find((c) => c.id === id)!));
   if (state.subPhase === 'selecting') {
     if (viewer.pendingPick !== null || viewer.hand.length === 0) return null;
-    return {
-      type: 'pick',
-      canChopsticks: viewer.hand.length >= 2 && bonusCard(viewer, 'chopsticks') !== undefined,
-      canSpoon: bonusCard(viewer, 'spoon') !== undefined,
-    };
+    // A spoon called on the last card finds every hand empty, so it isn't offered.
+    const canChopsticks = viewer.hand.length >= 2 && bonusCard(viewer, 'chopsticks') !== undefined;
+    const canSpoon = viewer.hand.length >= 2 && bonusCard(viewer, 'spoon') !== undefined;
+    const chosen = picked(viewer.hand);
+    const stage: PickStage = chosen.length === 0 ? 'first'
+      : chosen.length === 1 && canChopsticks && !draft?.secondDone ? 'second' : 'spoon';
+    return { type: 'pick', stage, chosen, canChopsticks, canSpoon };
   }
   if (!step || step.playerId !== viewer.id) return null;
   switch (step.type) {
@@ -173,8 +194,11 @@ function decisionFor(
       };
     case 'menu':
       return { type: 'menu', cardId: step.cardId, drawn: (step.drawn ?? []).map(copyCard) };
-    case 'takeout':
-      return { type: 'takeout', cardId: step.cardId, targets: flipTargets(state, viewer).map(copyCard) };
+    case 'takeout': {
+      const chosen = picked(viewer.table);
+      const targets = flipTargets(state, viewer).filter((c) => !chosen.some((x) => x.id === c.id));
+      return { type: 'takeout', cardId: step.cardId, targets: targets.map(copyCard), chosen };
+    }
   }
 }
 

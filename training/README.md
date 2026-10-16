@@ -27,7 +27,7 @@ tensorboard --logdir training/runs
 ```
 
 To stop a run you can't Ctrl+C, for example one started in the background,
-create an empty `training/runs/<run>/STOP`.
+create an empty `training/runs/ssp/<run>/STOP`.
 
 Training is PPO from scratch. Each update collects `--rollout` (64) decisions
 from every match: `--workers` (default cores − 4, max 12) node processes ×
@@ -41,27 +41,30 @@ from every match: `--workers` (default cores − 4, max 12) node processes ×
 - Reward is ±1 for the match, plus `--round-reward` (0.02) × the round point
   margin.
 
-Everything lands in `training/runs/<run>/` (git-ignored):
+Everything lands in `training/runs/ssp/<run>/` (git-ignored). Runs are
+grouped by game — `training/runs/<game>/<run>/` — so other games' agents get
+their own folder next to `ssp/`:
 
 | Path | What |
 |---|---|
 | `policies/update_N.json` | exported policy every `--save-every` (100) updates. Playable by the TS side, all kept |
 | `ckpt/update_N.pt` | resumable checkpoint (model + optimizer + counters), newest `--keep-ckpt` (5) kept |
 | `metrics.jsonl`, `tb/` | per-update losses, entropy, KL, explained variance, decisions/s, training win rate vs past checkpoints |
-| `evals.jsonl` | background evals every `--eval-every` (100) updates: vs random, each benchmark, and the checkpoint `--eval-past-gap` (5) saves back |
+| `evals.jsonl` | background evals every `--eval-every` (100) updates: vs random, each benchmark, the checkpoint `--eval-past-gap` (5) saves back, and with `--eval-same-update RUN` that run's policy at the same update (two setups compared at equal training) |
+| `progress.md` | those evals as a table, rewritten once each checkpoint's evals are in: the latest 10 checkpoints, then all of them. The log prints the latest-10 table too |
 | `config.json` | the arguments, feature/action versions, architecture |
 
 The training-time win rate (`train/winrate_vs_past`) comes from the
 *sampling* policy against a moving pool. Trust the `eval/*` numbers instead:
 greedy play, seat-swapped, on fixed deals the agent never trains on.
 
-**History.** The shipped policies come from `runs/main`, which began with 10
+**History.** The shipped policies come from `runs/ssp/main`, which began with 10
 updates of imitating a hand-written heuristic (since removed) before PPO.
 Thirty PPO updates (~1M decisions, about 4 minutes) took it from 32% to 72%
 against that heuristic. It got there by switching from STOP to LAST CHANCE.
 It reached 87.5% by update 1000. An overnight continuation to update 10000
 (~246M decisions, 6 h 40 min) beat update 1000 by 64.8%, with most of the gain
-by update 4000. `runs/main` keeps every 100th policy.
+by update 4000. `runs/ssp/main` keeps every 100th policy.
 
 ## Evaluating
 
@@ -74,10 +77,10 @@ by update 4000. `runs/main` keeps every 100th policy.
 - `RUN@N`: the policy saved at update N
 
 ```sh
-python training/ssp/evaluate.py baselines training/runs/my-run          # latest vs random + every benchmark
-python training/ssp/evaluate.py match training/runs/my-run@400 bench:hard-update10000 --games 4000
-python training/ssp/evaluate.py match training/runs/my-run training/runs/my-run@200
-python training/ssp/evaluate.py ladder training/runs/my-run --points 8  # past iterations + benchmarks + Elo
+python training/ssp/evaluate.py baselines training/runs/ssp/my-run          # latest vs random + every benchmark
+python training/ssp/evaluate.py match training/runs/ssp/my-run@400 bench:hard-update10000 --games 4000
+python training/ssp/evaluate.py match training/runs/ssp/my-run training/runs/ssp/my-run@200
+python training/ssp/evaluate.py ladder training/runs/ssp/my-run --points 8  # past iterations + benchmarks + Elo
 ```
 
 How to read the numbers:
@@ -107,10 +110,10 @@ where it came from and how it scored when frozen.
 
 ```sh
 python training/ssp/evaluate.py benchmarks
-python training/ssp/evaluate.py freeze training/runs/main@10000 --name hard-update10000 --games 2000 --note "..."
+python training/ssp/evaluate.py freeze training/runs/ssp/main@10000 --name hard-update10000 --games 2000 --note "..."
 ```
 
-| Level | Benchmark | Source (`runs/main`) | vs random | vs easy | vs normal |
+| Level | Benchmark | Source (`runs/ssp/main`) | vs random | vs easy | vs normal |
 |---|---|---|---|---|---|
 | easy | `bench:easy-update100` | update 100 | 100.0% | — | — |
 | normal | `bench:normal-update1000` | update 1000 | 99.9% | 61.4% | — |
@@ -182,8 +185,8 @@ The game-side pieces live in `src/games/sea-salt-paper/`. `knowledge.ts`
 defines what a seat may know. In `nn/`:
 
 - `observation.ts`: the agent's view
-- `actions.ts`: action space v3, 137 slots (crab / lobster picks name the colour), legal mask, decoder (`actionsV2.ts`: the frozen 66-slot v2 the shipped policies use)
-- `encode.ts`: encoder v3, 2030 features (`encodeV2.ts`: the frozen 632-feature v2 the shipped policies use)
+- `actions.ts`: 66 action slots, legal mask, decoder
+- `encode.ts`: 632 features
 - `policy.ts`: loading policy files, greedy / sampled play
 
 `aiLevels.ts` holds the game's difficulty levels, and the network runtime is
@@ -191,8 +194,8 @@ defines what a seat may know. In `nn/`:
 receives `SspState`.
 
 A crab pick takes two decisions, as in the rulebook: first `crabPile:N`
-(chosen from memory), then `crab:<family>/<colour>` (or `crab:top`) once the
-env re-observes with that pile revealed. The env asks the same seat twice; the first answer changes no
+(chosen from memory), then `crab:<family>` once the env re-observes with that
+pile revealed. The env asks the same seat twice; the first answer changes no
 game state.
 
 ## Hidden information
@@ -200,11 +203,9 @@ game state.
 The agent's observation is built on `knowledge.ts`. A seat knows its own hand,
 all tables, pile tops and sizes, hand sizes, scores and events. It knows an
 opponent's cards only when they took them off a pile's visible top or stole
-them from this seat. It remembers each discard pile in full and in order (every card landed
-face-up on top), except that after an opponent's crab digs out a buried card,
-it knows the pile is a card short but not which card. It also sees this
-round's history: what each player took off a top, discarded, and passed over
-to draw from the deck, and the score a LAST CHANCE caller announced. Deck order, the rest of
+them from this seat. It remembers each discard pile in full (every card landed
+face-up), except that after an opponent's crab digs out a buried card, it
+knows the pile is a card short but not which card. Deck order, the rest of
 opponents' hands, the RNG and private log fields never reach it.
 `observation.test.ts` scrambles all of that, including which card an unseen
 crab dig took, and requires an identical observation, feature vector and mask.
@@ -228,8 +229,6 @@ Credit `reward[i][s]` to seat s's latest transition in env i. With
 
 `ENCODER_VERSION` (`encode.ts`) and `ACTION_SPACE_VERSION` (`actions.ts`) are
 pinned by tests together with `OBS_DIM` / `NUM_SLOTS`. Any layout change must
-bump the version. Policy files record both. Each file plays through the encoder version it
-names (`SSP_ENCODERS` in `policy.ts`; older encoders stay frozen while shipped
-policies use them), and loading refuses an unknown encoder or another action
-space rather than playing nonsense. Retrain after an encoder change: the
-network's input size changes, so checkpoints can't carry over.
+bump the version. Policy files record both, and loading refuses a mismatch,
+so old checkpoints stop loading rather than playing nonsense. Retrain after
+an encoder change.

@@ -52,7 +52,9 @@ const HAND_NORM = 10;
 const POOL_NORM = 60;
 const DESSERT_COPIES = 15;
 
-const DECISIONS: readonly SushiGoDecision['type'][] = ['pick', 'copy', 'spoon', 'spoonGive', 'menu', 'takeout'];
+/** Decision kinds, the three parts of a pick separately. */
+const DECISIONS = ['pick:first', 'pick:second', 'pick:spoon', 'copy', 'spoon', 'spoonGive', 'menu', 'takeout'] as const;
+const decisionKey = (d: SushiGoDecision) => (d.type === 'pick' ? `pick:${d.stage}` : d.type) as (typeof DECISIONS)[number];
 const KIND_INDEX = new Map(ALL_KINDS.map((k, i) => [k, i]));
 
 export interface FeatureSegment {
@@ -326,7 +328,7 @@ function writeFeatures(obs: SushiGoObservation, w: Writer): void {
   const decision = obs.decision;
 
   // ---- global ----
-  w.oneHot('decision', DECISIONS.length, decision ? DECISIONS.indexOf(decision.type) : -1);
+  w.oneHot('decision', DECISIONS.length, decision ? DECISIONS.indexOf(decisionKey(decision)) : -1);
   w.oneHot('playerCount', MAX_PLAYERS - 1, n - 2);
   w.scalar('round', obs.round / obs.rounds);
   w.scalar('roundsLeft', (obs.rounds - obs.round) / 4);
@@ -407,6 +409,10 @@ function writeFeatures(obs: SushiGoObservation, w: Writer): void {
           : [];
   w.faces('decision.options', options);
   w.scalar('decision.optionCount', options.length / HAND_NORM);
+  // Already chosen in this multi-part decision: the pick so far, or the flips so far.
+  const chosen = decision?.type === 'pick' ? decision.chosen
+    : decision?.type === 'takeout' ? decision.chosen.map(effectiveCard) : [];
+  w.faces('decision.chosen', chosen);
   w.values('decision.askerMarginal', decision?.type === 'spoonGive'
     ? marginals(players, obs.uramakiNextPlace, decision.askerOffset, faces) : new Float32Array(FACE_COUNT));
 }

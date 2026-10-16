@@ -76,7 +76,7 @@ function handle(msg: Request): object {
       return { ok: true };
     case 'policyLogits': {
       if (!msg.path || !msg.obs) throw new Error('policyLogits needs "path" and "obs"');
-      const { net } = loadSspPolicy(JSON.parse(readFileSync(msg.path, 'utf8')) as SspPolicyFile);
+      const net = loadSspPolicy(JSON.parse(readFileSync(msg.path, 'utf8')) as SspPolicyFile);
       return { ok: true, logits: Array.from(net.forward(decodeFloat32(msg.obs))) };
     }
     case 'close':

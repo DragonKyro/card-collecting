@@ -52,7 +52,7 @@ describe('sushi-go feature encoder', () => {
   });
 
   it('matches the versioned size and face list (bump ENCODER_VERSION when these change)', () => {
-    expect({ version: ENCODER_VERSION, dim: OBS_DIM, faces: FACES.length }).toEqual({ version: 1, dim: 615, faces: 37 });
+    expect({ version: ENCODER_VERSION, dim: OBS_DIM, faces: FACES.length }).toEqual({ version: 1, dim: 654, faces: 37 });
     expect(FACE_COPIES.reduce((a, b) => a + b, 0)).toBe(12 + 3 * 12 + 8 * 8 + 8 * 3 + 3 * 15);
   });
 

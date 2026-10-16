@@ -6,7 +6,7 @@
     tensorboard --logdir training/runs
 
 To stop a run you can't Ctrl+C (e.g. one started in the background), create
-an empty file training/runs/<run>/STOP: it saves, finishes queued evals and
+an empty file training/runs/ssp/<run>/STOP: it saves, finishes queued evals and
 exits after the current update (the file is removed on the next start).
 
 Each update:
@@ -26,7 +26,7 @@ Each update:
      in, the log prints the latest 10 as a table and progress.md is rewritten
      (latest 10, then every checkpoint).
 
-Outputs go to training/runs/<run>/: config.json, metrics.jsonl, evals.jsonl,
+Outputs go to training/runs/ssp/<run>/: config.json, metrics.jsonl, evals.jsonl,
 progress.md, tensorboard events, ckpt/, policies/.
 """
 
@@ -56,7 +56,7 @@ from model import (PolicyValueNet, export_policy, load_checkpoint, masked_logits
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.normpath(os.path.join(HERE, "..", ".."))
-DEFAULT_RUNS = os.path.join(REPO, "training", "runs")
+DEFAULT_RUNS = os.path.join(REPO, "training", "runs", "ssp")
 
 
 def default_workers() -> int:
