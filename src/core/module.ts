@@ -52,12 +52,19 @@ export interface GameModule<
    *  net layer (real-time races need host-authoritative arbitration). The lobby
    *  then hides "Host online" for this game. Defaults to true. */
   readonly onlineSupported?: boolean;
+  /** Set true to have the game-over "Play again" button return to the lobby
+   *  with the finished match's config and seats pre-filled (so options can be
+   *  changed before re-dealing) instead of re-dealing immediately. Defaults to
+   *  false. */
+  readonly replayInLobby?: boolean;
 
   /** Build the lobby config component's initial value. Pure. */
   defaultConfig(seats: Seat[]): C;
 
-  /** Validate a chosen config — return a list of human-readable errors, [] if OK. */
-  validateConfig(config: C): string[];
+  /** Validate a chosen config — return a list of human-readable errors, [] if OK.
+   *  `seats` are the ones the match would start with (omitted when unknown), so
+   *  a module can reject settings that depend on player count. */
+  validateConfig(config: C, seats?: Seat[]): string[];
 
   /** Build the opening GameState. Pure given (config, seed, seats). Seats are
    *  passed in so the module can size hands, set the first turn, etc. */

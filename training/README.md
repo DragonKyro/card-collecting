@@ -27,7 +27,7 @@ tensorboard --logdir training/runs
 ```
 
 To stop a run you can't Ctrl+C, for example one started in the background,
-create an empty `training/runs/<run>/STOP`.
+create an empty `training/runs/ssp/<run>/STOP`.
 
 Training is PPO from scratch. Each update collects `--rollout` (64) decisions
 from every match: `--workers` (default cores − 4, max 12) node processes ×
@@ -41,25 +41,30 @@ from every match: `--workers` (default cores − 4, max 12) node processes ×
 - Reward is ±1 for the match, plus `--round-reward` (0.02) × the round point
   margin.
 
-Everything lands in `training/runs/<run>/` (git-ignored):
+Everything lands in `training/runs/ssp/<run>/` (git-ignored). Runs are
+grouped by game — `training/runs/<game>/<run>/` — so other games' agents get
+their own folder next to `ssp/`:
 
 | Path | What |
 |---|---|
-| `policies/update_N.json` | exported policy every `--save-every` (10) updates. Playable by the TS side, all kept |
+| `policies/update_N.json` | exported policy every `--save-every` (100) updates. Playable by the TS side, all kept |
 | `ckpt/update_N.pt` | resumable checkpoint (model + optimizer + counters), newest `--keep-ckpt` (5) kept |
 | `metrics.jsonl`, `tb/` | per-update losses, entropy, KL, explained variance, decisions/s, training win rate vs past checkpoints |
-| `evals.jsonl` | background evals every `--eval-every` (20) updates: vs random, each benchmark, and the checkpoint `--eval-past-gap` (5) saves back |
+| `evals.jsonl` | background evals every `--eval-every` (100) updates: vs random, each benchmark, the checkpoint `--eval-past-gap` (5) saves back, and with `--eval-same-update RUN` that run's policy at the same update (two setups compared at equal training) |
+| `progress.md` | those evals as a table, rewritten once each checkpoint's evals are in: the latest 10 checkpoints, then all of them. The log prints the latest-10 table too |
 | `config.json` | the arguments, feature/action versions, architecture |
 
 The training-time win rate (`train/winrate_vs_past`) comes from the
 *sampling* policy against a moving pool. Trust the `eval/*` numbers instead:
 greedy play, seat-swapped, on fixed deals the agent never trains on.
 
-**History.** The shipped policies come from `runs/main`, which began with 10
+**History.** The shipped policies come from `runs/ssp/main`, which began with 10
 updates of imitating a hand-written heuristic (since removed) before PPO.
 Thirty PPO updates (~1M decisions, about 4 minutes) took it from 32% to 72%
 against that heuristic. It got there by switching from STOP to LAST CHANCE.
-Gains flattened around update 1000 (87.5%).
+It reached 87.5% by update 1000. An overnight continuation to update 10000
+(~246M decisions, 6 h 40 min) beat update 1000 by 64.8%, with most of the gain
+by update 4000. `runs/ssp/main` keeps every 100th policy.
 
 ## Evaluating
 
@@ -72,10 +77,10 @@ Gains flattened around update 1000 (87.5%).
 - `RUN@N`: the policy saved at update N
 
 ```sh
-python training/ssp/evaluate.py baselines training/runs/my-run          # latest vs random + every benchmark
-python training/ssp/evaluate.py match training/runs/my-run@400 bench:hard-update1000 --games 4000
-python training/ssp/evaluate.py match training/runs/my-run training/runs/my-run@200
-python training/ssp/evaluate.py ladder training/runs/my-run --points 8  # past iterations + benchmarks + Elo
+python training/ssp/evaluate.py baselines training/runs/ssp/my-run          # latest vs random + every benchmark
+python training/ssp/evaluate.py match training/runs/ssp/my-run@400 bench:hard-update10000 --games 4000
+python training/ssp/evaluate.py match training/runs/ssp/my-run training/runs/ssp/my-run@200
+python training/ssp/evaluate.py ladder training/runs/ssp/my-run --points 8  # past iterations + benchmarks + Elo
 ```
 
 How to read the numbers:
@@ -85,7 +90,7 @@ How to read the numbers:
   about ±2 points at 2000 matches and ±1.5 at 4000.
 - `ladder` plays sampled checkpoints against random, every benchmark and their
   predecessor, and the latest against each earlier one. It then fits Elo
-  ratings with `bench:easy-update10` pinned at 1000. A rising Elo means steady
+  ratings with `bench:easy-update100` pinned at 1000. A rising Elo means steady
   progress. If a checkpoint beats its predecessor but loses Elo against the
   rest, training is cycling.
 - `match` prints the full report, including behaviour stats: STOP / LAST
@@ -105,17 +110,17 @@ where it came from and how it scored when frozen.
 
 ```sh
 python training/ssp/evaluate.py benchmarks
-python training/ssp/evaluate.py freeze training/runs/main@1000 --name hard-update1000 --games 4000 --note "..."
+python training/ssp/evaluate.py freeze training/runs/ssp/main@10000 --name hard-update10000 --games 2000 --note "..."
 ```
 
-| Level | Benchmark | Source (`runs/main`) | vs random | vs the old heuristic |
-|---|---|---|---|---|
-| easy | `bench:easy-update10` | u10: 10 imitation updates | 94.0% | 16.0% |
-| normal | `bench:normal-update40` | u40: + 30 PPO | 99.8% | 73.2% |
-| hard | `bench:hard-update1000` | u1000: + 990 PPO | 99.9% | 87.5% |
+| Level | Benchmark | Source (`runs/ssp/main`) | vs random | vs easy | vs normal |
+|---|---|---|---|---|---|
+| easy | `bench:easy-update100` | update 100 | 100.0% | — | — |
+| normal | `bench:normal-update1000` | update 1000 | 99.9% | 61.4% | — |
+| hard | `bench:hard-update10000` | update 10000 | 100.0% | 71.6% | 64.8% |
 
-Hard beats normal 71.8% and easy 97.0% (2000 matches each). The heuristic
-column is historical; that opponent no longer exists.
+2000 seat-swapped matches each. `bench:normal-update1000` doubles as the "1k"
+reference that the overnight run was measured against.
 
 `freeze` writes into the game's policy folder, but a new file only becomes a
 difficulty once `src/games/sea-salt-paper/aiLevels.ts` points a level at it.
@@ -127,7 +132,7 @@ files, so a feature or action version change breaks them, and
 ### How agents play: `analyze`
 
 ```sh
-python training/ssp/evaluate.py analyze bench:hard-update1000 --vs bench:easy-update10,bench:normal-update40,bench:hard-update1000 --games 2000
+python training/ssp/evaluate.py analyze bench:hard-update10000 --vs bench:easy-update100,bench:normal-update1000,bench:hard-update10000 --games 2000
 ```
 
 For each matchup it tallies each side's decisions: draw source, pairs played

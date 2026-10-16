@@ -15,14 +15,15 @@ export const sushiGoModule: GameModule<SushiGoState, SushiGoAction, SushiGoConfi
   tagline: 'Pick a card, pass the rest. Build the best meal across 3 rounds.',
   minPlayers: 2,
   maxPlayers: 8,
+  replayInLobby: true,
 
   defaultConfig(_seats: Seat[]): SushiGoConfig {
     return { menu: DEFAULT_MENU.slice(), rounds: 3 };
   },
 
-  validateConfig(config) {
+  validateConfig(config, seats) {
     const errors: string[] = [];
-    errors.push(...validateMenu(config.menu));
+    errors.push(...validateMenu(config.menu, seats?.length));
     if (config.rounds < 1 || config.rounds > 5) errors.push('Rounds must be 1–5.');
     return errors;
   },
@@ -38,9 +39,12 @@ export const sushiGoModule: GameModule<SushiGoState, SushiGoAction, SushiGoConfi
       round: 1,
       subPhase: 'selecting',
       deck: [],
+      dessertSupply: [],
+      discards: [],
       players: [],
+      uramakiNextPlace: 0,
+      resolution: null,
       lastRoundSummary: null,
-      passDirection: 'cw',
       log: [],
       logSeq: 0,
     };
@@ -71,6 +75,8 @@ export function attachSeatsAndStart(state: SushiGoState, seats: Seat[]): SushiGo
     table: [],
     dessertPile: [],
     pendingPick: null,
+    pendingSpoon: false,
+    uramakiPoints: 0,
     scoreByRound: [],
     dessertScore: 0,
   }));

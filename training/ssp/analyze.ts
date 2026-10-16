@@ -15,7 +15,7 @@
 //
 //   npm run ssp:analyze -- --a nn:<hard.json> --vs nn:<easy.json>,nn:<hard.json> --games 1000 --salt
 //
-// (Or `python training/ssp/evaluate.py analyze bench:hard-update1000 --vs …`,
+// (Or `python training/ssp/evaluate.py analyze bench:hard-update10000 --vs …`,
 // which resolves the usual references.) Analysis may look at the full state;
 // the agents themselves still only see their own observation.
 

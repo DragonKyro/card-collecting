@@ -11,12 +11,14 @@ Agents are named by reference:
     path/to/run_dir           that run's latest checkpoint
     path/to/run_dir@120       that run's checkpoint at update 120
 
-    python training/ssp/evaluate.py match RUN@200 bench:hard-update1000 --games 2000
+    python training/ssp/evaluate.py match RUN@200 bench:hard-update10000 --games 2000
     python training/ssp/evaluate.py baselines RUN            # vs random and every benchmark
     python training/ssp/evaluate.py ladder RUN --points 8     # past iterations + benchmarks + Elo
-    python training/ssp/evaluate.py freeze RUN@40 --name normal-update40 --note "..."   # pin a policy
+    python training/ssp/evaluate.py freeze RUN@1000 --name normal-update1000 --note "..."   # pin a policy
     python training/ssp/evaluate.py benchmarks               # list them
-    python training/ssp/evaluate.py analyze bench:hard-update1000 --vs bench:easy-update10,bench:normal-update40
+    python training/ssp/evaluate.py progress RUN --vs bench:normal-update1000 --every 1000 --out table.md
+                                                             # checkpoints over time vs one opponent
+    python training/ssp/evaluate.py analyze bench:hard-update10000 --vs bench:easy-update100,bench:normal-update1000
                                                              # how they play: decisions tallied per side
 
 Benchmarks are fixed opponents that never change, so scores against them stay
@@ -50,7 +52,7 @@ ANALYZE_SCRIPT = os.path.join(REPO, "training", "dist", "ssp-analyze.mjs")
 EVAL_SEED = 900_000
 BASELINES = ("random",)
 # Elo ratings are pinned to this benchmark (falls back to the field's mean).
-ELO_ANCHOR = "bench:easy-update10"
+ELO_ANCHOR = "bench:easy-update100"
 # Benchmarks are the policies the game ships as AI levels (see aiLevels.ts).
 BENCH_DIR = os.path.join(REPO, "src", "games", "sea-salt-paper", "policies")
 BENCH = "bench:"
@@ -200,7 +202,7 @@ def ladder(run_dir: str, points: int = 8, games: int = 1000, salt: bool = True,
     """Evenly spaced checkpoints from a run (always incl. the latest), each
     played vs random, every benchmark, and the previous checkpoint; plus the
     latest vs each earlier one. Returns results and Elo ratings
-    (bench:easy-update10 = 1000 when present)."""
+    (bench:easy-update100 = 1000 when present)."""
     policies = list_policies(run_dir)
     if not policies:
         raise FileNotFoundError(f"no policies under {run_dir}/policies")
@@ -269,6 +271,38 @@ def freeze(ref: str, name: str, note: str = "", games: int = 2000, salt: bool = 
     return dest
 
 
+def progress(run_dir: str, vs: str, every: int = 1000, games: int = 2000, salt: bool = True,
+             workers: int | None = None, out: str | None = None, log=print) -> str:
+    """Score a run's checkpoints every `every` updates (plus its latest) against
+    one fixed opponent. Returns, and optionally writes, a markdown table."""
+    policies = dict(list_policies(run_dir))
+    if not policies:
+        raise FileNotFoundError(f"no policies under {run_dir}/policies")
+    picks = sorted({u for u in policies if u % every == 0} | {max(policies)})
+    lines = [
+        f"Checkpoints of `{os.path.basename(os.path.normpath(run_dir))}` vs `{label(vs)}` "
+        f"({games} seat-swapped matches each{', Extra Salt' if salt else ''})",
+        "",
+        "| Update | Score | 95% CI | Avg final score | LAST CHANCE / match | LAST CHANCE won |",
+        "|---:|---:|---|---|---:|---:|",
+    ]
+    for u in picks:
+        s = evaluate(policies[u], vs, games=games, salt=salt, workers=workers)
+        a, b = s["a"], s["b"]
+        lo, hi = s["aScoreCi95"]
+        won = a["lastChanceWinRate"]
+        lines.append(f"| {u} | {100 * s['aScore']:.1f}% | {100 * lo:.1f}–{100 * hi:.1f}% "
+                     f"| {a['avgScore']:.1f} – {b['avgScore']:.1f} | {a['lastChancesPerMatch']:.2f} "
+                     f"| {'—' if won is None else f'{100 * won:.0f}%'} |")
+        log(score_line(f"u{u} vs {label(vs)}", s))
+    table = "\n".join(lines) + "\n"
+    if out:
+        with open(out, "w", encoding="utf-8") as f:
+            f.write(table)
+        log(f"wrote {out}")
+    return table
+
+
 def describe_benchmarks(log=print) -> None:
     benches = list_benchmarks()
     if not benches:
@@ -309,6 +343,12 @@ def main(argv: list[str] | None = None) -> None:
 
     sub.add_parser("benchmarks", help="list the benchmarks")
 
+    pr = sub.add_parser("progress", parents=[common], help="a run's checkpoints over time vs one opponent")
+    pr.add_argument("run")
+    pr.add_argument("--vs", required=True)
+    pr.add_argument("--every", type=int, default=1000)
+    pr.add_argument("--out", default=None, help="write the markdown table here")
+
     an = sub.add_parser("analyze", parents=[common], help="decision-level comparison of A against each --vs agent")
     an.add_argument("a")
     an.add_argument("--vs", required=True, help="comma-separated agents")
@@ -333,6 +373,9 @@ def main(argv: list[str] | None = None) -> None:
                force=args.force)
     elif args.cmd == "benchmarks":
         describe_benchmarks()
+    elif args.cmd == "progress":
+        print(progress(args.run, args.vs, every=args.every, games=args.games, salt=salt,
+                       workers=args.workers, out=args.out))
     elif args.cmd == "analyze":
         cmd = [shutil.which("node") or "node", ANALYZE_SCRIPT, "--a", agent_spec(args.a),
                "--vs", ",".join(agent_spec(r) for r in args.vs.split(",")), "--games", str(args.games)]

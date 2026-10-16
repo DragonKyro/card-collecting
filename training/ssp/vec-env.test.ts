@@ -66,7 +66,7 @@ describe('SspVecEnv', () => {
   });
 
   it('configure swaps the fixed opponent but not the self-play split', () => {
-    const hard = join(__dirname, '..', '..', 'src', 'games', 'sea-salt-paper', 'policies', 'hard-update1000.json');
+    const hard = join(__dirname, '..', '..', 'src', 'games', 'sea-salt-paper', 'policies', 'hard-update10000.json');
     const fixed = new SspVecEnv({ numEnvs: 2, opponent: 'random' });
     fixed.reset();
     fixed.configure({ opponent: `nn-sample:${hard}` });

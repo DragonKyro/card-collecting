@@ -6,7 +6,7 @@
     tensorboard --logdir training/runs
 
 To stop a run you can't Ctrl+C (e.g. one started in the background), create
-an empty file training/runs/<run>/STOP: it saves, finishes queued evals and
+an empty file training/runs/ssp/<run>/STOP: it saves, finishes queued evals and
 exits after the current update (the file is removed on the next start).
 
 Each update:
@@ -20,11 +20,14 @@ Each update:
      `evaluate.py` and the opponent pool use these.
   4. Every `--eval-every`: in the background, a seat-swapped eval of the new
      policy vs random, every benchmark (the game's shipped policies, see
-     `evaluate.py freeze`), and the checkpoint `--eval-past-gap` saves
-     earlier → tensorboard `eval/*` and evals.jsonl.
+     `evaluate.py freeze`), the checkpoint `--eval-past-gap` saves earlier,
+     and (with `--eval-same-update RUN`) that run's policy at the same update
+     → tensorboard `eval/*` and evals.jsonl. Once a checkpoint's evals are all
+     in, the log prints the latest 10 as a table and progress.md is rewritten
+     (latest 10, then every checkpoint).
 
-Outputs go to training/runs/<run>/: config.json, metrics.jsonl, evals.jsonl,
-tensorboard events, ckpt/, policies/.
+Outputs go to training/runs/ssp/<run>/: config.json, metrics.jsonl, evals.jsonl,
+progress.md, tensorboard events, ckpt/, policies/.
 """
 
 from __future__ import annotations
@@ -53,7 +56,7 @@ from model import (PolicyValueNet, export_policy, load_checkpoint, masked_logits
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.normpath(os.path.join(HERE, "..", ".."))
-DEFAULT_RUNS = os.path.join(REPO, "training", "runs")
+DEFAULT_RUNS = os.path.join(REPO, "training", "runs", "ssp")
 
 
 def default_workers() -> int:
@@ -100,14 +103,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     learn.add_argument("--max-grad-norm", type=float, default=0.5)
 
     save = p.add_argument_group("checkpoints / eval")
-    save.add_argument("--save-every", type=int, default=10)
+    save.add_argument("--save-every", type=int, default=100)
     save.add_argument("--keep-ckpt", type=int, default=5, help="resumable .pt files to keep (policies are all kept)")
-    save.add_argument("--eval-every", type=int, default=20, help="0 = no background eval")
+    save.add_argument("--eval-every", type=int, default=100, help="0 = no background eval (multiple of --save-every)")
     save.add_argument("--eval-games", type=int, default=1000)
     save.add_argument("--eval-workers", type=int, default=4)
     save.add_argument("--eval-past-gap", type=int, default=5, help="compare with the checkpoint this many saves back")
     save.add_argument("--eval-bench", default="all",
                       help="comma-separated benchmark names to eval against ('all' = every benchmark, 'none')")
+    save.add_argument("--eval-same-update", default=None, metavar="RUN_DIR",
+                      help="also eval against RUN_DIR's policy at the same update (e.g. an earlier run, to compare "
+                           "two setups at equal training)")
     return p.parse_args(argv)
 
 
@@ -200,15 +206,13 @@ class Evaluator:
             except Exception as e:  # noqa: BLE001 — reported, training carries on
                 self.results.put((update, tag, b, None, str(e)))
 
-    def submit(self, update: int, policy: str, past: str | None, benches: list[str]) -> bool:
-        """Queue one eval cycle; refuse while the previous cycle hasn't fully started."""
+    def submit(self, update: int, policy: str, jobs: list[tuple[str, str, int]]) -> bool:
+        """Queue one eval cycle of (tag, opponent, games) jobs; refuse while the
+        previous cycle hasn't fully started."""
         if self.jobs.qsize() > 0:
             return False
-        self.jobs.put((update, "random", policy, "random", min(200, self.games)))
-        for name in benches:
-            self.jobs.put((update, f"bench_{name}", policy, ev.BENCH + name, self.games))
-        if past:
-            self.jobs.put((update, "past", policy, past, self.games))
+        for tag, opponent, games in jobs:
+            self.jobs.put((update, tag, policy, opponent, games))
         return True
 
     def drain(self) -> list[tuple]:
@@ -310,6 +314,20 @@ class Trainer:
         if self.evaluator and wanted:
             print(f"  evaluating against benchmarks: {', '.join(wanted)}")
         self.win_window: dict[str, collections.deque] = collections.defaultdict(lambda: collections.deque(maxlen=400))
+        # Per checkpoint: the eval tags queued and the results in so far (for the progress table).
+        self.eval_expected: dict[int, list[str]] = {}
+        self.eval_results: dict[int, dict[str, tuple[float, float, float]]] = {}
+        self.progress_shown: set[int] = set()
+        evals_path = os.path.join(self.run_dir, "evals.jsonl")
+        if a.resume and os.path.isfile(evals_path):
+            with open(evals_path, encoding="utf-8") as f:
+                for line in f:
+                    r = json.loads(line)
+                    lo, hi = r["aScoreCi95"]
+                    self.eval_results.setdefault(r["update"], {})[r["vs"]] = (r["aScore"], lo, hi)
+            for u, res in self.eval_results.items():
+                self.eval_expected[u] = list(res)
+                self.progress_shown.add(u)
 
     # ------------------------------------------------------------ collection
 
@@ -446,6 +464,20 @@ class Trainer:
                       meta={"run": os.path.basename(self.run_dir), "update": u, "decisions": self.decisions})
         return path
 
+    def eval_jobs(self) -> list[tuple[str, str, int]]:
+        """(tag, opponent, games) for the checkpoint just saved."""
+        a = self.args
+        jobs = [("random", "random", min(200, a.eval_games))]
+        jobs += [(f"bench_{name}", ev.BENCH + name, a.eval_games) for name in self.benches]
+        if a.eval_same_update:
+            same = os.path.join(a.eval_same_update, "policies", f"update_{self.update:06d}.json")
+            if os.path.isfile(same):
+                jobs.append(("same", same, a.eval_games))
+        past = ev.list_policies(self.run_dir)
+        if len(past) > a.eval_past_gap:
+            jobs.append(("past", past[-1 - a.eval_past_gap][1], a.eval_games))
+        return jobs
+
     def refresh_past_opponents(self) -> None:
         pool = [p for _, p in ev.list_policies(self.run_dir)][-self.args.pool:]
         if not pool:
@@ -501,6 +533,75 @@ class Trainer:
                                     **{k: v for k, v in s.items() if k != "report"}}) + "\n")
             print(f"  eval u{update} vs {tag}: {100 * s['aScore']:.1f}% "
                   f"[{100 * lo:.1f}-{100 * hi:.1f}] over {s['matches']} matches", flush=True)
+            self.eval_results.setdefault(update, {})[tag] = (s["aScore"], lo, hi)
+        complete = [u for u, tags in self.eval_expected.items()
+                    if u not in self.progress_shown and all(t in self.eval_results.get(u, {}) for t in tags)]
+        if complete:
+            self.progress_shown.update(complete)
+            print(self.progress_table(last=10), flush=True)
+            self.write_progress()
+
+    # ------------------------------------------------------------ progress table
+
+    def eval_columns(self) -> list[tuple[str, str]]:
+        """(tag, header) for every eval tag seen, benchmarks first."""
+        a = self.args
+        tags = {t for res in self.eval_results.values() for t in res}
+        cols = [(t, f"vs {t[len('bench_'):]}") for t in sorted(tags) if t.startswith("bench_")]
+        if "same" in tags:
+            cols.append(("same", f"vs {os.path.basename(os.path.normpath(a.eval_same_update or 'other run'))} @ same update"))
+        if "past" in tags:
+            cols.append(("past", f"vs {a.eval_past_gap * a.save_every} updates earlier"))
+        if "random" in tags:
+            cols.append(("random", "vs random"))
+        return cols
+
+    def progress_table(self, last: int | None = None) -> str:
+        """Markdown table of the evaluated checkpoints (the newest `last` of them).
+        Each cell is this checkpoint's score (wins + half draws) with its 95% CI."""
+        done = sorted(u for u in self.eval_results if u in self.progress_shown)
+        rows = done[-last:] if last else done
+        cols = self.eval_columns()
+        lines = ["| update | " + " | ".join(h for _, h in cols) + " |",
+                 "|---:|" + "---:|" * len(cols)]
+        for u in rows:
+            cells = []
+            for tag, _ in cols:
+                r = self.eval_results[u].get(tag)
+                if r is None:
+                    cells.append("")
+                elif tag == "random":
+                    cells.append(f"{100 * r[0]:.1f}%")
+                else:
+                    cells.append(f"{100 * r[0]:.1f}% ({100 * r[1]:.1f}-{100 * r[2]:.1f})")
+            lines.append(f"| {u} | " + " | ".join(cells) + " |")
+        head = cols[0][0] if cols else None
+        if head and done:
+            best = max(done, key=lambda u: self.eval_results[u].get(head, (-1, 0, 0))[0])
+            lines.append(f"\nbest {cols[0][1]} so far: update {best} at {100 * self.eval_results[best][head][0]:.1f}%")
+        return "\n".join(lines)
+
+    def write_progress(self) -> None:
+        a = self.args
+        v = self.versions
+        doc = [f"# {os.path.basename(self.run_dir)} progress",
+               "",
+               f"Encoder v{v['encoderVersion']} ({self.obs_dim} features), action space v{v['actionSpaceVersion']} "
+               f"({self.num_slots} slots), {a.hidden}x{a.layers} MLP. Seat-swapped evals, {a.eval_games} matches "
+               f"each ({min(200, a.eval_games)} vs random); score = wins + half draws, 95% CI in brackets. "
+               f"Updated {time.strftime('%Y-%m-%d %H:%M')}, update {self.update}.",
+               "",
+               "## Latest 10 checkpoints",
+               "",
+               self.progress_table(last=10),
+               "",
+               "## Every checkpoint",
+               "",
+               self.progress_table()]
+        path = os.path.join(self.run_dir, "progress.md")
+        with open(path + ".tmp", "w", encoding="utf-8") as f:
+            f.write("\n".join(doc) + "\n")
+        os.replace(path + ".tmp", path)
 
     # ------------------------------------------------------------ main loop
 
@@ -531,9 +632,10 @@ class Trainer:
                 if self.update % a.save_every == 0 or self.update == a.updates:
                     policy = self.save()
                     if self.evaluator and self.update % a.eval_every == 0:
-                        past = ev.list_policies(self.run_dir)
-                        gap = past[-1 - a.eval_past_gap][1] if len(past) > a.eval_past_gap else None
-                        if not self.evaluator.submit(self.update, policy, gap, self.benches):
+                        jobs = self.eval_jobs()
+                        if self.evaluator.submit(self.update, policy, jobs):
+                            self.eval_expected[self.update] = [tag for tag, _, _ in jobs]
+                        else:
                             print("  (eval skipped - previous evals still running)")
                 if self.update % a.pool_refresh == 0 or self.update == a.save_every:
                     self.refresh_past_opponents()  # (also right after the first checkpoint lands)

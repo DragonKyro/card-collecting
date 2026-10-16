@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   cardPoints, collectorPoints, mermaidColorBonus, isValidDuoPair,
-  isValidStarfishTrio, totalScore,
+  isValidStarfishTrio, specialColorBonus, totalScore,
   SHELL_POINTS, OCTOPUS_POINTS, PENGUIN_POINTS, SAILOR_POINTS,
 } from './scoring';
 import type { SspCard, SspCardFamily, SspColor } from './types';
@@ -129,19 +129,19 @@ describe('mermaidColorBonus', () => {
       card(3, 'crab', 'yellow'), card(4, 'boat', 'yellow'), card(5, 'fish', 'yellow'),
       card(6, 'shell', 'green'), card(7, 'octopus', 'green'),
     ];
-    // White: 2, Yellow: 3, Green: 2 → top two: 3 + 2 = 5
+    // White: 2, Yellow: 3, Green: 2 → top two: 3 + 2 = 5 (white and green tie)
     expect(mermaidColorBonus(cards)).toBe(5);
   });
 
   it('two mermaids cannot both claim the same color group', () => {
-    // Only ONE non-white color present (yellow×4); the 2nd mermaid has no
-    // distinct group to claim, so it contributes 0 (NOT another 4).
+    // Yellow ×4 and the two white mermaids: the 2nd mermaid can't take yellow
+    // again, so it claims the next group — white (2) — not another 4.
     const cards = [
       card(1, 'mermaid', 'white'), card(2, 'mermaid', 'white'),
       card(3, 'crab', 'yellow'), card(4, 'boat', 'yellow'),
       card(5, 'fish', 'yellow'), card(6, 'shell', 'yellow'),
     ];
-    expect(mermaidColorBonus(cards)).toBe(4);
+    expect(mermaidColorBonus(cards)).toBe(6);
   });
 
   it('three mermaids each claim a distinct color group', () => {
@@ -151,19 +151,20 @@ describe('mermaidColorBonus', () => {
       card(7, 'shell', 'green'), card(8, 'octopus', 'green'),                            // 2 green
       card(9, 'penguin', 'pink'),                                                        // 1 pink
     ];
-    // 3+2+1 = 6.
-    expect(mermaidColorBonus(cards)).toBe(6);
+    // Groups: yellow 3, white 3 (the mermaids), green 2, pink 1 → 3+3+2 = 8.
+    expect(mermaidColorBonus(cards)).toBe(8);
   });
 
-  it('mermaid claims SKIP the white color group (whites are scored separately)', () => {
+  it('mermaids count as a white group of their own', () => {
     const cards = [
       card(1, 'mermaid', 'white'),
       card(2, 'mermaid', 'white'),
       card(3, 'mermaid', 'white'),
     ];
-    // Mermaids only claim NON-WHITE groups. With nothing else, the claim
-    // function returns 0.
-    expect(mermaidColorBonus(cards)).toBe(0);
+    // The only group is white ×3: the first mermaid claims it, the others
+    // have no distinct group left.
+    expect(mermaidColorBonus(cards)).toBe(3);
+    expect(mermaidColorBonus([card(1, 'mermaid', 'white')])).toBe(1);
   });
 });
 
@@ -199,7 +200,7 @@ describe('totalScore', () => {
   it('cards column = collector points + mermaid claims; bonus = largest colour group', () => {
     const cards = [
       card(1, 'shell', 'yellow'), card(2, 'shell', 'yellow'),       // 2 shells (set) = 2
-      card(3, 'mermaid', 'white'),                                  // claims top non-white group
+      card(3, 'mermaid', 'white'),                                  // claims top group (yellow 2 > white 1)
       card(4, 'crab', 'pink'),
     ];
     const t = totalScore(cards);
@@ -211,7 +212,7 @@ describe('totalScore', () => {
     expect(totalScore(cards, { lastChanceColorBonus: true }).total).toBe(6);
   });
 
-  it('two mermaids claim two distinct non-white color groups', () => {
+  it('two mermaids claim two distinct color groups', () => {
     const cards = [
       card(1, 'mermaid', 'white'), card(2, 'mermaid', 'white'),
       card(3, 'crab', 'yellow'), card(4, 'boat', 'yellow'), card(5, 'fish', 'yellow'),  // 3 yellow
@@ -220,12 +221,26 @@ describe('totalScore', () => {
     const t = totalScore(cards);
     // Cards = pairs (boats: 0 since 1, etc — only fish+fish? no, just 1 fish.
     // No duo pairs formed. Just collector set scoring: 1 shell → 0, 1 octopus → 0.
-    // Mermaid claims = top 2 non-white groups = 3 (yellow) + 2 (green) = 5.
+    // Mermaid claims = top 2 groups = 3 (yellow) + 2 (green or white) = 5.
     // Bonus = largest single colour group = 3 (yellow beats the 2 whites).
     expect(t.cardPoints).toBe(5);
     expect(t.colorBonus).toBe(3);
     expect(t.total).toBe(5);
     expect(totalScore(cards, { lastChanceColorBonus: true }).total).toBe(8);
+  });
+});
+
+describe('LAST CHANCE colour bonus', () => {
+  it('counts white, so mermaids can be the biggest group', () => {
+    const cards = [
+      card(1, 'mermaid', 'white'), card(2, 'mermaid', 'white'), card(3, 'mermaid', 'white'),
+      card(4, 'crab', 'yellow'), card(5, 'boat', 'yellow'),
+      card(6, 'shell', 'green'),
+    ];
+    // White ×3 (the mermaids) beats yellow ×2.
+    expect(specialColorBonus(cards)).toBe(3);
+    expect(totalScore(cards).colorBonus).toBe(3);
+    expect(specialColorBonus([card(1, 'mermaid', 'white')])).toBe(1);
   });
 });
 

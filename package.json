@@ -12,7 +12,9 @@
     "typecheck": "tsc",
     "train:build": "vite build --config training/vite.config.ts",
     "ssp:eval": "npm run train:build && node training/dist/ssp-eval.mjs",
-    "ssp:analyze": "npm run train:build && node training/dist/ssp-analyze.mjs"
+    "ssp:analyze": "npm run train:build && node training/dist/ssp-analyze.mjs",
+    "sgp:build": "vite build --config training/sgp/vite.config.ts",
+    "sgp:eval": "npm run sgp:build && node training/sgp/dist/sgp-eval.mjs"
   },
   "dependencies": {
     "react": "^19.0.0",

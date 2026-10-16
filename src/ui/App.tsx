@@ -6,14 +6,19 @@ import { useState } from 'react';
 import { GAMES, getGameById } from '@/games/registry';
 import { GameLobby } from './GameLobby';
 import { GameHost } from './GameHost';
+import type { Seat } from '@/core/types';
 
 type Screen =
   | { kind: 'pick' }
-  | { kind: 'lobby'; gameId: string }
+  /** `initial` pre-fills the lobby when a finished match returns to it. */
+  | { kind: 'lobby'; gameId: string; initial?: { config: unknown; seats: Seat[] } }
   | { kind: 'playing' };
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ kind: 'pick' });
+  // Bumped on every return from a match so the lobby remounts and re-seeds
+  // its state from the new `initial`.
+  const [lobbyVisit, setLobbyVisit] = useState(0);
 
   return (
     <div className="app-shell">
@@ -57,13 +62,23 @@ export default function App() {
           if (!module) return <p>Unknown game.</p>;
           return (
             <GameLobby
+              key={lobbyVisit}
               module={module}
+              initial={screen.initial}
               onBack={() => setScreen({ kind: 'pick' })}
               onStart={() => setScreen({ kind: 'playing' })}
             />
           );
         })()}
-        {screen.kind === 'playing' && <GameHost onExit={() => setScreen({ kind: 'pick' })} />}
+        {screen.kind === 'playing' && (
+          <GameHost
+            onExit={() => setScreen({ kind: 'pick' })}
+            onReturnToLobby={(gameId, initial) => {
+              setLobbyVisit((n) => n + 1);
+              setScreen({ kind: 'lobby', gameId, initial });
+            }}
+          />
+        )}
       </main>
     </div>
   );

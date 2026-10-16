@@ -2,18 +2,19 @@
 //
 // Two layers:
 //   - per-round scoring: nigiri (+ wasabi triple), tempura, sashimi, dumpling,
-//     onigiri shapes, tofu, edamame neighbors, eel, eggNigiri, maki / uramaki /
-//     temaki competitive scoring, soySauce, tea, specialOrder, takeoutBox.
+//     onigiri sets, tofu, edamame, eel, miso soup, maki / temaki majorities,
+//     uramaki places, soy sauce, tea, and cards flipped by a takeout box.
 //   - end-of-match scoring: pudding (most/fewest), ice cream (sets of 4), fruit
-//     (per-kind tiered scoring).
+//     (per-type tiered scoring).
 //
 // All scoring is pure — given player tables + (for competitive cards) all
 // players' tables, returns scores. The reducer calls these to commit per-round
-// totals.
+// totals. A special order scores as the card it copies (`effectiveCard`); a
+// flipped card scores 2 and counts as nothing else.
 
 import type { PlayerId } from '@/core/types';
 import type { SushiGoCard, SushiGoCardKind, SushiGoPlayer } from './types';
-import { nigiriPoints, cardColor } from './cards';
+import { nigiriPoints, colorGroup } from './cards';
 
 export interface KindScore {
   kind: SushiGoCardKind;
@@ -21,27 +22,70 @@ export interface KindScore {
   detail?: string;
 }
 
-/** Compute the points a player's table is worth for one round. Some scoring
- *  depends on other players (maki/uramaki/temaki/soy-sauce); the global view is
- *  computed by `scoreRound` over all players' tables. */
-export function scoreRound(players: SushiGoPlayer[]): Record<PlayerId, KindScore[]> {
+/** Uramaki places, in the order players reach 10 icons. */
+export const URAMAKI_PLACES = [8, 5, 2];
+
+/** The tables of one scoring pass: every player's face-up cards (as what
+ *  they count as) and uramaki points, worked out once. */
+interface RoundView {
+  players: SushiGoPlayer[];
+  live: SushiGoCard[][];
+  uramaki: number[];
+}
+
+function roundView(players: SushiGoPlayer[], uramakiNextPlace: number): RoundView {
+  const live = players.map(liveCards);
+  return { players, live, uramaki: uramakiRoundPoints(players, live, uramakiNextPlace) };
+}
+
+/** Compute every player's points for one round. Some scoring depends on other
+ *  players (maki/uramaki/temaki/soy-sauce/edamame); `uramakiNextPlace` is the
+ *  first uramaki place nobody has claimed yet this round. */
+export function scoreRound(players: SushiGoPlayer[], uramakiNextPlace = 0): Record<PlayerId, KindScore[]> {
+  const view = roundView(players, uramakiNextPlace);
   const out: Record<PlayerId, KindScore[]> = {};
-  for (const p of players) out[p.id] = scoreRoundForPlayer(p, players);
+  players.forEach((p, i) => { out[p.id] = scoreRoundForPlayer(i, view); });
   return out;
 }
 
-function scoreRoundForPlayer(player: SushiGoPlayer, all: SushiGoPlayer[]): KindScore[] {
+/** `players[i]`'s points for the round — `scoreRound` for one player, for
+ *  callers probing many hypothetical tables. */
+export function scoreRoundOf(players: SushiGoPlayer[], i: number, uramakiNextPlace = 0): KindScore[] {
+  return scoreRoundForPlayer(i, roundView(players, uramakiNextPlace));
+}
+
+/** Round points `players[i]` would score with each of many hypothetical tables
+ *  of their own, everyone else's as they are. Works the others out once. */
+export function roundProbe(
+  players: SushiGoPlayer[],
+  i: number,
+  uramakiNextPlace = 0,
+): (table: SushiGoCard[]) => number {
+  const live = players.map(liveCards);
+  return (table) => {
+    const probed = players.slice();
+    probed[i] = { ...players[i], table };
+    const probedLive = live.slice();
+    probedLive[i] = liveCards(probed[i]);
+    const view = { players: probed, live: probedLive, uramaki: uramakiRoundPoints(probed, probedLive, uramakiNextPlace) };
+    return totalRoundScore(scoreRoundForPlayer(i, view));
+  };
+}
+
+function scoreRoundForPlayer(i: number, view: RoundView): KindScore[] {
   const scores: KindScore[] = [];
-  const table = effectiveTable(player);
+  const table = effectiveTable(view.players[i]);
+  const live = view.live[i];
 
   // Pre-count what's on table for quick lookups.
   const byKind = new Map<SushiGoCardKind, SushiGoCard[]>();
-  for (const c of table) {
+  for (const c of live) {
     if (!byKind.has(c.kind)) byKind.set(c.kind, []);
     byKind.get(c.kind)!.push(c);
   }
+  const anyoneHas = (kind: SushiGoCardKind) => view.live.some((cards) => cards.some((c) => c.kind === kind));
 
-  // ----- Nigiri (with adjacent wasabi → triple) -----
+  // ----- Nigiri (with earlier wasabi → triple) -----
   scores.push(...scoreNigiri(table));
 
   // ----- Appetizers -----
@@ -62,11 +106,13 @@ function scoreRoundForPlayer(player: SushiGoPlayer, all: SushiGoPlayer[]): KindS
     scores.push({ kind: 'dumpling', points: pts, detail: `${n} cards` });
   }
   if (byKind.has('mizuOnigiri')) {
-    // Count distinct shapes
-    const shapes = new Set(byKind.get('mizuOnigiri')!.map((c) => c.variant ?? ''));
+    const sets = onigiriSets(byKind.get('mizuOnigiri')!);
     const table = [0, 1, 4, 9, 16];
-    const pts = table[Math.min(shapes.size, 4)];
-    scores.push({ kind: 'mizuOnigiri', points: pts, detail: `${shapes.size} unique shape${shapes.size === 1 ? '' : 's'}` });
+    const pts = sets.reduce((s, size) => s + table[size], 0);
+    const detail = sets.length === 1
+      ? `${sets[0]} unique shape${sets[0] === 1 ? '' : 's'}`
+      : `sets of ${sets.join(' + ')}`;
+    scores.push({ kind: 'mizuOnigiri', points: pts, detail });
   }
   if (byKind.has('tofu')) {
     const n = byKind.get('tofu')!.length;
@@ -74,15 +120,12 @@ function scoreRoundForPlayer(player: SushiGoPlayer, all: SushiGoPlayer[]): KindS
     scores.push({ kind: 'tofu', points: pts, detail: `${n} cards${n >= 3 ? ' (busted)' : ''}` });
   }
   if (byKind.has('edamame')) {
-    // Edamame scoring: each edamame scores 1 per neighbor who also has edamame.
-    // In Party that's "min(other-players-with-edamame, 4)" per card. We treat
-    // any opponent with ≥1 edamame as a neighbor.
+    // Each edamame scores 1 per opponent with any edamame, capped at 4.
     const myCount = byKind.get('edamame')!.length;
-    const others = all.filter((q) => q.id !== player.id);
-    const neighborsWithEdamame = others.filter((q) =>
-      effectiveTable(q).some((c) => c.kind === 'edamame'),
+    const othersWithEdamame = view.live.filter((cards, j) =>
+      j !== i && cards.some((c) => c.kind === 'edamame'),
     ).length;
-    const perCard = Math.min(neighborsWithEdamame, 4);
+    const perCard = Math.min(othersWithEdamame, 4);
     const pts = myCount * perCard;
     scores.push({ kind: 'edamame', points: pts, detail: `${myCount} × ${perCard}` });
   }
@@ -91,62 +134,47 @@ function scoreRoundForPlayer(player: SushiGoPlayer, all: SushiGoPlayer[]): KindS
     const pts = n === 1 ? -3 : 7;
     scores.push({ kind: 'eel', points: pts, detail: `${n} eel` });
   }
-  if (byKind.has('eggNigiri')) {
-    // Eggs without wasabi context — eggs only score base 1 here as appetizer; if
-    // a player wants wasabi-tripled eggs they should use nigiri. We score these
-    // as 1 pt each (matching egg nigiri in the rulebook).
-    const n = byKind.get('eggNigiri')!.length;
-    scores.push({ kind: 'eggNigiri', points: n, detail: `${n} egg${n === 1 ? '' : 's'}` });
+  if (byKind.has('misoSoup')) {
+    const n = byKind.get('misoSoup')!.length;
+    scores.push({ kind: 'misoSoup', points: n * 3, detail: `${n} soup${n === 1 ? '' : 's'}` });
   }
 
   // ----- Rolls -----
-  if (byKind.has('maki') || all.some((p) => effectiveTable(p).some((c) => c.kind === 'maki'))) {
-    scores.push({ kind: 'maki', points: makiPointsForPlayer(player, all) });
+  if (anyoneHas('maki')) {
+    scores.push({ kind: 'maki', points: makiPoints(i, view) });
   }
-  if (byKind.has('temaki') || all.some((p) => effectiveTable(p).some((c) => c.kind === 'temaki'))) {
-    scores.push({ kind: 'temaki', points: temakiPointsForPlayer(player, all) });
+  if (anyoneHas('temaki')) {
+    scores.push({ kind: 'temaki', points: temakiPoints(i, view) });
   }
-  if (byKind.has('uramaki') || all.some((p) => effectiveTable(p).some((c) => c.kind === 'uramaki'))) {
-    scores.push({ kind: 'uramaki', points: uramakiPointsForPlayer(player, all) });
+  if (view.uramaki[i] !== 0) {
+    scores.push({ kind: 'uramaki', points: view.uramaki[i] });
   }
 
   // ----- Specials -----
   if (byKind.has('soySauce')) {
-    const myColors = distinctColors(table);
+    const myColors = distinctColors(live);
     let maxColors = 0;
-    for (const q of all) maxColors = Math.max(maxColors, distinctColors(effectiveTable(q)));
-    const pts = myColors === maxColors && maxColors > 0
-      ? byKind.get('soySauce')!.length * 4
-      : 0;
-    scores.push({ kind: 'soySauce', points: pts, detail: `${myColors} distinct colors` });
+    for (const cards of view.live) maxColors = Math.max(maxColors, distinctColors(cards));
+    const pts = myColors === maxColors ? byKind.get('soySauce')!.length * 4 : 0;
+    scores.push({ kind: 'soySauce', points: pts, detail: `${myColors} colors` });
   }
   if (byKind.has('tea')) {
-    // tea pts = teaCount × (count of most-played kind, NOT counting tea itself).
     const teaCount = byKind.get('tea')!.length;
-    let mostKindCount = 0;
-    for (const [k, cards] of byKind.entries()) {
-      if (k === 'tea') continue;
-      if (cards.length > mostKindCount) mostKindCount = cards.length;
-    }
-    const pts = teaCount * mostKindCount;
-    scores.push({ kind: 'tea', points: pts, detail: `${teaCount} tea × ${mostKindCount}` });
+    const biggest = biggestColorSet(live);
+    scores.push({ kind: 'tea', points: teaCount * biggest, detail: `${teaCount} tea × ${biggest}` });
   }
-  if (byKind.has('takeoutBox')) {
-    // Played takeout boxes that have been "flipped" (used) are tracked via variant=='used'.
-    const used = byKind.get('takeoutBox')!.filter((c) => c.variant === 'used').length;
-    if (used > 0) scores.push({ kind: 'takeoutBox', points: used * 2, detail: `${used} flipped` });
+  const flipped = table.length - live.length;
+  if (flipped > 0) {
+    scores.push({ kind: 'takeoutBox', points: flipped * 2, detail: `${flipped} flipped` });
   }
   // chopsticks/spoon/menu score nothing themselves; only their use matters.
-  // specialOrder: counted as a copy via effectiveTable() expansion.
 
   return scores.filter((s) => s.points !== 0 || s.detail);
 }
 
 /** Score nigiri respecting wasabi triple (wasabi must be played before the nigiri).
- *  Each wasabi can attach to AT MOST ONE following nigiri.
- *  Also handles eggNigiri being a "nigiri" for wasabi purposes — most builds do
- *  NOT allow eggNigiri appetizer to be wasabi-tripled, only the main nigiri set,
- *  so we keep wasabi tied to `nigiri` cards only. */
+ *  Each wasabi holds AT MOST ONE following nigiri. A flipped nigiri still sits
+ *  on its wasabi; a flipped wasabi is no wasabi at all. */
 function scoreNigiri(table: SushiGoCard[]): KindScore[] {
   // Walk the table in order. When we see a wasabi, mark it pending; when we see
   // a nigiri after a pending wasabi, triple its base value.
@@ -156,20 +184,17 @@ function scoreNigiri(table: SushiGoCard[]): KindScore[] {
   let tripled = 0;
   for (const c of table) {
     if (c.kind === 'wasabi') {
-      pendingWasabi += 1;
+      if (!c.flipped) pendingWasabi += 1;
       continue;
     }
-    if (c.kind === 'nigiri') {
-      const base = nigiriPoints(c.variant);
-      if (pendingWasabi > 0) {
-        total += base * 3;
-        pendingWasabi -= 1;
-        tripled += 1;
-      } else {
-        total += base;
-      }
-      nigiriCount += 1;
-    }
+    if (c.kind !== 'nigiri') continue;
+    const onWasabi = pendingWasabi > 0;
+    if (onWasabi) pendingWasabi -= 1;
+    if (c.flipped) continue;
+    const base = nigiriPoints(c.variant);
+    total += onWasabi ? base * 3 : base;
+    if (onWasabi) tripled += 1;
+    nigiriCount += 1;
   }
   if (nigiriCount === 0) return [];
   return [{
@@ -179,104 +204,127 @@ function scoreNigiri(table: SushiGoCard[]): KindScore[] {
   }];
 }
 
-function makiPointsForPlayer(player: SushiGoPlayer, all: SushiGoPlayer[]): number {
-  // Count maki icons per player.
-  const counts = all.map((p) => ({
-    id: p.id,
-    count: effectiveTable(p)
-      .filter((c) => c.kind === 'maki')
-      .reduce((s, c) => s + Number(c.variant ?? '1'), 0),
-  }));
-  const sorted = [...counts].sort((a, b) => b.count - a.count);
-  if (sorted.length === 0 || sorted[0].count === 0) return 0;
-  const myCount = counts.find((c) => c.id === player.id)?.count ?? 0;
-  if (myCount === 0) return 0;
-  const top = sorted[0].count;
-  const tiedTop = sorted.filter((c) => c.count === top);
-  // 6 pts split among tied first
-  if (myCount === top) {
-    return Math.floor(6 / tiedTop.length);
+/** Onigiri split into sets of distinct shapes, largest first (e.g. [3, 1]). */
+function onigiriSets(cards: SushiGoCard[]): number[] {
+  const counts = new Map<string, number>();
+  for (const c of cards) counts.set(c.variant ?? '', (counts.get(c.variant ?? '') ?? 0) + 1);
+  const left = [...counts.values()];
+  const sets: number[] = [];
+  while (left.some((n) => n > 0)) {
+    sets.push(left.filter((n) => n > 0).length);
+    for (let i = 0; i < left.length; i++) left[i] = Math.max(0, left[i] - 1);
   }
-  // 2nd place — find next-highest, must have >0
-  const secondTier = sorted.filter((c) => c.count !== top && c.count > 0);
-  if (secondTier.length === 0) return 0;
-  const second = secondTier[0].count;
-  const tiedSecond = secondTier.filter((c) => c.count === second);
-  if (myCount === second) {
-    return Math.floor(3 / tiedSecond.length);
-  }
-  return 0;
+  return sets;
 }
 
-function temakiPointsForPlayer(player: SushiGoPlayer, all: SushiGoPlayer[]): number {
-  const counts = all.map((p) => ({
-    id: p.id,
-    count: effectiveTable(p).filter((c) => c.kind === 'temaki').length,
-  }));
-  if (counts.every((c) => c.count === 0)) return 0;
-  const myCount = counts.find((c) => c.id === player.id)?.count ?? 0;
-  const max = Math.max(...counts.map((c) => c.count));
-  const min = Math.min(...counts.map((c) => c.count));
+function makiIcons(live: SushiGoCard[]): number {
+  return live.filter((c) => c.kind === 'maki').reduce((s, c) => s + Number(c.variant ?? '1'), 0);
+}
+
+function makiPoints(i: number, view: RoundView): number {
+  const icons = view.live.map(makiIcons);
+  const mine = icons[i];
+  if (mine === 0) return 0;
+  // Places go by distinct icon totals: tied players all take the full points
+  // and the next total still takes the next place.
+  const awards = view.players.length >= 6 ? [6, 4, 2] : [6, 3];
+  const totals = [...new Set(icons.filter((n) => n > 0))].sort((a, b) => b - a);
+  return awards[totals.indexOf(mine)] ?? 0;
+}
+
+function temakiPoints(i: number, view: RoundView): number {
+  const counts = view.live.map((cards) => cards.filter((c) => c.kind === 'temaki').length);
+  if (counts.every((n) => n === 0)) return 0;
+  const max = Math.max(...counts);
+  const min = Math.min(...counts);
   let pts = 0;
-  if (myCount === max) pts += 4;
-  // Fewest only counts if there are 3+ players (per rulebook).
-  if (all.length >= 3 && myCount === min && max !== min) pts -= 4;
+  if (counts[i] === max) pts += 4;
+  // No penalty for fewest in a 2-player game.
+  if (counts.length >= 3 && counts[i] === min && max !== min) pts -= 4;
   return pts;
 }
 
-function uramaki10ThresholdPoints(): number[] {
-  return [8, 5, 2];
+function iconsOf(live: SushiGoCard[]): number {
+  return live.filter((c) => c.kind === 'uramaki').reduce((s, c) => s + Number(c.variant ?? '0'), 0);
 }
 
-function uramakiPointsForPlayer(player: SushiGoPlayer, all: SushiGoPlayer[]): number {
-  // Per the rulebook: as soon as a player's uramaki icons cross 10, they claim
-  // the next-best podium (8/5/2). After picks are placed in order, we re-simulate
-  // who hits 10 first. Without per-pick ordering captured we approximate:
-  //   - Compute each player's final icon total.
-  //   - Award by descending total to anyone ≥ 10.
-  // This collapses to a pure end-of-round computation, slightly different from
-  // the strict rule (which depends on play order). Acceptable approximation.
-  const counts = all.map((p) => ({
-    id: p.id,
-    count: effectiveTable(p)
-      .filter((c) => c.kind === 'uramaki')
-      .reduce((s, c) => s + Number(c.variant ?? '0'), 0),
-  }));
-  const eligible = counts.filter((c) => c.count >= 10).sort((a, b) => b.count - a.count);
-  const podium = uramaki10ThresholdPoints();
-  const myEntry = eligible.findIndex((c) => c.id === player.id);
-  if (myEntry === -1) return 0;
-  return podium[Math.min(myEntry, podium.length - 1)];
+export function uramakiIcons(p: SushiGoPlayer): number {
+  return iconsOf(liveCards(p));
 }
 
-/** Expand specialOrder cards into copies of another card on the same player's
- *  table. We use the most valuable available "copy target" each time. */
-function effectiveTable(player: SushiGoPlayer): SushiGoCard[] {
-  const table = player.table.slice();
-  // Replace each specialOrder with a synthetic card of an already-played kind.
-  // The player should have set `variant` to encode their pick (e.g. 'nigiri:salmon').
-  for (let i = 0; i < table.length; i++) {
-    const c = table[i];
-    if (c.kind !== 'specialOrder') continue;
-    const v = c.variant ?? '';
-    if (!v) {
-      // No target chosen yet — leave it as specialOrder (scores 0).
-      continue;
+/** Players on 10+ uramaki icons claim the next places, most icons first.
+ *  Players still tied all score that place and the place after it is skipped. */
+export function claimUramaki(
+  all: SushiGoPlayer[],
+  nextPlace: number,
+): { awards: Record<PlayerId, number>; nextPlace: number } {
+  return claimFrom(all.map((p) => p.id), all.map(uramakiIcons), nextPlace);
+}
+
+function claimFrom(
+  ids: PlayerId[],
+  icons: number[],
+  nextPlace: number,
+): { awards: Record<PlayerId, number>; nextPlace: number } {
+  const byIcons = new Map<number, PlayerId[]>();
+  icons.forEach((n, k) => {
+    if (n >= 10) byIcons.set(n, [...(byIcons.get(n) ?? []), ids[k]]);
+  });
+  const awards: Record<PlayerId, number> = {};
+  for (const n of [...byIcons.keys()].sort((a, b) => b - a)) {
+    if (nextPlace >= URAMAKI_PLACES.length) break;
+    const tied = byIcons.get(n)!;
+    for (const id of tied) awards[id] = URAMAKI_PLACES[nextPlace];
+    nextPlace += tied.length;
+  }
+  return { awards, nextPlace };
+}
+
+/** Uramaki points for the round, per player: places already scored
+ *  (`uramakiPoints`), places 10+ icons on the table would claim now, then the
+ *  round-end place: the most icons left scores the next unclaimed place (ties
+ *  all score it). */
+function uramakiRoundPoints(players: SushiGoPlayer[], live: SushiGoCard[][], nextPlace: number): number[] {
+  const icons = live.map(iconsOf);
+  const claim = claimFrom(players.map((p) => p.id), icons, nextPlace);
+  const out = players.map((p) => p.uramakiPoints + (claim.awards[p.id] ?? 0));
+  if (claim.nextPlace < URAMAKI_PLACES.length) {
+    const left = players.flatMap((p, k) => (p.id in claim.awards ? [] : [k]));
+    const most = Math.max(0, ...left.map((k) => icons[k]));
+    if (most > 0) {
+      for (const k of left) if (icons[k] === most) out[k] += URAMAKI_PLACES[claim.nextPlace];
     }
-    // variant format: "kind" or "kind:variant"
-    const [kindRaw, variantRaw] = v.split(':') as [SushiGoCardKind, string | undefined];
-    table[i] = { id: c.id, kind: kindRaw, variant: variantRaw };
   }
-  return table;
+  return out;
 }
 
-function distinctColors(cards: SushiGoCard[]): number {
-  const set = new Set<string>();
-  for (const c of cards) {
-    if (c.kind === 'soySauce') continue;
-    set.add(cardColor(c.kind));
-  }
-  return set.size;
+/** What a played card counts as: a special order becomes the card it copies. */
+export function effectiveCard(c: SushiGoCard): SushiGoCard {
+  if (c.kind !== 'specialOrder' || !c.copyOf) return c;
+  const flipped = c.flipped || c.copyOf.flipped;
+  return { id: c.id, kind: c.copyOf.kind, variant: c.copyOf.variant, ...(flipped ? { flipped } : {}) };
+}
+
+/** A player's table with special orders replaced by what they copy. */
+export function effectiveTable(player: SushiGoPlayer): SushiGoCard[] {
+  return player.table.map(effectiveCard);
+}
+
+/** Face-up cards on a table, as what they count as. */
+function liveCards(player: SushiGoPlayer): SushiGoCard[] {
+  return effectiveTable(player).filter((c) => !c.flipped);
+}
+
+/** Background colors among face-up cards (what soy sauce counts). */
+export function distinctColors(cards: SushiGoCard[]): number {
+  return new Set(cards.map((c) => colorGroup(c.kind))).size;
+}
+
+/** The biggest one-color set among face-up cards (what tea counts). */
+export function biggestColorSet(cards: SushiGoCard[]): number {
+  const counts = new Map<SushiGoCardKind, number>();
+  for (const c of cards) counts.set(colorGroup(c.kind), (counts.get(colorGroup(c.kind)) ?? 0) + 1);
+  return Math.max(0, ...counts.values());
 }
 
 /** Sum the per-round scores into a player's total. */
@@ -291,59 +339,42 @@ export function totalRoundScore(scores: KindScore[]): number {
 export function scoreDesserts(players: SushiGoPlayer[]): Record<PlayerId, number> {
   const out: Record<PlayerId, number> = {};
   for (const p of players) out[p.id] = 0;
+  // A special order that copied a dessert scores as that dessert.
+  const pile = (p: SushiGoPlayer) => p.dessertPile.map(effectiveCard);
 
-  // Pudding:
-  //   2-player: +6 split for most pudding; the −6 penalty for fewest is SKIPPED.
-  //   3+ player: +6 split for most, −6 split for fewest.
+  // Pudding: +6 for most, −6 for fewest (skipped at 2 players). Tied players
+  // all take the full amount.
   const puddings = players.map((p) => ({
     id: p.id,
-    count: p.dessertPile.filter((c) => c.kind === 'pudding').length,
+    count: pile(p).filter((c) => c.kind === 'pudding').length,
   }));
-  if (puddings.some((c) => c.count > 0)) {
-    const max = Math.max(...puddings.map((c) => c.count));
-    const min = Math.min(...puddings.map((c) => c.count));
-    const tiedMax = puddings.filter((c) => c.count === max);
-    const tiedMin = puddings.filter((c) => c.count === min);
-    if (max > 0 && max !== min) {
-      // Award +6 share to the most-pudding player(s).
-      const share = Math.floor(6 / tiedMax.length);
-      for (const c of tiedMax) out[c.id] += share;
-      // The −6 penalty applies only at 3+ players.
-      if (players.length >= 3) {
-        const penalty = Math.floor(6 / tiedMin.length);
-        for (const c of tiedMin) out[c.id] -= penalty;
-      }
+  const max = Math.max(...puddings.map((c) => c.count));
+  const min = Math.min(...puddings.map((c) => c.count));
+  if (max > 0 && max !== min) {
+    for (const c of puddings) if (c.count === max) out[c.id] += 6;
+    if (players.length >= 3) {
+      for (const c of puddings) if (c.count === min) out[c.id] -= 6;
     }
   }
 
   // ice cream: each set of 4 scores 12
   for (const p of players) {
-    const n = p.dessertPile.filter((c) => c.kind === 'greenTeaIceCream').length;
+    const n = pile(p).filter((c) => c.kind === 'greenTeaIceCream').length;
     out[p.id] += Math.floor(n / 4) * 12;
   }
 
-  // fruit: per-kind tiered scoring (0→-2, 1→0, 2→1, 3→3, 4→6, 5+→10)
-  const fruitPoints = (n: number): number => {
-    if (n === 0) return -2;
-    if (n === 1) return 0;
-    if (n === 2) return 1;
-    if (n === 3) return 3;
-    if (n === 4) return 6;
-    return 10;
-  };
-  for (const p of players) {
-    const fruits = p.dessertPile.filter((c) => c.kind === 'fruit');
-    if (fruits.length === 0 && !players.some((q) => q.dessertPile.some((c) => c.kind === 'fruit'))) continue;
-    const counts: Record<string, number> = { P: 0, W: 0, O: 0 };
-    for (const f of fruits) {
-      const v = f.variant ?? '';
-      for (const ch of v) {
-        if (ch in counts) counts[ch] += 1;
+  // fruit: per-type tiered scoring (0→-2, 1→0, 2→1, 3→3, 4→6, 5+→10)
+  const fruitPoints = (n: number): number => [-2, 0, 1, 3, 6, 10][Math.min(n, 5)];
+  if (players.some((q) => pile(q).some((c) => c.kind === 'fruit'))) {
+    for (const p of players) {
+      const counts: Record<string, number> = { W: 0, P: 0, O: 0 };
+      for (const f of pile(p).filter((c) => c.kind === 'fruit')) {
+        for (const ch of f.variant ?? '') {
+          if (ch in counts) counts[ch] += 1;
+        }
       }
+      out[p.id] += fruitPoints(counts.W) + fruitPoints(counts.P) + fruitPoints(counts.O);
     }
-    out[p.id] += fruitPoints(counts.P) + fruitPoints(counts.W) + fruitPoints(counts.O);
   }
   return out;
 }
-
-export { effectiveTable };

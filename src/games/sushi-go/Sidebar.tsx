@@ -5,6 +5,7 @@ import { useLayoutEffect, useRef, useState } from 'react';
 import { create } from 'zustand';
 import type { SushiGoState, SushiGoLogEntry, SushiGoCardKind } from './types';
 import { KIND_INFO } from './cards';
+import { variantLabel } from './Card';
 import type { PlayerId } from '@/core/types';
 
 interface ChatMsg { id: number; who: string; text: string; at: number }
@@ -99,7 +100,7 @@ function Cheatsheet({ state }: { state: SushiGoState }) {
       </div>
       <div className="ssp-cheat-row">
         <div className="name">Pass</div>
-        <div className="desc">After picks reveal, hands rotate. Round 1+3 clockwise, round 2 counter-clockwise.</div>
+        <div className="desc">After picks reveal (and special cards resolve), everyone passes their hand to the left.</div>
       </div>
     </div>
   );
@@ -173,6 +174,10 @@ function LogLine({ entry, state }: { entry: SushiGoLogEntry; state: SushiGoState
     const seat = state.seats.find((s) => s.id === id);
     return <span className="who" style={{ color: seat?.color ?? undefined }}>{seat?.name ?? id}</span>;
   };
+  const label = (c: { kind: SushiGoCardKind; variant?: string }) =>
+    c.variant && KIND_INFO[c.kind].category !== 'special'
+      ? `${KIND_INFO[c.kind].label} (${variantLabel({ id: -1, ...c })})`
+      : KIND_INFO[c.kind].label;
   let cls = 'ssp-log-entry';
   let body: React.ReactNode = null;
   switch (entry.kind) {
@@ -184,6 +189,30 @@ function LogLine({ entry, state }: { entry: SushiGoLogEntry; state: SushiGoState
       body = (<>{name(entry.playerId)} played <strong>{names}</strong>.</>);
       break;
     }
+    case 'copied':
+      body = entry.card
+        ? (<>{name(entry.playerId)}'s special order copies <strong>{label(entry.card)}</strong>.</>)
+        : (<>{name(entry.playerId)}'s special order had nothing to copy and was discarded.</>);
+      break;
+    case 'spoon':
+      body = entry.fromId
+        ? (<>{name(entry.playerId)} spooned <strong>{label(entry.asked)}</strong> from {name(entry.fromId)}.</>)
+        : (<>{name(entry.playerId)} asked for <strong>{label(entry.asked)}</strong> — nobody had it.</>);
+      break;
+    case 'menu':
+      body = entry.card
+        ? (<>{name(entry.playerId)} ordered <strong>{label(entry.card)}</strong> off the menu.</>)
+        : (<>{name(entry.playerId)}'s menu drew nothing playable.</>);
+      break;
+    case 'flipped':
+      body = (<>{name(entry.playerId)} flipped {entry.count} card{entry.count === 1 ? '' : 's'} into a takeout box.</>);
+      break;
+    case 'misoDiscarded':
+      body = (<>Miso soups clashed — {entry.playerIds.map((id, i) => <span key={id}>{i > 0 ? ', ' : ''}{name(id)}</span>)} lost theirs.</>);
+      break;
+    case 'uramaki':
+      body = (<>{name(entry.playerId)} reached 10 uramaki icons: <strong>+{entry.points}</strong>.</>);
+      break;
     case 'roundEnd':
       cls += ' round-end system';
       body = (<><span className="who">Round {entry.round} ended</span> — scores tallied.</>);

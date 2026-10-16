@@ -6,7 +6,7 @@ import { randomPolicyFile } from '@/games/sea-salt-paper/testSupport';
 import { makeJobs, runJobs, summarize, wilson, type MatchupSpec } from './evaluate';
 
 /** The game's shipped hard AI — a known-strong agent. */
-const HARD = join(__dirname, '..', '..', 'src', 'games', 'sea-salt-paper', 'policies', 'hard-update1000.json');
+const HARD = join(__dirname, '..', '..', 'src', 'games', 'sea-salt-paper', 'policies', 'hard-update10000.json');
 
 describe('eval harness', () => {
   it('plays every seed from both seats', () => {

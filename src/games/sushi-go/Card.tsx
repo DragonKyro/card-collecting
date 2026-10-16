@@ -1,7 +1,9 @@
-// Sushi Go! Party card rendering — small inline SVG art per kind.
+// Sushi Go! Party card rendering — background color per food, art from art.tsx.
 
+import type { CSSProperties } from 'react';
 import type { SushiGoCard, SushiGoCardKind } from './types';
-import { KIND_INFO, cardColor, nigiriPoints } from './cards';
+import { KIND_INFO, cardColor } from './cards';
+import { CardArt, TakeoutTray } from './art';
 
 interface Props {
   card: SushiGoCard;
@@ -13,7 +15,6 @@ interface Props {
 }
 
 export function CardView({ card, size = 'normal', selectable, selected, dim, onClick }: Props) {
-  const info = KIND_INFO[card.kind];
   const cls = [
     'sgp-card',
     size === 'small' ? 'small' : '',
@@ -21,24 +22,55 @@ export function CardView({ card, size = 'normal', selectable, selected, dim, onC
     selected ? 'selected' : '',
     dim ? 'dim' : '',
   ].filter(Boolean).join(' ');
-  const color = cardColor(card.kind);
-  const pts = ribbonValue(card);
-  return (
-    <div className={cls} onClick={onClick}>
-      <div className="ribbon">
-        <span className="pts">{pts}</span>
-        <span className="fam">{shortName(card.kind)}</span>
+
+  // A special order shows the card it copies, marked as a copy.
+  const shown: SushiGoCard = card.copyOf
+    ? { id: card.id, kind: card.copyOf.kind, variant: card.copyOf.variant, flipped: card.flipped || card.copyOf.flipped }
+    : card;
+  const info = KIND_INFO[shown.kind];
+  const order = hasOrderNumber(shown.kind) ? shown.variant : undefined;
+
+  if (shown.flipped) {
+    return (
+      <div className={`${cls} flipped`} onClick={onClick}>
+        <div className="art">
+          <svg viewBox="0 0 100 100" width={size === 'small' ? 44 : 70}>
+            <TakeoutTray />
+          </svg>
+        </div>
+        <div className="footer">Flipped · 2 pts</div>
+        <div className="card-tooltip" role="tooltip">
+          <strong>Flipped by a takeout box</strong>
+          <div className="rule">Worth 2 pts at round end; it no longer counts as {info.label}.</div>
+        </div>
       </div>
-      <div className="color-bar" style={{ background: color }} />
+    );
+  }
+
+  const style = { '--kind-color': cardColor(shown.kind) } as CSSProperties;
+  return (
+    <div className={cls} style={style} onClick={onClick}>
+      <div className="ribbon">
+        <span className="fam">{card.copyOf ? 'COPY' : shortName(shown.kind)}</span>
+      </div>
       <div className="art">
         <svg viewBox="0 0 100 100" width={size === 'small' ? 44 : 70} preserveAspectRatio="xMidYMid meet">
-          <CardArt card={card} />
+          <CardArt card={shown} />
         </svg>
+        {order && <span className="order">{order}</span>}
       </div>
-      <div className="footer">{info.label}{card.variant ? ` · ${variantLabel(card)}` : ''}</div>
+      <div className="footer">
+        {card.copyOf && 'Copy: '}
+        {/* Fruit art already shows which fruits; spelled out they overflow the footer. */}
+        {info.label}{shown.variant && !order && shown.kind !== 'fruit' ? ` · ${variantLabel(shown)}` : ''}
+      </div>
       <div className="card-tooltip" role="tooltip">
-        <strong>{info.label}</strong>
+        <strong>
+          {card.copyOf ? `Special Order → ${info.label}` : info.label}
+          {shown.kind === 'fruit' && ` · ${variantLabel(shown)}`}
+        </strong>
         <div className="rule">{info.rule}</div>
+        {order && <div className="rule">Resolves in number order: #{order}.</div>}
       </div>
     </div>
   );
@@ -46,6 +78,10 @@ export function CardView({ card, size = 'normal', selectable, selected, dim, onC
 
 export function FaceDownCard({ size = 'normal' }: { size?: 'normal' | 'small' }) {
   return <div className={`sgp-card facedown ${size === 'small' ? 'small' : ''}`} />;
+}
+
+function hasOrderNumber(kind: SushiGoCardKind): boolean {
+  return kind === 'chopsticks' || kind === 'spoon' || kind === 'menu' || kind === 'takeoutBox';
 }
 
 function shortName(kind: SushiGoCardKind): string {
@@ -61,7 +97,7 @@ function shortName(kind: SushiGoCardKind): string {
     case 'tofu': return 'TOFU';
     case 'edamame': return 'EDAM';
     case 'eel': return 'EEL';
-    case 'eggNigiri': return 'EGGN';
+    case 'misoSoup': return 'MISO';
     case 'soySauce': return 'SOY';
     case 'wasabi': return 'WSBI';
     case 'tea': return 'TEA';
@@ -76,35 +112,9 @@ function shortName(kind: SushiGoCardKind): string {
   }
 }
 
-function ribbonValue(card: SushiGoCard): string {
-  switch (card.kind) {
-    case 'nigiri': return String(nigiriPoints(card.variant));
-    case 'maki': return `${card.variant ?? '1'}🍃`;
-    case 'uramaki': return `${card.variant ?? '0'}🍃`;
-    case 'tempura': return '×2';
-    case 'sashimi': return '×3';
-    case 'dumpling': return 'SET';
-    case 'eel': return '−/+';
-    case 'tofu': return '1·2';
-    case 'mizuOnigiri': return 'SET';
-    case 'edamame': return 'NBR';
-    case 'eggNigiri': return '1';
-    case 'soySauce': return '+4';
-    case 'wasabi': return '×3';
-    case 'tea': return '×';
-    case 'specialOrder': return 'CPY';
-    case 'takeoutBox': return '+2';
-    case 'chopsticks': return '↔';
-    case 'spoon': return '↔';
-    case 'menu': return '◇';
-    case 'pudding': return '±6';
-    case 'greenTeaIceCream': return '/4';
-    case 'fruit': return '◷';
-    case 'temaki': return '±4';
-  }
-}
+const FRUIT_NAMES: Record<string, string> = { W: 'watermelon', P: 'pineapple', O: 'orange' };
 
-function variantLabel(card: SushiGoCard): string {
+export function variantLabel(card: SushiGoCard): string {
   if (card.kind === 'nigiri') {
     if (card.variant === 'salmon') return 'salmon (2)';
     if (card.variant === 'squid') return 'squid (3)';
@@ -113,45 +123,7 @@ function variantLabel(card: SushiGoCard): string {
   if (card.kind === 'maki' || card.kind === 'uramaki') return `${card.variant} icon${card.variant === '1' ? '' : 's'}`;
   if (card.kind === 'mizuOnigiri') return card.variant ?? '';
   if (card.kind === 'fruit') {
-    const m: Record<string, string> = { P: 'pineapple', W: 'watermelon', O: 'orange' };
-    return (card.variant ?? '').split('').map((c) => m[c] ?? c).join('+');
+    return (card.variant ?? '').split('').map((c) => FRUIT_NAMES[c] ?? c).join(' + ');
   }
   return card.variant ?? '';
-}
-
-function CardArt({ card }: { card: SushiGoCard }) {
-  // Lightweight emoji-based art for speed — replace with real SVGs if desired.
-  const emoji = (() => {
-    switch (card.kind) {
-      case 'nigiri':
-        if (card.variant === 'salmon') return '🍣';
-        if (card.variant === 'squid') return '🦑';
-        return '🥚';
-      case 'maki': return '🍱';
-      case 'temaki': return '🌯';
-      case 'uramaki': return '🍙';
-      case 'dumpling': return '🥟';
-      case 'tempura': return '🍤';
-      case 'sashimi': return '🐟';
-      case 'mizuOnigiri': return '🍙';
-      case 'tofu': return '🟦';
-      case 'edamame': return '🌱';
-      case 'eel': return '🐍';
-      case 'eggNigiri': return '🥚';
-      case 'soySauce': return '🥢';
-      case 'wasabi': return '🟢';
-      case 'tea': return '🍵';
-      case 'specialOrder': return '📋';
-      case 'takeoutBox': return '📦';
-      case 'chopsticks': return '🥢';
-      case 'spoon': return '🥄';
-      case 'menu': return '📜';
-      case 'pudding': return '🍮';
-      case 'greenTeaIceCream': return '🍨';
-      case 'fruit': return '🍉';
-    }
-  })();
-  return (
-    <text x="50" y="65" fontSize="48" textAnchor="middle">{emoji}</text>
-  );
 }

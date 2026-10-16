@@ -56,14 +56,15 @@ def _b64(t: torch.Tensor) -> str:
 
 
 def export_policy(net: PolicyValueNet, path: str, encoder_version: int, action_space_version: int,
-                  meta: dict | None = None) -> None:
+                  meta: dict | None = None, game: str = GAME) -> None:
     """Write trunk + policy head as an MlpFile the TypeScript side can load.
-    nn.Linear stores weight as [out, in], which is the file's row-major layout."""
+    nn.Linear stores weight as [out, in], which is the file's row-major layout.
+    `game` names the game the policy plays (other trainers reuse this module)."""
     dense = [m for m in net.trunk if isinstance(m, nn.Linear)]
     layers = [_dense(m, "relu") for m in dense] + [_dense(net.policy, "linear")]
     doc = {
         "format": MLP_FORMAT,
-        "game": GAME,
+        "game": game,
         "encoderVersion": encoder_version,
         "actionSpaceVersion": action_space_version,
         "inputDim": net.obs_dim,

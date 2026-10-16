@@ -35,18 +35,12 @@ export function countBy<T extends string>(items: T[]): Record<T, number> {
   return out;
 }
 
-/**
- * Compute the color bonus: for each mermaid held, take the most-frequent
- * remaining color group. No color can be claimed by more than one mermaid.
- * Mermaids themselves are white. Multiplier cards have their own colors and
- * count toward color groups (they are real cards, just not their referenced
- * family).
- */
 /** Mermaid claims (counted as CARD POINTS in our display): for each mermaid
- *  held, claim the largest unclaimed NON-WHITE color group. White is reserved
- *  for mermaids themselves (handled separately by the LAST CHANCE special
- *  color bonus when applicable). Two mermaids claim two DISTINCT groups —
- *  the second mermaid cannot claim the same color again. */
+ *  held, claim the largest unclaimed color group. White counts like any other
+ *  color — the mermaids themselves are white, so they form a group of their
+ *  own. Multiplier cards have their own colors and count too (they are real
+ *  cards, just not their referenced family). Two mermaids claim two DISTINCT
+ *  groups — the second mermaid cannot claim the same color again. */
 export function mermaidColorBonus(cards: SspCard[], opts: { forceMinMermaids?: number } = {}): number {
   let mermaidCount = 0;
   const byColor: Record<SspColor, number> = {
@@ -61,8 +55,7 @@ export function mermaidColorBonus(cards: SspCard[], opts: { forceMinMermaids?: n
   if (effective === 0) return 0;
 
   const groups: number[] = [];
-  for (const [color, n] of Object.entries(byColor)) {
-    if (color === 'white') continue;
+  for (const n of Object.values(byColor)) {
     if (n > 0) groups.push(n);
   }
   groups.sort((a, b) => b - a);
@@ -74,7 +67,7 @@ export function mermaidColorBonus(cards: SspCard[], opts: { forceMinMermaids?: n
 }
 
 /** "Special color bonus" per the rulebook: 1 point per card of the color the
- *  player has most of (their single largest color group, including white).
+ *  player has most of (their single largest color group, white included).
  *  Earned by every player when the round ended via LAST CHANCE; not earned
  *  on STOP / deck-empty / mermaid-win. Computed independently of the mermaid
  *  claims that go into the card-points column. */
@@ -217,8 +210,8 @@ export interface TotalScoreOpts extends CardPointsOpts {
 
 /** Score breakdown displayed on the round-end summary.
  *  - `cardPoints` = full card scoring: duos + collectors + multipliers + trios
- *    + mermaid claims (each mermaid claims its largest unclaimed non-white
- *    color group). This is the score used to determine who wins the round.
+ *    + mermaid claims (each mermaid claims its largest unclaimed color
+ *    group, white included). This is the score used to determine who wins the round.
  *  - `colorBonus` = the rulebook's "special color bonus": 1 point per card of
  *    the player's most-frequent color (any color, including white). EARNED
  *    ONLY ON LAST CHANCE — both the caller and the opponents get this; on
@@ -307,7 +300,7 @@ export interface CategoryBreakdown {
   multipliers: number;
   /** Starfish trio points (3 pts per trio). */
   trios: number;
-  /** Mermaid color-group claim points (largest unclaimed non-white group per mermaid). */
+  /** Mermaid color-group claim points (largest unclaimed group per mermaid, white included). */
   mermaidClaim: number;
   /** Special LAST CHANCE color bonus (largest single color group, including white).
    *  Only counts toward the total when LAST CHANCE was the round-end mechanism. */
@@ -383,7 +376,7 @@ export function categoryBreakdown(cards: SspCard[], opts: TotalScoreOpts = {}): 
   if (counts.captain)       multipliers += 3 * (counts.sailor ?? 0);
   if (counts.crabBasket)    multipliers += counts.crab ?? 0;
 
-  // Mermaid claims (largest non-white group per mermaid). Skip if Tornado is in
+  // Mermaid claims (largest unclaimed group per mermaid, white included). Skip if Tornado is in
   // force (mermaids score 0).
   let mermaidClaim = 0;
   if (!opts.mermaidsScoreZero) {
