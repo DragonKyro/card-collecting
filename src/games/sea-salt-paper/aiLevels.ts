@@ -1,12 +1,14 @@
 // Sea Salt & Paper AI difficulty levels. All three are trained policies
 // (./policies, produced by training/ssp/train.py) and load the same way:
 //
-//   easy    easy-update10.json     10 updates of imitating a hand-written heuristic
-//   normal  normal-update40.json   + 30 reinforcement-learning (PPO) updates
-//   hard    hard-update1000.json   + 990 PPO updates
+//   easy    easy-update100.json      update 100 of training/runs/main
+//   normal  normal-update1000.json   update 1000
+//   hard    hard-update10000.json    update 10000
 //
-// (The heuristic and the imitation warm start were removed after these were
-// trained; new runs learn from scratch — see training/README.md.)
+// Head to head (2000 seat-swapped matches): normal beats easy 61%, hard beats
+// easy 72% and normal 65%. All three beat random play ~100%. (The run began
+// with 10 updates imitating a since-removed heuristic; updates 100 and 1000
+// predate white counting for mermaid claims, 10000 was trained with it.)
 //
 // Each file is ~1.3 MB. Vite emits it as a hashed asset (never inside a JS
 // chunk) and it's fetched once per page, on first use. The shell awaits
@@ -22,9 +24,9 @@ import type { SspAction, SspAiLevel, SspConfig, SspState } from './types';
 import type { SlotPolicy } from './nn/agent';
 import { actWithPolicy } from './nn/agent';
 import { greedyPolicy, loadSspPolicy, type SspPolicyFile } from './nn/policy';
-import easyUrl from './policies/easy-update10.json?url';
-import normalUrl from './policies/normal-update40.json?url';
-import hardUrl from './policies/hard-update1000.json?url';
+import easyUrl from './policies/easy-update100.json?url';
+import normalUrl from './policies/normal-update1000.json?url';
+import hardUrl from './policies/hard-update10000.json?url';
 
 export const AI_LEVELS: ReadonlyArray<{ id: SspAiLevel; label: string }> = [
   { id: 'easy', label: 'Easy' },

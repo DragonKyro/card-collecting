@@ -220,7 +220,7 @@ function Rules() {
                 <RulesTile icon="🐚" label="Shell ×6" hint="0 / 2 / 4 / 6 / 8 / 10 pts" accent="#aed5e6" />
                 <RulesTile icon="🐙" label="Octopus ×5" hint="0 / 3 / 6 / 9 / 12 pts" accent="#b984c9" />
                 <RulesTile icon="🐧" label="Penguin ×3" hint="1 / 3 / 5 pts (×2 by Penguin Colony)" accent="#f0a4b3" />
-                <RulesTile icon="⚓" label="Sailor ×2" hint="0 / 5 pts (×3 by Captain)" accent="#c9a47c" />
+                <RulesTile icon="⚓" label="Sailor ×2" hint="0 / 5 pts (×3 by Captain)" accent="#e8a04a" />
               </RulesGrid>
               <h3>Set payouts</h3>
               <table className="tight">
@@ -244,7 +244,7 @@ function Rules() {
                 <RulesTile icon="🗼" label="Lighthouse" hint="+1 pt per Boat held" accent="#f4d268" />
                 <RulesTile icon="🐠" label="Shoal of Fish" hint="+1 pt per Fish held" accent="#c2c8cc" />
                 <RulesTile icon="🐧" label="Penguin Colony" hint="+2 pts per Penguin (on top of the set)" accent="#9ed27c" />
-                <RulesTile icon="🧢" label="Captain" hint="+3 pts per Sailor (on top of the set)" accent="#e8a04a" />
+                <RulesTile icon="🧢" label="Captain" hint="+3 pts per Sailor (on top of the set)" accent="#c9a47c" />
               </RulesGrid>
               <h3>Mermaids &amp; color bonus</h3>
               <p>
@@ -260,7 +260,7 @@ function Rules() {
           title: 'Color distribution',
           body: (
             <>
-              <p>The deck's 66 cards span 11 colors (white reserved for mermaids).</p>
+              <p>The deck's 66 cards (with Extra Salt) span 11 colors.</p>
               <table className="tight">
                 <thead>
                   <tr>
@@ -274,11 +274,11 @@ function Rules() {
                   <tr><td><span className="rules-color-swatch" style={{ background: '#f4d268' }} /> Yellow</td><td className="num">9</td><td></td></tr>
                   <tr><td><span className="rules-color-swatch" style={{ background: '#9ed27c' }} /> Green</td><td className="num">7</td><td></td></tr>
                   <tr><td><span className="rules-color-swatch" style={{ background: '#b984c9' }} /> Purple</td><td className="num">5</td><td></td></tr>
-                  <tr><td><span className="rules-color-swatch" style={{ background: '#c2c8cc' }} /> Grey</td><td className="num">5</td><td></td></tr>
-                  <tr><td><span className="rules-color-swatch" style={{ background: '#f9f6ed' }} /> White</td><td className="num">4</td><td>Mermaids only</td></tr>
-                  <tr><td><span className="rules-color-swatch" style={{ background: '#e8a04a' }} /> Orange</td><td className="num">3</td><td></td></tr>
+                  <tr><td><span className="rules-color-swatch" style={{ background: '#f9f6ed' }} /> White</td><td className="num">5</td><td>The 4 mermaids + the Seahorse (Extra Salt)</td></tr>
+                  <tr><td><span className="rules-color-swatch" style={{ background: '#c2c8cc' }} /> Grey</td><td className="num">4</td><td></td></tr>
+                  <tr><td><span className="rules-color-swatch" style={{ background: '#c9a47c' }} /> Tan</td><td className="num">3</td><td></td></tr>
                   <tr><td><span className="rules-color-swatch" style={{ background: '#f0a4b3' }} /> Pink</td><td className="num">3</td><td></td></tr>
-                  <tr><td><span className="rules-color-swatch" style={{ background: '#c9a47c' }} /> Tan</td><td className="num">1</td><td>Rarest (one sailor)</td></tr>
+                  <tr><td><span className="rules-color-swatch" style={{ background: '#e8a04a' }} /> Orange</td><td className="num">1</td><td>Rarest (one sailor)</td></tr>
                 </tbody>
               </table>
             </>
@@ -297,7 +297,7 @@ function Rules() {
                 <RulesTile icon="🪼" label="Jellyfish ×2" hint="Pair with swimmer: lock next opponent's turn." accent="#b984c9" />
                 <RulesTile icon="🦞" label="Lobster ×1" hint="Pair with crab: peek top 5, keep 1." accent="#2a2a36" />
                 <RulesTile icon="⭐" label="Starfish ×3" hint="Form a trio with any duo for 3 pts (skips ability)." accent="#f4d268" />
-                <RulesTile icon="🐴" label="Seahorse ×1" hint="Wildcard collector (joins your largest set)." accent="#c2c8cc" />
+                <RulesTile icon="🐴" label="Seahorse ×1" hint="Wildcard collector (joins your largest set)." accent="#f9f6ed" />
                 <RulesTile icon="🦀" label="Cast of Crabs ×1" hint="+1 pt per Crab." accent="#9ed27c" />
               </RulesGrid>
               <h3>Extra Pepper (event deck)</h3>

@@ -100,9 +100,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     learn.add_argument("--max-grad-norm", type=float, default=0.5)
 
     save = p.add_argument_group("checkpoints / eval")
-    save.add_argument("--save-every", type=int, default=10)
+    save.add_argument("--save-every", type=int, default=100)
     save.add_argument("--keep-ckpt", type=int, default=5, help="resumable .pt files to keep (policies are all kept)")
-    save.add_argument("--eval-every", type=int, default=20, help="0 = no background eval")
+    save.add_argument("--eval-every", type=int, default=100, help="0 = no background eval (multiple of --save-every)")
     save.add_argument("--eval-games", type=int, default=1000)
     save.add_argument("--eval-workers", type=int, default=4)
     save.add_argument("--eval-past-gap", type=int, default=5, help="compare with the checkpoint this many saves back")

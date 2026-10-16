@@ -7,8 +7,8 @@
 //   Mermaid:    x4                                                (4)
 //   Extra Salt: jellyfish x2, lobster x1, starfish x3, seahorse x1, crabBasket x1 (+8)
 //
-// Each card carries one of 11 colors per the published distribution chart
-// (white reserved for the 4 mermaids); the color bonus counts the most-
+// Each card carries one of 11 colors per the distribution chart (white: the
+// 4 mermaids and the Extra Salt seahorse); the color bonus counts the most-
 // frequent color group per mermaid held.
 
 import type { Seat, PlayerId, GamePhase } from '@/core/types';
@@ -26,8 +26,8 @@ export type SspCardFamily =
 
 // Color palette taken from the official rulebook chart:
 //   Dark Blue, Teal, Black, Yellow, Green, Purple, Grey, White, Orange, Pink, Tan
-// (`white` is reserved for mermaids; the others are spread across the deck per
-// the published distribution table.)
+// (`white` is the mermaids and the seahorse; the others are spread across the
+// deck per the distribution table.)
 export type SspColor =
   | 'white' | 'yellow' | 'green' | 'pink' | 'purple'
   | 'teal' | 'darkblue' | 'black' | 'gray'
@@ -56,7 +56,7 @@ export interface SspPlayer {
 }
 
 export interface SspExpansionConfig {
-  /** Mix Extra Salt's 8 cards (jellyfish×2, lobster×2, starfish×2, seahorse, crabBasket) into the main deck. */
+  /** Mix Extra Salt's 8 cards (jellyfish×2, lobster×1, starfish×3, seahorse, crabBasket) into the main deck. */
   extraSalt: boolean;
   /** Add the Extra Pepper event deck (12 events, one revealed per round, awarded to leader/laggard at round end). */
   extraPepper: boolean;

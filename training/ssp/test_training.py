@@ -67,7 +67,7 @@ def test_references_resolve():
 
 
 def test_shipped_hard_policy_beats_random():
-    assert ev.evaluate("bench:hard-update1000", "random", games=20, workers=2)["aScore"] > 0.8
+    assert ev.evaluate("bench:hard-update10000", "random", games=20, workers=2)["aScore"] > 0.8
 
 
 def test_elo_fit():

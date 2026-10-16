@@ -8,9 +8,9 @@ import { seatsFor } from './testSupport';
 import type { SspPolicyFile } from './nn/policy';
 
 const LEVEL_FILES: Record<SspAiLevel, string> = {
-  easy: 'easy-update10.json',
-  normal: 'normal-update40.json',
-  hard: 'hard-update1000.json',
+  easy: 'easy-update100.json',
+  normal: 'normal-update1000.json',
+  hard: 'hard-update10000.json',
 };
 const policyFile = (name: string) =>
   JSON.parse(readFileSync(join(__dirname, 'policies', name), 'utf8')) as SspPolicyFile;
@@ -86,7 +86,7 @@ describe('AI difficulty levels', () => {
     await mod.prepare!(config, seats);
     await mod.prepare!(config, seats); // cached: no second fetch
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(String(fetchMock.mock.calls[0][0])).toContain('hard-update1000.json');
+    expect(String(fetchMock.mock.calls[0][0])).toContain('hard-update10000.json');
     expect(mod.chooseAIAction!(s, 'p0')).not.toBeNull();
   });
 

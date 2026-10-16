@@ -82,19 +82,19 @@ describe('Extra Salt deck composition', () => {
     for (const c of buildDeck({ extraSalt: true })) {
       counts[c.color] = (counts[c.color] ?? 0) + 1;
     }
-    // Published distribution: DB 10, Teal 10, Black 9, Yellow 9, Green 7,
-    // Purple 5, Grey 5, White 4, Orange 3, Pink 3, Tan 1 = 66.
+    // DB 10, Teal 10, Black 9, Yellow 9, Green 7, Purple 5, White 5,
+    // Grey 4, Tan 3, Pink 3, Orange 1 = 66.
     expect(counts.darkblue).toBe(10);
     expect(counts.teal).toBe(10);
     expect(counts.black).toBe(9);
     expect(counts.yellow).toBe(9);
     expect(counts.green).toBe(7);
     expect(counts.purple).toBe(5);
-    expect(counts.gray).toBe(5);
-    expect(counts.white).toBe(4);
-    expect(counts.orange).toBe(3);
+    expect(counts.gray).toBe(4);
+    expect(counts.white).toBe(5);
+    expect(counts.orange).toBe(1);
     expect(counts.pink).toBe(3);
-    expect(counts.tan).toBe(1);
+    expect(counts.tan).toBe(3);
   });
 });
 

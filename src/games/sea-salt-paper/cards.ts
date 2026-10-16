@@ -9,11 +9,11 @@
 //   Extra Salt (+8 cards): jellyfish x2, lobster x1, starfish x3, seahorse x1,
 //                          crabBasket (Cast of Crabs) x1.
 //   Total with Salt: 66 cards across 11 colors:
-//     Dark Blue 10, Teal 10, Black 9, Yellow 9, Green 7, Purple 5, Grey 5,
-//     White 4, Orange 3, Pink 3, Tan 1.
+//     Dark Blue 10, Teal 10, Black 9, Yellow 9, Green 7, Purple 5, White 5,
+//     Grey 4, Tan 3, Pink 3, Orange 1.
 //
-// White is reserved for the 4 mermaids. The other colors are spread across
-// the deck per the published per-card chart (see FAMILY_COLORS below).
+// White is the 4 mermaids plus the Extra Salt seahorse. The other colors are
+// spread across the deck per the per-card chart (see FAMILY_COLORS below).
 
 import { shuffle, type RngState } from '@/core/rng';
 import type { SspCard, SspCardFamily, SspColor } from './types';
@@ -137,36 +137,34 @@ export function duoPartner(family: SspCardFamily): SspCardFamily | null {
   return null;
 }
 
-// Per-family color assignments taken directly from the official rulebook
-// distribution chart. Counts add up to each family's `count`; the per-color
-// totals match the published deck distribution (Dark Blue 10, Teal 10,
-// Black 9, Yellow 9, Green 7, Purple 5, Grey 5, White 4, Orange 3, Pink 3,
-// Tan 1 — 66 cards including Extra Salt). With Extra Salt off the deck drops
-// the 8 Salt cards (jellyfish×2, lobster×2, starfish×2, seahorse, crabBasket).
+// Per-family color assignments, one entry per copy. Counts add up to each
+// family's `count`; the per-color totals are Dark Blue 10, Teal 10, Black 9,
+// Yellow 9, Green 7, Purple 5, White 5, Grey 4, Tan 3, Pink 3, Orange 1 — 66
+// cards including Extra Salt. With Extra Salt off the deck drops the 8 Salt
+// cards (jellyfish×2, lobster×1, starfish×3, seahorse, crabBasket).
 export const FAMILY_COLORS: Record<SspCardFamily, SspColor[]> = {
-  // Base — 58 cards. Per-card colors taken from the official distribution
-  // chart (one entry per copy). Row counts and column totals both match the
-  // published 10/10/9/9/7/5/5/4/3/3/1 distribution.
+  // Base — 58 cards: Dark Blue 9, Teal 9, Black 8, Yellow 8, Green 6,
+  // Purple 4, Grey 4, White 4, Tan 3, Pink 2, Orange 1.
   crab:           ['darkblue', 'darkblue', 'teal', 'teal', 'black', 'yellow', 'yellow', 'green', 'gray'],         // 9
   boat:           ['darkblue', 'darkblue', 'teal', 'teal', 'black', 'black', 'yellow', 'yellow'],                 // 8
   fish:           ['darkblue', 'darkblue', 'teal', 'black', 'black', 'yellow', 'green'],                          // 7
   shark:          ['darkblue', 'teal', 'black', 'green', 'purple'],                                               // 5
-  swimmer:        ['darkblue', 'teal', 'black', 'yellow', 'orange'],                                              // 5
+  swimmer:        ['darkblue', 'teal', 'black', 'yellow', 'tan'],                                                 // 5
   shell:          ['darkblue', 'teal', 'black', 'yellow', 'green', 'gray'],                                       // 6 (no purple; 1 grey)
   octopus:        ['teal', 'yellow', 'purple', 'gray', 'green'],                                                  // 5 (no white; 1 green)
-  penguin:        ['purple', 'orange', 'pink'],                                                                   // 3
-  sailor:         ['pink', 'tan'],                                                                                // 2
+  penguin:        ['purple', 'tan', 'pink'],                                                                      // 3
+  sailor:         ['pink', 'orange'],                                                                             // 2
   lighthouse:     ['purple'],                                                                                     // 1
   shoal:          ['gray'],                                                                                       // 1  ("School of Fish" — grey on chart)
   penguinColony:  ['green'],                                                                                      // 1
-  captain:        ['orange'],                                                                                     // 1
+  captain:        ['tan'],                                                                                        // 1
   mermaid:        ['white', 'white', 'white', 'white'],                                                           // 4
 
   // Extra Salt — 8 cards
   jellyfish:      ['purple', 'pink'],                                                                             // 2
   lobster:        ['black'],                                                                                      // 1
   starfish:       ['darkblue', 'teal', 'yellow'],                                                                 // 3
-  seahorse:       ['gray'],                                                                                       // 1
+  seahorse:       ['white'],                                                                                      // 1
   crabBasket:     ['green'],                                                                                      // 1
 };
 
@@ -175,7 +173,7 @@ export interface DeckOpts {
 }
 
 /** Build the deck with deterministic colors and ids. Base game = 58 cards;
- *  with Extra Salt = 66 cards (adds jellyfish×2, lobster×2, starfish×2,
+ *  with Extra Salt = 66 cards (adds jellyfish×2, lobster×1, starfish×3,
  *  seahorse×1, crabBasket×1). */
 export function buildDeck(opts: DeckOpts = {}): SspCard[] {
   const out: SspCard[] = [];
