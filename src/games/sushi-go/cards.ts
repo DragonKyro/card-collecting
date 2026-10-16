@@ -239,10 +239,15 @@ function variantsForKind(kind: SushiGoCardKind): string[] {
  *  fruit pairs), in deck order — what a spoon can ask for by name. [] for
  *  single-variant kinds; the corner numbers of chopsticks / spoon / menu /
  *  takeout box only set resolution order and don't count. */
-export function variantsOf(kind: SushiGoCardKind): string[] {
-  if (ORDER_NUMBERS[kind]) return [];
-  return [...new Set(variantsForKind(kind))].filter((v) => v !== '');
+export function variantsOf(kind: SushiGoCardKind): readonly string[] {
+  let variants = VARIANTS.get(kind);
+  if (!variants) {
+    variants = ORDER_NUMBERS[kind] ? [] : [...new Set(variantsForKind(kind))].filter((v) => v !== '');
+    VARIANTS.set(kind, variants);
+  }
+  return variants;
 }
+const VARIANTS = new Map<SushiGoCardKind, readonly string[]>();
 
 /** The non-dessert cards of a round, unshuffled. Ids are unique per round.
  *  `specialOrdersKept` special orders sit in dessert piles (they copied a

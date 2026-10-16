@@ -92,6 +92,11 @@ Rules follow the Gamewright rulebook: hand 10/9/8/7 at 2–3/4–5/6–7/8 playe
 
 Card art is hand-drawn SVG in `art.tsx` (flat fills, no `<defs>`, so cards never clash on ids); variants show in the art (nigiri toppings, maki / uramaki roll counts, onigiri shapes, the two fruits). Background colors (`cardColor`) are visual only — scoring reads `colorGroup`.
 
+**Learned-agent pipeline (in progress, `src/games/sushi-go/nn/`)** — embedding only so far; no action space, env or trainer yet.
+- `observation.ts` — `observe(state, viewerId)` is the only place the agent reads `SushiGoState`. Hands pass left, so the seat k places to the left holds the hand the viewer passed k turns ago, and everything done to it since is public (picks revealed, chopsticks returned openly, spoon hand-overs face-up): `knownHand` is set for offsets 1..`passes` (`passesThisRound`) and null otherwise. Hidden: unseen hands, every opponent's face-down pick and spoon call, deck, dessert supply, others' menu draws / spoon-give options, RNG. Under-informs in two rare spots (own menu's returned cards, a spoon giver now holding the spoon). `nn/observation.test.ts` scrambles all of that (`testSupport.scrambleHidden`) at 2–8 players and asserts observation + features are unchanged; keep it passing when adding fields.
+- `faces.ts` — 37 card faces (kind × scoring variant; corner numbers don't count).
+- `encode.ts` — encoder v1, 615 floats (~100 non-zero). Seats by role, not one slot per seat, so a 2-player-trained net reads the same features at 3–8: `me`, `left` (gets my hand: their known hand + what each face is worth to them), `right` (passes me my next hand), `opps` (pooled rank races, edamame / soy competition, score margins, all known hands), `unseen` (round pool minus everything seen; pinned to equal deck + unseen hands), `decision` (type + the cards it's between). Marginals = exact Δ(round + projected dessert score) per menu face via `scoring.roundProbe`. ~150–220 µs per encode at 2p.
+
 Simplifications: the chopsticks' second card and the spoon call are chosen when submitting the pick (the rulebook calls them during the reveal); a special order picks its copy right after the reveal rather than face-down beforehand.
 
 ### Sea Salt & Paper (`src/games/sea-salt-paper/`)
