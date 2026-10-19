@@ -29,72 +29,17 @@ tensorboard --logdir training/runs
 To stop a run you can't Ctrl+C, for example one started in the background,
 create an empty `training/runs/ssp/<run>/STOP`.
 
-Training is PPO, from scratch or from a copy of an existing policy. Each
-update collects `--rollout` (64) decisions from every match: `--workers`
-(default cores − 4, max 12) node processes × `--envs-per-worker` (32) matches.
-The workers split three ways:
+Training is PPO from scratch. Each update collects `--rollout` (64) decisions
+from every match: `--workers` (default cores − 4, max 12) node processes ×
+`--envs-per-worker` (32) matches.
 
-- `--self-play` (default half) play the current network against itself and
-  train both seats.
-- `--bench-play` (default 0) face the frozen `--bench-opponents`
-  (`hard-update10000`), half of them against a benchmark that samples its
-  moves (`--bench-sampled`) and half against it playing greedily, as the
-  evals do.
+- `--self-play` (half) of the workers play the current network against
+  itself and train both seats.
 - The rest play past checkpoints, sampled from the newest `--pool` (20) and
   re-drawn every `--pool-refresh` (10) updates. They play random moves until
   the first checkpoint exists.
-
-Reward is ±1 for the match, plus `--round-reward` (0.02) × the round point
-margin.
-
-### Why mix in the benchmark, and what the update does about it
-
-Pure self-play can stall: the network keeps beating its own latest self by
-ways that don't carry over to a fixed opponent, so `train/winrate_vs_past`
-looks fine while the eval against the benchmark is flat. The update therefore
-treats the opponent as part of the data:
-
-- **Benchmark games** are in the mix (`train/winrate_vs_bench` is their win
-  rate, so a stall shows up in training, not only in the evals).
-- **Advantages are normalised within each source** (self / past / bench) so
-  each source moves the policy with comparable force, however large its
-  returns are. `--source-weights self=1,past=1,bench=1.5` scales them
-  further; `--no-per-source-norm` restores one normalisation per update.
-- **The value head also sees who the opponent is** (a one-hot, training only:
-  never exported, never seen by the policy). A benchmark game and a
-  self-play game have different expected results, so one baseline per source
-  gives lower-variance advantages. `--no-source-critic` turns it off.
-- **A KL anchor to a teacher** (`--teacher`, `--kl-coef`, `--kl-anneal`): a
-  penalty on KL(teacher ‖ policy) that fades to zero, so the first PPO steps
-  can't undo what a copy learned.
-
-### Starting from a copy of an existing policy
-
-`--teacher bench:hard-update10000 --imitate-updates 300` makes the first 300
-updates supervised. The network plays (DAgger style: the teacher plays
-`--imitate-mix` 50% → 10% of the moves itself, so the states visited include
-where the teacher would go) and learns the teacher's whole move distribution
-on every state it reaches, at `--imitate-lr` (1e-3). Then PPO takes over at
-`--lr`.
-
-The teacher can be an older encoder and action space: both read the same
-observation, and `teacher.ts` turns each of the teacher's slots into the move
-it stands for and names it in the current action space. For the shipped Hard
-(v2, 66 slots) read by the v3 learner (137 slots), that only changes crab and
-lobster picks: "take a crab" becomes the exact colour Hard would take. The
-log shows `COPY ce-gap` (how far the network is from the teacher) and
-`agree` (how often its favourite move is the teacher's).
-
-```sh
-python training/ssp/train.py --run v3 \
-  --teacher bench:hard-update10000 --imitate-updates 300 \
-  --self-play 0.25 --bench-play 0.5 --kl-coef 0.1 --kl-anneal 2000 --lr 1e-4 \
-  --updates 10000 --eval-bench hard-update10000,normal-update1000 \
-  --eval-same-update training/runs/ssp/main
-```
-
-A copy of Hard reaches parity with it in about 80 updates (~6 minutes): 51.0%
-over 300 matches at update 80 with encoder v3 and colour-aware crab picks.
+- Reward is ±1 for the match, plus `--round-reward` (0.02) × the round point
+  margin.
 
 Everything lands in `training/runs/ssp/<run>/` (git-ignored). Runs are
 grouped by game — `training/runs/<game>/<run>/` — so other games' agents get
@@ -104,14 +49,14 @@ their own folder next to `ssp/`:
 |---|---|
 | `policies/update_N.json` | exported policy every `--save-every` (100) updates. Playable by the TS side, all kept |
 | `ckpt/update_N.pt` | resumable checkpoint (model + optimizer + counters), newest `--keep-ckpt` (5) kept |
-| `metrics.jsonl`, `tb/` | per-update losses, entropy, KL, explained variance, decisions/s, training win rate vs past checkpoints and vs the benchmark, and (with a teacher) the gap to it and how often the network's favourite move is the teacher's |
+| `metrics.jsonl`, `tb/` | per-update losses, entropy, KL, explained variance, decisions/s, training win rate vs past checkpoints |
 | `evals.jsonl` | background evals every `--eval-every` (100) updates: vs random, each benchmark, the checkpoint `--eval-past-gap` (5) saves back, and with `--eval-same-update RUN` that run's policy at the same update (two setups compared at equal training) |
-| `progress.md` | those evals as a table, rewritten once each checkpoint's evals are in: the latest 10 checkpoints, then all of them (copy-phase rows are marked). Under the title: how the run trains (opponent mix, teacher, update settings). The log prints the latest-10 table too |
+| `progress.md` | those evals as a table, rewritten once each checkpoint's evals are in: the latest 10 checkpoints, then all of them. The log prints the latest-10 table too |
 | `config.json` | the arguments, feature/action versions, architecture |
 
-The training-time win rates (`train/winrate_vs_past`, `_vs_bench`) come from
-the *sampling* policy. Trust the `eval/*` numbers instead: greedy play,
-seat-swapped, on fixed deals the agent never trains on.
+The training-time win rate (`train/winrate_vs_past`) comes from the
+*sampling* policy against a moving pool. Trust the `eval/*` numbers instead:
+greedy play, seat-swapped, on fixed deals the agent never trains on.
 
 **History.** The shipped policies come from `runs/ssp/main`, which began with 10
 updates of imitating a hand-written heuristic (since removed) before PPO.
@@ -278,34 +223,33 @@ CLAUDE.md.
 | File | Role |
 |---|---|
 | `ssp/train.py` | PPO trainer, opponent pool, checkpoints, background eval |
-| `ssp/model.py` | policy-value MLP (value head can take training-only extra inputs), export to the TS runtime format, checkpoint I/O |
-| `ssp/teacher.ts` | a teacher policy's move distribution on a state, translated into the current action space (copying, KL anchor) |
+| `ssp/model.py` | policy-value MLP, export to the TS runtime format, checkpoint I/O |
 | `ssp/evaluate.py` | Python eval API + CLI (`match`, `baselines`, `ladder`, `freeze`, `benchmarks`, `analyze`, Elo fit) |
 | `ssp/env_client.py` | Python `SspEnv` client (numpy), plus a random-agent smoke test |
-| `ssp/test_training.py` | pytest: export parity, train → checkpoint → resume → evaluate, freeze, copy phase → PPO with benchmark workers, the update function's pieces |
+| `ssp/test_training.py` | pytest: export parity, train → checkpoint → resume → evaluate, freeze |
 | `ssp/sim.ts` | `playMatch(agents, seed, opts)`: one headless match + per-seat stats |
 | `ssp/agents.ts` | agent registry (`random`, `nn:`, `nn-sample:`) |
 | `ssp/evaluate.ts` / `eval.ts` | seat-swapped jobs, summary, report / CLI over worker threads |
 | `ssp/analyze.ts` | decision tallies + card-importance ranking (`analyze` / `npm run ssp:analyze`) |
 | `ssp/keep_model.py` | which factors drive draw-two keep decisions (reads `analyze --keep-log`) |
-| `ssp/vec-env.ts` | `SspVecEnv`: N matches, auto-advance to the learner's decisions, auto-reset; optionally reports a teacher's moves with every decision |
+| `ssp/vec-env.ts` | `SspVecEnv`: N matches, auto-advance to the learner's decisions, auto-reset |
 | `ssp/env-server.ts` | JSON-lines stdio wrapper around `SspVecEnv` (protocol in the file header) |
 
 The game-side pieces live in `src/games/sea-salt-paper/`. `knowledge.ts`
 defines what a seat may know. In `nn/`:
 
 - `observation.ts`: the agent's view
-- `actions.ts`: action space v3, 137 slots (crab / lobster picks name the colour), legal mask, decoder (`actionsV2.ts`: the frozen 66-slot v2 the shipped policies use)
-- `encode.ts`: encoder v3, 2030 features (`encodeV2.ts`: the frozen 632-feature v2 the shipped policies use); `kinds.ts` is the 54 family × colour kinds both share
-- `policy.ts`: loading policy files (each plays through the encoder and action space it names), greedy / sampled play
+- `actions.ts`: 66 action slots, legal mask, decoder
+- `encode.ts`: 632 features
+- `policy.ts`: loading policy files, greedy / sampled play
 
 `aiLevels.ts` holds the game's difficulty levels, and the network runtime is
 `src/ai/mlp.ts`. A trained policy is `(features, mask) → slot`. It never
 receives `SspState`.
 
 A crab pick takes two decisions, as in the rulebook: first `crabPile:N`
-(chosen from memory), then `crab:<family>/<colour>` (or `crab:top`) once the
-env re-observes with that pile revealed. The env asks the same seat twice; the first answer changes no
+(chosen from memory), then `crab:<family>` once the env re-observes with that
+pile revealed. The env asks the same seat twice; the first answer changes no
 game state.
 
 ## Hidden information
@@ -313,21 +257,17 @@ game state.
 The agent's observation is built on `knowledge.ts`. A seat knows its own hand,
 all tables, pile tops and sizes, hand sizes, scores and events. It knows an
 opponent's cards only when they took them off a pile's visible top or stole
-them from this seat. It remembers each discard pile in full and in order
-(every card landed face-up on top), except that after an opponent's crab digs
-out a buried card, it knows the pile is a card short but not which card. It
-also sees this round's history: what each player took off a top, discarded,
-and passed over to draw from the deck, and the score a LAST CHANCE caller
-announced. Deck order, the rest of opponents' hands, the RNG and private log
-fields never reach it.
+them from this seat. It remembers each discard pile in full (every card landed
+face-up), except that after an opponent's crab digs out a buried card, it
+knows the pile is a card short but not which card. Deck order, the rest of
+opponents' hands, the RNG and private log fields never reach it.
 `observation.test.ts` scrambles all of that, including which card an unseen
 crab dig took, and requires an identical observation, feature vector and mask.
 
 ## Env protocol (summary)
 
 `reset` → batch; `step` with one slot per env → batch; `configure` swaps the
-fixed opponent for matches that start afterwards and/or switches the teacher
-on or off. A batch has:
+fixed opponent for matches that start afterwards. A batch has:
 
 - `seat`
 - `obs` (n × obsDim float32)
@@ -335,8 +275,6 @@ on or off. A batch has:
 - `reward` (n × 2, per seat, since the previous batch)
 - `done`
 - `episodes`
-- `teacher` (n × numSlots float32, the teacher's move distribution; null when
-  no teacher is set)
 
 Credit `reward[i][s]` to seat s's latest transition in env i. With
 `opponent: 'self'` both seats are the learner.
@@ -345,9 +283,6 @@ Credit `reward[i][s]` to seat s's latest transition in env i. With
 
 `ENCODER_VERSION` (`encode.ts`) and `ACTION_SPACE_VERSION` (`actions.ts`) are
 pinned by tests together with `OBS_DIM` / `NUM_SLOTS`. Any layout change must
-bump the version, and the old layout stays as a frozen copy while shipped
-policies still use it. Policy files record both versions; loading plays each
-file with the encoder and action space it names and refuses an unknown one,
-so a mismatched checkpoint can't play nonsense. A new encoder means a new
-network: weights don't carry over, but `--teacher` copies the old policy's
-play into it.
+bump the version. Policy files record both, and loading refuses a mismatch,
+so old checkpoints stop loading rather than playing nonsense. Retrain after
+an encoder change.

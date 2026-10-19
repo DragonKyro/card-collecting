@@ -10,8 +10,6 @@
 // with 10 updates imitating a since-removed heuristic; updates 100 and 1000
 // predate white counting for mermaid claims, 10000 was trained with it.)
 //
-// All three are encoder v2 / action space v2, played through the frozen
-// nn/encodeV2.ts and nn/actionsV2.ts until v3 replacements are trained.
 // Each file is ~1.3 MB. Vite emits it as a hashed asset (never inside a JS
 // chunk) and it's fetched once per page, on first use. The shell awaits
 // `prepareAiLevel` (via GameModule.prepare) before a match starts, so
@@ -25,7 +23,6 @@ import type { PlayerId } from '@/core/types';
 import type { SspAction, SspAiLevel, SspConfig, SspState } from './types';
 import type { SlotPolicy } from './nn/agent';
 import { actWithPolicy } from './nn/agent';
-import type { SspActionSpace } from './nn/actions';
 import { greedyPolicy, loadSspPolicy, type SspPolicyFile } from './nn/policy';
 import easyUrl from './policies/easy-update100.json?url';
 import normalUrl from './policies/normal-update1000.json?url';
@@ -41,7 +38,7 @@ export const DEFAULT_AI_LEVEL: SspAiLevel = 'normal';
 
 const POLICY_URLS: Record<SspAiLevel, string> = { easy: easyUrl, normal: normalUrl, hard: hardUrl };
 
-const policies = new Map<SspAiLevel, { policy: SlotPolicy; actions: SspActionSpace }>();
+const policies = new Map<SspAiLevel, SlotPolicy>();
 const loading = new Map<SspAiLevel, Promise<void>>();
 
 export function aiLevelOf(config: SspConfig): SspAiLevel {
@@ -67,8 +64,7 @@ export function prepareAiLevel(level: SspAiLevel): Promise<void> {
 
 /** Load a policy file for a level directly (tests and tools; the app fetches). */
 export function installAiPolicy(level: SspAiLevel, file: SspPolicyFile): void {
-  const loaded = loadSspPolicy(file);
-  policies.set(level, { policy: greedyPolicy(loaded), actions: loaded.actions });
+  policies.set(level, greedyPolicy(loadSspPolicy(file)));
 }
 
 export function chooseLeveledAction(state: SspState, playerId: PlayerId): SspAction | null {
@@ -79,11 +75,11 @@ export function chooseLeveledAction(state: SspState, playerId: PlayerId): SspAct
   }
   if (state.activePlayerId !== playerId) return null;
   const level = aiLevelOf(state.config);
-  const loaded = policies.get(level);
-  if (!loaded) {
+  const policy = policies.get(level);
+  if (!policy) {
     // prepare() should have loaded it; start now so a later call can answer.
     void prepareAiLevel(level).catch(() => {});
     return null;
   }
-  return actWithPolicy(state, playerId, loaded.policy, loaded.actions);
+  return actWithPolicy(state, playerId, policy);
 }

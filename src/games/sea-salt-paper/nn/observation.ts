@@ -7,12 +7,10 @@
 // ../knowledge.ts:
 //
 //   visible   own hand, every table, pile tops and sizes, hand sizes, match
-//             scores, events, the score a LAST CHANCE caller announced, the
-//             viewer's own pending draw / lobster reveal, and — mid-crab —
-//             the one pile the viewer chose to dig through.
-//   recalled  each pile's buried cards from memory, in landing order,
-//             flagged uncertain after an opponent's unseen crab dig; and this
-//             round's history of who discarded, took or passed over what.
+//             scores, events, the viewer's own pending draw / lobster reveal,
+//             and — mid-crab — the one pile the viewer chose to dig through.
+//   recalled  each pile's buried cards from memory, flagged uncertain after
+//             an opponent's unseen crab dig.
 //   inferred  opponent cards the viewer saw them take off a pile top or
 //             steal from the viewer.
 //   hidden    everything else: deck order and contents, the rest of every
@@ -27,7 +25,7 @@ import type { SspCard, SspCardFamily, SspEventId, SspState, SspSubPhase } from '
 import { FAMILY_ORDER } from '../cards';
 import { canEndRound, scoringOptsFor, stopThresholdFor } from '../reducer';
 import { eventAppliesTo } from '../events';
-import { knowledgeOf, roundLog, type PileMemory } from '../knowledge';
+import { knowledgeOf, type PileMemory } from '../knowledge';
 
 export const FAMILY_COUNT = FAMILY_ORDER.length;
 export const FAMILY_INDEX: Record<SspCardFamily, number> = Object.fromEntries(
@@ -55,16 +53,6 @@ export interface SspObservedPlayer {
   rules: SspPlayerRules;
   /** Jellyfish lock: this player's next (or current) turn is draw-and-pass only. */
   locked: boolean;
-  /** This round, in play order: cards the player took off a visible pile top. */
-  pulls: SspCard[];
-  /** This round, in play order: cards the player drew from the deck and discarded face-up. */
-  discards: SspCard[];
-  /** This round: distinct pile tops the player passed over to draw from the deck. */
-  passedTops: SspCard[];
-  /** The player's unseen crab digs the viewer can't account for yet (0 for the viewer). */
-  hiddenDigs: number;
-  /** After a LAST CHANCE call: this player's final turn is still to come. */
-  finalTurnPending: boolean;
 }
 
 export type SspPileView = PileMemory;
@@ -81,8 +69,6 @@ export interface SspObservation {
   activeOffset: number | null;
   roundStarterOffset: number | null;
   lastChanceOffset: number | null;
-  /** The score the LAST CHANCE caller announced (the log shows it to everyone). */
-  lastChanceScore: number | null;
   deckSize: number;
   /** Each discard pile as the viewer knows it. */
   piles: [SspPileView, SspPileView];
@@ -149,11 +135,6 @@ export function observe(state: SspState, viewerId: PlayerId, opts: ObserveOption
         stopThreshold: stopThresholdFor(state, p),
       },
       locked: state.nextTurnLockedPlayerId === p.id,
-      pulls: mine.publicPulls[idx],
-      discards: mine.discards[idx],
-      passedTops: mine.passedTops[idx],
-      hiddenDigs: mine.hiddenDigs[idx],
-      finalTurnPending: state.lastChanceFrom !== null && state.lastChanceRemaining.includes(p.id),
     });
   }
 
@@ -169,7 +150,6 @@ export function observe(state: SspState, viewerId: PlayerId, opts: ObserveOption
     activeOffset: offsetOf(state.activePlayerId),
     roundStarterOffset: offsetOf(state.currentRoundStarterId),
     lastChanceOffset: offsetOf(state.lastChanceFrom),
-    lastChanceScore: lastChanceScore(state),
     deckSize: state.deck.length,
     piles: mine.piles,
     crabLookPile,
@@ -183,12 +163,6 @@ export function observe(state: SspState, viewerId: PlayerId, opts: ObserveOption
     canStop: canEnd && !eventAppliesTo(state, viewer, 'diodonFish'),
     canLastChance: canEnd,
   };
-}
-
-function lastChanceScore(state: SspState): number | null {
-  if (state.lastChanceFrom === null) return null;
-  for (const e of roundLog(state)) if (e.kind === 'lastChance') return e.score;
-  return null;
 }
 
 /** Every card in a pile view, top included (exact when the pile is being looked at). */

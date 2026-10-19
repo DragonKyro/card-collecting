@@ -45,7 +45,6 @@ class Batch:
     reward: np.ndarray  # (n, 2) float32 -- per-seat reward since the previous batch
     done: np.ndarray  # (n,) bool -- an episode ended; obs is already the next episode's first decision
     episodes: list  # summaries of the episodes that ended
-    teacher: np.ndarray | None = None  # (n, num_slots) float32 -- the teacher's move distribution, if one is set
 
 
 class SspEnv:
@@ -99,8 +98,6 @@ class SspEnv:
             reward=np.asarray(r["reward"], dtype=np.float32).reshape(n, 2),
             done=np.asarray(r["done"], dtype=bool),
             episodes=r["episodes"],
-            teacher=(np.frombuffer(base64.b64decode(r["teacher"]), dtype="<f4").reshape(n, self.num_slots)
-                     if r.get("teacher") else None),
         )
 
     def reset(
@@ -114,11 +111,9 @@ class SspEnv:
         learner_seat: str | int = "alternate",
         round_reward: float = 0.0,
         max_steps: int = 10_000,
-        teacher: str | None = None,
     ) -> Batch:
         """opponent: 'self' (both seats are the learner), 'random',
-        'nn:<policy.json>' or 'nn-sample:<policy.json>'. teacher: a policy file
-        whose move distribution comes back with every decision (Batch.teacher)."""
+        'nn:<policy.json>' or 'nn-sample:<policy.json>'."""
         options = {
             "numEnvs": num_envs,
             "seed": seed,
@@ -129,7 +124,6 @@ class SspEnv:
             "learnerSeat": learner_seat,
             "roundReward": round_reward,
             "maxSteps": max_steps,
-            "teacher": os.path.abspath(teacher) if teacher else None,
         }
         return self._batch(self._call({"cmd": "reset", "options": options}))
 
@@ -146,10 +140,6 @@ class SspEnv:
     def configure(self, opponent: str) -> None:
         """New fixed opponent for matches that start from now on."""
         self._call({"cmd": "configure", "options": {"opponent": opponent}})
-
-    def set_teacher(self, policy_path: str | None) -> None:
-        """Report (or, with None, stop reporting) a teacher's move distribution from the next batch on."""
-        self._call({"cmd": "configure", "options": {"teacher": os.path.abspath(policy_path) if policy_path else None}})
 
     def policy_logits(self, policy_path: str, obs: np.ndarray) -> np.ndarray:
         """Logits from the TypeScript forward pass of an exported policy (parity checks)."""

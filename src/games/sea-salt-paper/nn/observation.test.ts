@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createRng } from '@/core/rng';
-import type { SspCard, SspState } from '../types';
+import type { SspState } from '../types';
 import { applyAction } from '../reducer';
 import { createSspState } from '../setup';
 import { sampleStates, scrambleHidden, seatsFor } from '../testSupport';
@@ -93,22 +93,14 @@ describe('what a seat learns about opponents and piles', () => {
     s = applyAction(s, { type: 'keepFromDraw', keepIndex: 0, discardToPile: 0 });
     return applyAction(s, { type: 'pass' });
   }
-  /** Discard `card` onto `pile` the way a deck draw does, landing record included. */
-  function land(s: SspState, pile: 0 | 1, card: SspCard, by = 'p0'): void {
-    s.discards[pile].push(card);
-    s.logSeq += 1;
-    s.log.push({
-      seq: s.logSeq, round: s.round, kind: 'drawDeck', playerId: by,
-      keptFamily: 'fish', discardedFamily: card.family, toPile: pile, card: { ...card },
-    });
-  }
-  /** Put p1 into a crab pick with a known pile 0: [sailor, shell, octopus (top)], bottom first. */
+  /** Put p1 into a crab pick with a known pile 0: [crab-bait (buried), shell, mermaid (top)]. */
   function p1Crabbing(): SspState {
     const s = p1ToAct(5);
-    s.discards[0] = [];
-    land(s, 0, { id: 9101, family: 'sailor', color: 'pink' });
-    land(s, 0, { id: 9102, family: 'shell', color: 'yellow' });
-    land(s, 0, { id: 9103, family: 'octopus', color: 'teal' });
+    s.discards[0] = [
+      { id: 9101, family: 'sailor', color: 'pink' },
+      { id: 9102, family: 'shell', color: 'yellow' },
+      { id: 9103, family: 'octopus', color: 'teal' },
+    ];
     s.players[1].hand.push({ id: 9001, family: 'crab', color: 'yellow' }, { id: 9002, family: 'crab', color: 'teal' });
     s.subPhase = 'awaitingPlayOrEnd';
     return applyAction(s, { type: 'playPair', cardIds: [9001, 9002] });
@@ -135,83 +127,9 @@ describe('what a seat learns about opponents and piles', () => {
     expect(seen.players[1].knownCards).toEqual([]);
     expect(seen.piles[0].top?.id).toBe(9103);
     expect(seen.piles[0].size).toBe(2);
-    // Both remembered buried cards are still listed, in landing order; one of them is gone.
+    // Both remembered buried cards are still listed; one of them is gone.
     expect(seen.piles[0].buried.map((c) => c.id)).toEqual([9101, 9102]);
     expect(seen.piles[0].unknownRemovals).toBe(1);
-    expect(seen.players[1].hiddenDigs).toBe(1);
-  });
-
-  it('a dug card that landed above the new top is known to be gone', () => {
-    let s = applyAction(p1Crabbing(), { type: 'crabPick', pile: 0, cardId: 9102 });
-    s = applyAction(s, { type: 'pass' });
-    // p0 takes the octopus: the sailor is the new top, so the shell (which
-    // landed after it) must be the card that was dug.
-    s = applyAction(s, { type: 'drawFromDiscard', pile: 0 });
-    const seen = observe(s, 'p0');
-    expect(seen.piles[0].top?.id).toBe(9101);
-    expect(seen.piles[0].buried).toEqual([]);
-    expect(seen.piles[0].unknownRemovals).toBe(0);
-    expect(seen.players[1].hiddenDigs).toBe(0);
-  });
-
-  it('remembers every pile in landing order when nothing was dug unseen', () => {
-    let checked = 0;
-    for (const state of sampleStates({ players: 2, extraSalt: true, matches: 4, seed: 61, every: 4 })) {
-      for (const viewer of state.players) {
-        const obs = observe(state, viewer.id);
-        obs.piles.forEach((pile, i) => {
-          const remembered = [...pile.buried, ...(pile.top ? [pile.top] : [])].map((c) => c.id);
-          const actual = state.discards[i].map((c) => c.id);
-          if (pile.unknownRemovals === 0) {
-            expect(remembered).toEqual(actual);
-          } else {
-            // The real pile is the memory with the unseen digs taken out.
-            expect(remembered.filter((id) => actual.includes(id))).toEqual(actual);
-            expect(remembered.length - actual.length).toBe(pile.unknownRemovals);
-          }
-          checked++;
-        });
-      }
-    }
-    expect(checked).toBeGreaterThan(100);
-  });
-
-  it('records what each player discarded and which tops they passed over', () => {
-    let s = createSspState({ targetScore: 40 }, 11, seatsFor(2));
-    const tops = s.discards.map((pile) => pile[pile.length - 1].id).sort();
-    s = applyAction(s, { type: 'drawPair' });
-    const discarded = s.pendingDraw[1];
-    s = applyAction(s, { type: 'keepFromDraw', keepIndex: 0, discardToPile: 0 });
-    const p0 = observe(s, 'p1').players[1];
-    expect(p0.discards.map((c) => c.id)).toEqual([discarded.id]);
-    expect(p0.passedTops.map((c) => c.id).sort()).toEqual(tops);
-    expect(p0.pulls).toEqual([]);
-  });
-
-  it('a jellyfish-locked deck draw passes over nothing (the deck was forced)', () => {
-    let s = p1ToAct(5);
-    s.nextTurnLockedPlayerId = 'p1';
-    s = applyAction(s, { type: 'drawPair' });
-    s = applyAction(s, { type: 'keepFromDraw', keepIndex: 0, discardToPile: 1 });
-    const p1 = observe(s, 'p0').players[1];
-    expect(p1.discards).toHaveLength(1);
-    expect(p1.passedTops).toEqual([]);
-  });
-
-  it('shows everyone the LAST CHANCE score and who still has a final turn', () => {
-    let s = createSspState({ targetScore: 40 }, 13, seatsFor(3));
-    s = applyAction(s, { type: 'drawPair' });
-    s = applyAction(s, { type: 'keepFromDraw', keepIndex: 0, discardToPile: 0 });
-    s = applyAction(s, { type: 'pass' });
-    const shells = ['darkblue', 'teal', 'black', 'yellow', 'green'] as const;
-    s.players[1].hand = shells.map((color, i) => ({ id: 9300 + i, family: 'shell' as const, color }));
-    s.subPhase = 'awaitingPlayOrEnd';
-    s = applyAction(s, { type: 'lastChance' });
-    expect(s.activePlayerId).toBe('p2');
-    const seen = observe(s, 'p2');
-    expect(seen.lastChanceScore).toBe(8);
-    expect(seen.lastChanceOffset).toBe(2);
-    expect(seen.players.map((p) => [p.id, p.finalTurnPending])).toEqual([['p2', false], ['p0', true], ['p1', false]]);
   });
 
   it('a crab pick of the top card is public', () => {
