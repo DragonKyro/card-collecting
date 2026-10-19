@@ -14,7 +14,8 @@
     "ssp:eval": "npm run train:build && node training/dist/ssp-eval.mjs",
     "ssp:analyze": "npm run train:build && node training/dist/ssp-analyze.mjs",
     "sgp:build": "vite build --config training/sgp/vite.config.ts",
-    "sgp:eval": "npm run sgp:build && node training/sgp/dist/sgp-eval.mjs"
+    "sgp:eval": "npm run sgp:build && node training/sgp/dist/sgp-eval.mjs",
+    "sgp:analyze": "npm run sgp:build && node training/sgp/dist/sgp-analyze.mjs"
   },
   "dependencies": {
     "react": "^19.0.0",

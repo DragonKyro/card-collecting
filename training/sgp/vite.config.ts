@@ -26,6 +26,7 @@ export default defineConfig({
       input: {
         'sgp-eval': here('./eval.ts'),
         'sgp-env': here('./env-server.ts'),
+        'sgp-analyze': here('./analyze.ts'),
       },
       output: {
         format: 'es',

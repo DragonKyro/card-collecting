@@ -51,11 +51,16 @@ export interface SushiGoCard {
   copyOf?: SushiGoCopy;
 }
 
+/** Difficulty of the AI seats — each is a trained policy (see aiLevels.ts). */
+export type SushiGoAiLevel = 'easy' | 'normal' | 'hard';
+
 export interface SushiGoConfig {
   /** Exactly 8 unique kinds: 1 nigiri + 1 roll + 3 appetizers + 2 specials + 1 dessert. */
   menu: SushiGoCardKind[];
   /** Number of rounds (party = 3; configurable 1-5 for sanity testing). */
   rounds: number;
+  /** Difficulty of every AI seat in the match; omitted = 'normal'. */
+  aiLevel?: SushiGoAiLevel;
 }
 
 export interface SushiGoPlayer {

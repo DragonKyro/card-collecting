@@ -1,18 +1,20 @@
 // Test support for the Sushi Go! Party agent tests.
 //
 //   sampleStates   a spread of states (mid-pick, mid-resolution, round ends)
-//                  from matches where seats mix the heuristic AI with random
-//                  picks, so special cards, chopsticks and spoons all come up.
+//                  from matches where every seat picks uniformly random legal
+//                  slots, so special cards, chopsticks and spoons all come up
+//                  without depending on any trained policy file.
 //   scrambleHidden rewrites everything one seat must NOT know, so a fair
 //                  agent's view has to come out identical.
 
 import type { PlayerId, Seat } from '@/core/types';
 import { createRng, rngInt, rngNext, shuffle, type RngState } from '@/core/rng';
+import { sampleLegal } from '@/ai/masked';
 import type { SushiGoCard, SushiGoCardKind, SushiGoState } from './types';
 import { DEFAULT_MENU, KIND_INFO } from './cards';
 import { sushiGoModule } from './module';
 import { applyAction } from './reducer';
-import { chooseAIAction } from './ai';
+import { actWithPolicy } from './nn/agent';
 import { passesThisRound } from './nn/observation';
 
 export interface SampleOptions {
@@ -37,20 +39,18 @@ export function sampleStates(opts: SampleOptions): SushiGoState[] {
   for (let m = 0; m < opts.matches; m++) {
     const seed = opts.seed + m * 7919;
     const rng = createRng(seed ^ 0x5bd1e995);
+    const random = (_obs: unknown, mask: Uint8Array) => sampleLegal(mask, rngNext(rng));
     let s = sushiGoModule.createInitialState(
       { menu: (opts.menu ?? DEFAULT_MENU).slice(), rounds: 3 }, seed, seatsFor(opts.players),
     );
     for (let step = 0; step < 5000 && s.phase === 'playing'; step++) {
       if (k++ % every === 0) out.push(s);
-      if (s.subPhase === 'selecting') {
-        const p = s.players.find((q) => q.pendingPick === null)!;
-        // A random single pick 40% of the time keeps the AI from walking one line.
-        s = rngNext(rng) < 0.4
-          ? applyAction(s, { type: 'submitPick', playerId: p.id, cardIds: [p.hand[rngInt(rng, p.hand.length)].id] })
-          : applyAction(s, chooseAIAction(s, p.id)!);
-      } else {
-        s = applyAction(s, chooseAIAction(s, s.activePlayerId ?? s.players[0].id)!);
+      if (s.subPhase === 'roundEnd') {
+        s = applyAction(s, { type: 'nextRound' });
+        continue;
       }
+      const pid = s.subPhase === 'selecting' ? s.players.find((q) => q.pendingPick === null)!.id : s.activePlayerId!;
+      s = applyAction(s, actWithPolicy(s, pid, random)!);
     }
   }
   return out;

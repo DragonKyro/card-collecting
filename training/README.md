@@ -164,6 +164,60 @@ keeps.csv` fits a logistic model to them: each card's base keep value plus
 the situational factors (points added now, completes a pair, matching
 colours, value to the opponent).
 
+## Sushi Go! Party (`sgp/`)
+
+The same pipeline for Sushi Go: 2 players, PPO from scratch, half the workers
+in self-play and half against past checkpoints, reward ±1 for the match plus
+`--round-reward` (0.01) × the round point margin. Every match gets a new
+random legal menu (drawn from its seed), so the policy has to play any menu;
+evals use seeds the env never trains on, so their menus and deals are new too.
+
+```sh
+npm run sgp:build                                    # → training/sgp/dist (train.py also builds it)
+python training/sgp/train.py --run main --updates 10000
+python training/sgp/train.py --run main --resume     # carry on from the latest checkpoint
+python training/sgp/evaluate.py match training/runs/sgp/main bench:hard-update10000 --games 2000
+python training/sgp/evaluate.py progress training/runs/sgp/main --vs bench:hard-update10000 --every 1000
+```
+
+Runs land in `training/runs/sgp/<run>/` with the same files as SSP runs
+(policies every 100 updates, all kept; the newest 10 resumable checkpoints).
+`progress.md` scores each checkpoint against every shipped level (pick with
+`--eval-bench a,b` or `none`), the checkpoint 500 updates earlier, and random.
+(`runs/sgp/main` itself was scored against a hand-written heuristic AI,
+since removed: its progress.md has that column instead.)
+
+The game's AI levels are frozen checkpoints of `runs/sgp/main`, kept in
+`src/games/sushi-go/policies/` and usable as `bench:<name>`:
+
+| Level | Benchmark | Source update | vs random | vs easy | vs normal |
+|---|---|---:|---:|---:|---:|
+| easy | `bench:easy-update100` | 100 | 99.0% | — | — |
+| normal | `bench:normal-update1000` | 1000 | 100.0% | 84.5% | — |
+| hard | `bench:hard-update10000` | 10000 | 99.9% | 93.7% | 75.5% |
+
+2000 seat-swapped matches each, random menus. `python training/sgp/evaluate.py freeze RUN@N --name X`
+pins another one (it records the source and these scores in the file's `meta.benchmark`);
+a new file only becomes a difficulty once `src/games/sushi-go/aiLevels.ts` points a level at it. The Sushi Go bundle has its own output
+folder, so rebuilding the SSP bundle never removes it from under a run.
+
+| File | Role |
+|---|---|
+| `sgp/train.py` | PPO trainer (derived from `ssp/train.py`; shares `ssp/model.py`) |
+| `sgp/evaluate.py` | eval API + CLI (`match`, `baselines`, `progress`) |
+| `sgp/env_client.py` | Python `SushiGoEnv` client, plus a random-agent smoke test |
+| `sgp/agents.ts` | `random`, `nn:`, `nn-sample:` |
+| `sgp/sim.ts` | `playMatch`: one headless match, random menu per seed |
+| `sgp/vec-env.ts` / `sgp/env-server.ts` | the vectorized env and its stdio bridge (same protocol as SSP's) |
+| `sgp/evaluate.ts` / `sgp/eval.ts` | seat-swapped jobs, summary, report / CLI over worker threads |
+| `sgp/analyze.ts` | how agents play (`npm run sgp:analyze`): card priority, context pick rates, greedy / invest / deny, points by kind, set waste, specials |
+
+Picks are simultaneous in the rules. The env asks each seat for its pick in
+turn; a seat sees that the other has picked, never what. A multi-part answer
+(pick + chopsticks + spoon, takeout flips) is one decision per part, like an
+SSP crab pick. The game-side pieces live in `src/games/sushi-go/nn/`: see
+CLAUDE.md.
+
 ## Pieces
 
 | File | Role |

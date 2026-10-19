@@ -5,9 +5,15 @@ import type { Seat, PlayerId } from '@/core/types';
 import { createRng } from '@/core/rng';
 import type { SushiGoState, SushiGoAction, SushiGoConfig, SushiGoPlayer } from './types';
 import { applyAction, setupNewMatch } from './reducer';
-import { chooseAIAction } from './ai';
 import { DEFAULT_MENU, validateMenu } from './cards';
 import { SushiGoThumbnail } from './Thumbnail';
+
+const AI_LEVEL_IDS = ['easy', 'normal', 'hard'];
+
+// The trained AI (encoder + network runtime) is loaded on demand by prepare(),
+// keeping it out of the game-picker bundle.
+type AiLevels = typeof import('./aiLevels');
+let aiLevels: AiLevels | null = null;
 
 export const sushiGoModule: GameModule<SushiGoState, SushiGoAction, SushiGoConfig> = {
   id: 'sushi-go',
@@ -18,13 +24,14 @@ export const sushiGoModule: GameModule<SushiGoState, SushiGoAction, SushiGoConfi
   replayInLobby: true,
 
   defaultConfig(_seats: Seat[]): SushiGoConfig {
-    return { menu: DEFAULT_MENU.slice(), rounds: 3 };
+    return { menu: DEFAULT_MENU.slice(), rounds: 3, aiLevel: 'normal' };
   },
 
   validateConfig(config, seats) {
     const errors: string[] = [];
     errors.push(...validateMenu(config.menu, seats?.length));
     if (config.rounds < 1 || config.rounds > 5) errors.push('Rounds must be 1–5.');
+    if (config.aiLevel !== undefined && !AI_LEVEL_IDS.includes(config.aiLevel)) errors.push('Unknown AI difficulty.');
     return errors;
   },
 
@@ -56,7 +63,13 @@ export const sushiGoModule: GameModule<SushiGoState, SushiGoAction, SushiGoConfi
   },
 
   chooseAIAction(state, playerId: PlayerId) {
-    return chooseAIAction(state, playerId);
+    return aiLevels ? aiLevels.chooseLeveledAction(state, playerId) : null;
+  },
+
+  async prepare(config, seats) {
+    if (!seats.some((s) => s.isAI)) return;
+    aiLevels ??= await import('./aiLevels');
+    await aiLevels.prepareAiLevel(aiLevels.aiLevelOf(config));
   },
 
   Thumbnail: SushiGoThumbnail,

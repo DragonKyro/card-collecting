@@ -20,8 +20,9 @@ Each update:
      exported policy (policies/update_N.json) the TypeScript side can play —
      `evaluate.py` and the opponent pool use these.
   4. Every `--eval-every`: in the background, a seat-swapped eval of the new
-     policy vs random, the game's hand-written heuristic AI, and the
-     checkpoint `--eval-past-gap` saves earlier → tensorboard `eval/*` and
+     policy vs random, every benchmark (the game's shipped AI levels, see
+     `evaluate.py freeze`), and the checkpoint `--eval-past-gap` saves earlier
+     → tensorboard `eval/*` and
      evals.jsonl. Eval matches use their own seeds, so their menus and deals
      are ones the agent never trained on. Once a checkpoint's evals are all
      in, the log prints the latest 10 as a table and progress.md is rewritten
@@ -115,6 +116,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     save.add_argument("--eval-games", type=int, default=1000)
     save.add_argument("--eval-workers", type=int, default=4)
     save.add_argument("--eval-past-gap", type=int, default=5, help="compare with the checkpoint this many saves back")
+    save.add_argument("--eval-bench", default="all",
+                      help="comma-separated benchmark names to eval against ('all' = every benchmark, 'none')")
     return p.parse_args(argv)
 
 
@@ -307,6 +310,14 @@ class Trainer:
         self.carry_streams: np.ndarray | None = None
         self.writer = SummaryWriter(os.path.join(self.run_dir, "tb"))
         self.evaluator = Evaluator(a.eval_games, a.eval_workers) if a.eval_every > 0 else None
+        available = list(ev.list_benchmarks())
+        wanted = available if a.eval_bench == "all" else [] if a.eval_bench == "none" else a.eval_bench.split(",")
+        missing = [b for b in wanted if b not in available]
+        if missing:
+            raise SystemExit(f"unknown benchmark(s) {missing}; have {available}")
+        self.benches = wanted
+        if self.evaluator and wanted:
+            print(f"  evaluating against benchmarks: {', '.join(wanted)}")
         self.win_window: dict[str, collections.deque] = collections.defaultdict(lambda: collections.deque(maxlen=400))
         # Per checkpoint: the eval tags queued and the results in so far (for the progress table).
         self.eval_expected: dict[int, list[str]] = {}
@@ -461,7 +472,8 @@ class Trainer:
     def eval_jobs(self) -> list[tuple[str, str, int]]:
         """(tag, opponent, games) for the checkpoint just saved."""
         a = self.args
-        jobs = [("random", "random", min(200, a.eval_games)), ("heuristic", "heuristic", a.eval_games)]
+        jobs = [("random", "random", min(200, a.eval_games))]
+        jobs += [(f"bench_{name}", ev.BENCH + name, a.eval_games) for name in self.benches]
         past = ev.list_policies(self.run_dir)
         if len(past) > a.eval_past_gap:
             jobs.append(("past", past[-1 - a.eval_past_gap][1], a.eval_games))
@@ -530,10 +542,13 @@ class Trainer:
     # ------------------------------------------------------------ progress table
 
     def eval_columns(self) -> list[tuple[str, str]]:
-        """(tag, header) for every eval tag seen, the heuristic first."""
+        """(tag, header) for every eval tag seen, benchmarks first (hardest first)."""
         a = self.args
         tags = {t for res in self.eval_results.values() for t in res}
-        cols = [("heuristic", "vs heuristic")] if "heuristic" in tags else []
+        order = {"hard": 0, "normal": 1, "easy": 2}
+        benches = sorted((t for t in tags if t.startswith("bench_")),
+                         key=lambda t: (order.get(t[len("bench_"):].split("-")[0], 9), t))
+        cols = [(t, f"vs {t[len('bench_'):]}") for t in benches]
         if "past" in tags:
             cols.append(("past", f"vs {a.eval_past_gap * a.save_every} updates earlier"))
         if "random" in tags:

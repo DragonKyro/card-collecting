@@ -75,6 +75,10 @@
   gap: 6px;
   font-size: 12px;
   color: rgba(255,255,255,0.85);
+  /* Fixed width: the column would otherwise grow with its hint text ("Click
+     to draw 2" comes and goes every turn), shifting the deck and both pile
+     columns sideways — and every card flying from or to them. */
+  width: 104px;
 }
 
 .ssp .pile {
@@ -189,9 +193,9 @@
   transition: transform 100ms ease, box-shadow 100ms ease;
   box-shadow: 0 2px 0 var(--paper-edge);
   overflow: hidden;
-  /* Card movement is driven by the FLIP harness in cardFlip.tsx, which writes
-     inline `transform` + `transition` directly on the node. No CSS animation
-     needed here. We do keep a tiny fallback fade for fresh-mounts. */
+  /* Moves between zones are flown by the FLIP harness in cardFlip.tsx (Web
+     Animations, which pin opacity so a flying card skips this fade). A card
+     that just appears in place — a pile's next card, say — fades in. */
   animation: ssp-card-fade 180ms ease-out;
 }
 
@@ -215,24 +219,22 @@
   height: 86px;
 }
 
-/* Flip animation harness for the OpponentMoveAnim "card lands on discard pile
- * and flips face-up" effect. Two stacked faces with backface-visibility so
- * the front (face-down) rotates away and the back (empty — the real face-up
- * card underneath shows through) takes over past 90°. */
-.ssp .ssp-flip-card {
-  position: relative;
+/* A card-sized slot: the deck's face-down card, a pile's cards. FLIP anchors
+ * sit on these (not the padded deck / pile columns), so cards flying from
+ * the deck or out of a pile start exactly on the card. A stacked slot holds
+ * the pile's top card over the one beneath it. */
+.ssp .card-slot {
   width: 56px;
   height: 86px;
-  transform-style: preserve-3d;
+  flex-shrink: 0;
 }
-.ssp .ssp-flip-face {
+.ssp .card-slot.stacked {
+  position: relative;
+}
+.ssp .card-slot.stacked > .card {
   position: absolute;
-  inset: 0;
-  backface-visibility: hidden;
-  -webkit-backface-visibility: hidden;
-}
-.ssp .ssp-flip-back {
-  transform: rotateY(180deg);
+  left: 0;
+  top: 0;
 }
 
 .ssp .card.selectable { cursor: pointer; }
@@ -296,6 +298,19 @@
   border-top: 1px solid rgba(0, 0, 0, 0.08);
   line-height: 14px;
   flex-shrink: 0;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+/* Labels over 9 letters (Lighthouse, Shoal of Fish, Cast of Crabs) don't fit
+   the footer at the normal size; over 13 (Penguin Colony) shrink once more. */
+.ssp .card .footer.long {
+  font-size: 5.6px;
+  letter-spacing: 0.2px;
+}
+.ssp .card .footer.longer {
+  font-size: 5.1px;
+  letter-spacing: 0;
 }
 
 /* Whole-card background colors per the official chart. Where the color is

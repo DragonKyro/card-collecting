@@ -2,7 +2,6 @@
 //
 //   random               uniform over legal action slots, through the same
 //                        observe → mask → decode path a trained policy uses.
-//   heuristic            the game's hand-written AI (src/games/sushi-go/ai.ts).
 //   nn:<policy.json>     a trained policy file, playing its top-scoring slot.
 //   nn-sample:<file>     the same, sampling from its distribution (how it played
 //                        while training — the sparring mode for past checkpoints).
@@ -14,7 +13,6 @@ import { createRng, rngNext } from '@/core/rng';
 import { sampleLegal } from '@/ai/masked';
 import type { Mlp } from '@/ai/mlp';
 import type { SushiGoAction, SushiGoState } from '@/games/sushi-go/types';
-import { chooseAIAction } from '@/games/sushi-go/ai';
 import { actWithPolicy } from '@/games/sushi-go/nn/agent';
 import { greedyPolicy, loadSushiGoPolicy, sampledPolicy, type SushiGoPolicyFile } from '@/games/sushi-go/nn/policy';
 
@@ -26,7 +24,7 @@ export interface SushiGoAgent {
 /** Builds a fresh agent for one seat of one match; `seed` drives any randomness. */
 export type AgentFactory = (seed: number) => SushiGoAgent;
 
-export const AGENT_SPECS = ['random', 'heuristic', 'nn:<policy.json>', 'nn-sample:<policy.json>'] as const;
+export const AGENT_SPECS = ['random', 'nn:<policy.json>', 'nn-sample:<policy.json>'] as const;
 
 const NN = 'nn:';
 const NN_SAMPLE = 'nn-sample:';
@@ -66,8 +64,6 @@ export function agentFactory(spec: string): AgentFactory {
           act: (state, playerId) => actWithPolicy(state, playerId, (_obs, mask) => sampleLegal(mask, rngNext(rng))),
         };
       };
-    case 'heuristic':
-      return () => ({ name: 'heuristic', act: (state, playerId) => chooseAIAction(state, playerId) });
     default:
       throw new Error(`unknown agent "${spec}" (known: ${AGENT_SPECS.join(', ')})`);
   }

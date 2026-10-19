@@ -14,6 +14,7 @@ import { bonusCard, copyTargets, flipTargets } from './reducer';
 import { URAMAKI_PLACES } from './scoring';
 import { Sidebar } from './Sidebar';
 import { RulesBook, RulesHero, RulesGrid, RulesTile } from '@/ui/RulesBook';
+import { AI_LEVELS, aiLevelOf, prepareAiLevel } from './aiLevels';
 import './sushi-go.css';
 
 const CATEGORIES_ORDERED: SushiGoCategory[] = ['nigiri', 'roll', 'appetizer', 'special', 'dessert'];
@@ -26,6 +27,13 @@ function LobbyConfig({ config, seats, onChange }: { config: SushiGoConfig; seats
     return m;
   }, []);
   const errors = validateMenu(config.menu, playerCount);
+  const hasAI = seats.some((s) => s.isAI);
+  const level = aiLevelOf(config);
+  // Start fetching the chosen level's policy while the lobby is still open
+  // (the Start button awaits it either way).
+  useEffect(() => {
+    if (hasAI) prepareAiLevel(level).catch(() => {});
+  }, [hasAI, level]);
   const isSelected = (k: SushiGoCardKind) => config.menu.includes(k);
   const togglePick = (k: SushiGoCardKind) => {
     const cat = KIND_INFO[k].category;
@@ -47,6 +55,27 @@ function LobbyConfig({ config, seats, onChange }: { config: SushiGoConfig; seats
 
   return (
     <div className="game-config sgp-lobby">
+      {hasAI && (
+        <>
+          <h4 style={{ margin: '0 0 6px', fontSize: 13, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--fg-muted)' }}>
+            AI difficulty
+          </h4>
+          <div role="radiogroup" aria-label="AI difficulty" style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
+            {AI_LEVELS.map((l) => (
+              <button
+                key={l.id}
+                type="button"
+                role="radio"
+                aria-checked={level === l.id}
+                className={level === l.id ? undefined : 'secondary'}
+                onClick={() => onChange({ ...config, aiLevel: l.id })}
+              >
+                {l.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
       <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center' }}>
         <button
           className="secondary"

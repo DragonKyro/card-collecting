@@ -1,6 +1,6 @@
 // CLI: seat-swapped Sushi Go! Party head-to-head eval across worker threads.
 //
-//   npm run sgp:eval -- --a nn:<policy.json> --b heuristic --games 2000
+//   npm run sgp:eval -- --a nn:<policy.json> --b nn:src/games/sushi-go/policies/hard-update10000.json --games 2000
 //
 // Flags: --a, --b (agent specs, see agents.ts; required), --games (rounded up to even),
 // --seed, --workers (default: cores − 1, max 16), --max-steps, --json <path>
@@ -38,7 +38,7 @@ function parseArgs(argv: string[]): { spec: MatchupSpec; games: number; seed: nu
   const known = new Set(['a', 'b', 'games', 'seed', 'workers', 'max-steps', 'json']);
   for (const k of flags.keys()) if (!known.has(k)) throw new Error(`unknown flag --${k}`);
   if (typeof flags.get('a') !== 'string' || typeof flags.get('b') !== 'string') {
-    throw new Error('usage: --a <agent> --b <agent> [--games N] … (agents: random, heuristic, nn:<file>, nn-sample:<file>)');
+    throw new Error('usage: --a <agent> --b <agent> [--games N] … (agents: random, nn:<file>, nn-sample:<file>)');
   }
   return {
     spec: { a: str('a', ''), b: str('b', ''), sim: { menu: 'random', maxSteps: num('max-steps', 5_000) } },

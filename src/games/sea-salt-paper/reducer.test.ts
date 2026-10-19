@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { applyAction, canEndRound } from './reducer';
+import { applyAction, canEndRound, scoringOptsFor } from './reducer';
+import { tentativeScore } from './scoring';
 import { seaSaltPaperModule, attachSeatsAndStart } from './module';
 import type { SspState, SspCard, SspCardFamily, SspColor } from './types';
 import type { Seat } from '@/core/types';
@@ -355,6 +356,23 @@ describe('Extra Salt: starfish trio', () => {
     expect(s.subPhase).toBe('awaitingPlayOrEnd');
     expect(s.players.find((q) => q.id === 'a')!.trios?.length).toBe(1);
     expect(s.players.find((q) => q.id === 'a')!.table).toHaveLength(3);
+  });
+
+  it('playing a trio raises the round score by exactly 2 (3 for the trio, minus the duo\'s 1)', () => {
+    let s = freshStateWithSalt();
+    const a = s.players.find((q) => q.id === 'a')!;
+    // A lighthouse and a third boat ride along to show trio boats keep counting for it.
+    a.hand = [
+      card(600, 'boat'), card(601, 'boat'), card(602, 'starfish'), card(603, 'boat'), card(604, 'lighthouse'),
+    ];
+    s = applyAction(s, { type: 'drawFromDiscard', pile: 0 });
+    const score = () => {
+      const p = s.players.find((q) => q.id === 'a')!;
+      return tentativeScore(p.hand, p.table, scoringOptsFor(s, p));
+    };
+    const before = score();
+    s = applyAction(s, { type: 'playTrio', cardIds: [600, 601, 602] });
+    expect(score() - before).toBe(2);
   });
 });
 

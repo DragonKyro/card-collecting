@@ -1,142 +1,150 @@
 // FLIP animation harness for Sea Salt & Paper cards.
 //
-// We animate a card ONLY when its containing zone changes (e.g. moved from the
-// deck slot to your hand, from your hand to a pile). Every CardView declares
-// the zone it belongs to via the `zone` prop; the harness compares to the
-// previous render's zone for each card.id and, if different, slides the new
-// position back to the card's ACTUAL prior rect (or, for fresh cards with no
-// prior rect, the deck anchor's last rect).
+// Every card on screen registers its DOM node and the zone it sits in
+// (`useFlipCard(card.id, zone)`); the deck and each discard pile register a
+// card-sized anchor (`useFlipAnchor`). On every commit the provider compares
+// each card with the previous commit:
 //
-// This deliberately ignores positional reflows inside the same zone (drag,
-// hover, sibling insertion), so clicking a card does NOT make the whole
-// hand re-fly.
+//   - same zone as before → no animation, so reflows inside a zone, hover and
+//     clicking a selectable card never make cards fly;
+//   - shown before, in another zone → slide from where it was on screen;
+//   - not shown before → slide from the anchor of where the game state kept
+//     it (`origins`): the deck — which also covers an opponent's unseen
+//     two-card draw and a lobster reveal — or the pile it was buried in. A
+//     card just uncovered where it already was (the next card of a pile, a
+//     crab look through that pile) doesn't move.
+//
+// "Where it was" is read in getSnapshotBeforeUpdate, before React touches the
+// DOM, so it includes cards about to unmount and cards still mid-flight; an
+// interrupted flight carries on from wherever the card is. Every card is the
+// same size, so a move is a pure translation of the top-left corner. Flights
+// use the Web Animations API, which starts reliably on the next frame and
+// leaves the cards' own CSS transforms (hover, selected) alone.
 
-import { createContext, useContext, useLayoutEffect, useRef, type ReactNode } from 'react';
+import { Component, createContext, useContext, type ReactNode } from 'react';
 
-interface FlipState {
-  /** Currently-mounted card DOM nodes, keyed by card.id. */
-  liveNodes: Map<number, HTMLElement>;
-  /** Zone label for each currently-mounted card. */
-  liveZones: Map<number, string>;
-  /** Anchor DOM nodes (one per zone label, latest registration wins). */
-  liveAnchors: Map<string, HTMLElement>;
-  /** Last-commit zone label per card.id (read by the next useLayoutEffect). */
-  lastZone: Map<number, string>;
-  /** Last-commit bounding rect per card.id — the source position when a card
-   *  moves to a new zone. Persists across the unmount-then-remount that
-   *  happens when a card visually "moves" (some card holders only render the
-   *  top of a stack; the rect from before the move is still our best source). */
-  lastCardRect: Map<number, DOMRect>;
-  /** Last-commit anchor rect per zone label — fallback for cards with no
-   *  prior recorded rect (typically fresh deals). */
-  lastAnchorRect: Map<string, DOMRect>;
+const DURATION_MS = 360;
+const EASING = 'cubic-bezier(0.2, 0.7, 0.3, 1)';
+
+interface Registry {
+  nodes: Map<number, HTMLElement>;
+  zones: Map<number, string>;
+  anchors: Map<string, HTMLElement>;
 }
 
-const Ctx = createContext<FlipState | null>(null);
+interface Snapshot {
+  cards: Map<number, DOMRect>;
+  anchors: Map<string, DOMRect>;
+}
 
-const TRANSITION = 'transform 320ms cubic-bezier(0.2, 0.7, 0.3, 1)';
+const Ctx = createContext<Registry | null>(null);
 
-export function SspFlipProvider({ children }: { children: ReactNode }) {
-  const state = useRef<FlipState>({
-    liveNodes: new Map(),
-    liveZones: new Map(),
-    liveAnchors: new Map(),
-    lastZone: new Map(),
-    lastCardRect: new Map(),
-    lastAnchorRect: new Map(),
-  }).current;
+interface ProviderProps {
+  /** Card id → anchor name (`'deck'`, `'pile-0'`, `'pile-1'`) for every card
+   *  the game state holds somewhere off screen. */
+  origins: ReadonlyMap<number, string>;
+  /** Changes when the view is swapped out wholesale (new round, round
+   *  summary, game over): that commit animates nothing. */
+  scene: string;
+  children: ReactNode;
+}
 
-  useLayoutEffect(() => {
-    // Snapshot every anchor's current rect — used as a fallback source for
-    // cards with no recorded prior rect.
-    const anchorRects = new Map<string, DOMRect>();
-    for (const [name, node] of state.liveAnchors) {
-      anchorRects.set(name, node.getBoundingClientRect());
-    }
+export class SspFlipProvider extends Component<ProviderProps> {
+  private readonly registry: Registry = { nodes: new Map(), zones: new Map(), anchors: new Map() };
+  /** Zones and origins as of the previous commit. */
+  private lastZones = new Map<number, string>();
+  private lastOrigins: ReadonlyMap<number, string> = new Map();
+  private readonly flights = new WeakMap<HTMLElement, Animation>();
 
-    const offsets: Array<{ node: HTMLElement; dx: number; dy: number }> = [];
-    const nextCardRects = new Map<number, DOMRect>();
+  override componentDidMount(): void {
+    this.remember();
+  }
 
-    for (const [id, node] of state.liveNodes) {
-      const nowZone = state.liveZones.get(id);
-      if (!nowZone) continue;
-      const next = node.getBoundingClientRect();
-      nextCardRects.set(id, next);
+  override getSnapshotBeforeUpdate(): Snapshot {
+    const cards = new Map<number, DOMRect>();
+    for (const [id, node] of this.registry.nodes) cards.set(id, node.getBoundingClientRect());
+    const anchors = new Map<string, DOMRect>();
+    for (const [name, node] of this.registry.anchors) anchors.set(name, node.getBoundingClientRect());
+    return { cards, anchors };
+  }
 
-      const prevZone = state.lastZone.get(id);
-      if (prevZone === nowZone) continue; // no movement between zones
-
-      // Pick the source rect. We will ONLY animate when the card has a
-      // recorded prior position, OR we have a concrete prior-zone anchor
-      // rect. If we know nothing about the card's past, do NOT invent a
-      // deck-flight animation — that produces phantom "card flew from deck"
-      // moves for cards that simply appeared (e.g. AI drew, overlay closed
-      // with a different visible card, etc.).
-      let source: DOMRect | undefined;
-      const ownRect = state.lastCardRect.get(id);
-      const lastPrevAnchor = prevZone ? state.lastAnchorRect.get(prevZone) : undefined;
-      const curPrevAnchor = prevZone ? anchorRects.get(prevZone) : undefined;
-      if (ownRect) source = ownRect;
-      else if (lastPrevAnchor) source = lastPrevAnchor;
-      else if (curPrevAnchor) source = curPrevAnchor;
-      // No third-fallback: cards with no past silently mount in place.
-      if (!source) continue;
-      const dx = source.left - next.left;
-      const dy = source.top - next.top;
-      if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) continue;
-      offsets.push({ node, dx, dy });
-    }
-
-    // Update bookkeeping for the next render's comparison. Keep the rects of
-    // cards that are still mounted (so a card whose zone DIDN'T change keeps
-    // a fresh rect for next time); replace the zone map outright.
-    state.lastZone.clear();
-    for (const [id, z] of state.liveZones) state.lastZone.set(id, z);
-    state.lastCardRect = nextCardRects;
-    state.lastAnchorRect = anchorRects;
-
-    if (offsets.length === 0) return;
-
-    for (const { node, dx, dy } of offsets) {
-      node.style.transition = 'none';
-      node.style.transform = `translate(${dx}px, ${dy}px)`;
-    }
-    requestAnimationFrame(() => {
-      for (const { node } of offsets) {
-        if (!node.isConnected) continue;
-        node.style.transition = TRANSITION;
-        node.style.transform = '';
+  override componentDidUpdate(prev: ProviderProps, _state: unknown, before: Snapshot): void {
+    if (prev.scene === this.props.scene && !prefersReducedMotion()) {
+      const moves: Array<{ node: HTMLElement; from: DOMRect }> = [];
+      for (const [id, node] of this.registry.nodes) {
+        const zone = this.registry.zones.get(id);
+        const was = this.lastZones.get(id);
+        if (zone === undefined || zone === was) continue;
+        let from: DOMRect | undefined;
+        if (was !== undefined) {
+          from = before.cards.get(id);
+        } else {
+          const origin = this.lastOrigins.get(id);
+          if (origin !== undefined && origin !== zone) {
+            from = before.anchors.get(origin) ?? this.registry.anchors.get(origin)?.getBoundingClientRect();
+          }
+        }
+        if (from) moves.push({ node, from });
       }
-    });
-  });
+      for (const { node, from } of moves) this.fly(node, from);
+    }
+    this.remember();
+  }
 
-  return <Ctx.Provider value={state}>{children}</Ctx.Provider>;
+  private fly(node: HTMLElement, from: DOMRect): void {
+    this.flights.get(node)?.cancel();
+    const to = node.getBoundingClientRect();
+    const dx = from.left - to.left;
+    const dy = from.top - to.top;
+    if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return;
+    // Opacity is pinned so a freshly mounted card doesn't run its fade-in mid-air.
+    this.flights.set(node, node.animate(
+      [{ transform: `translate(${dx}px, ${dy}px)`, opacity: 1 }, { transform: 'none', opacity: 1 }],
+      { duration: DURATION_MS, easing: EASING },
+    ));
+  }
+
+  private remember(): void {
+    this.lastZones = new Map(this.registry.zones);
+    this.lastOrigins = this.props.origins;
+  }
+
+  override render(): ReactNode {
+    return <Ctx.Provider value={this.registry}>{this.props.children}</Ctx.Provider>;
+  }
 }
 
-/** Ref callback registering a card's DOM node + the zone it currently lives
- *  in. When the zone string changes between renders for the same card.id, the
- *  harness slides the card from its prior rect to its new home. */
-export function useFlipCard(cardId: number | undefined, zone: string): (node: HTMLElement | null) => void {
-  const ctx = useContext(Ctx);
+function prefersReducedMotion(): boolean {
+  return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+/** Ref callback registering a card's DOM node and the zone it lives in. The
+ *  same id can briefly be on screen twice (a pile's top card is also shown in
+ *  the crab look-through); the latest registration wins, and a cleanup only
+ *  removes its own node. */
+export function useFlipCard(cardId: number | undefined, zone: string): (node: HTMLElement | null) => (() => void) | void {
+  const reg = useContext(Ctx);
   return (node) => {
-    if (!ctx || cardId == null) return;
-    if (node) {
-      ctx.liveNodes.set(cardId, node);
-      ctx.liveZones.set(cardId, zone);
-    } else {
-      ctx.liveNodes.delete(cardId);
-      ctx.liveZones.delete(cardId);
-    }
+    if (!reg || cardId == null || !node) return;
+    reg.nodes.set(cardId, node);
+    reg.zones.set(cardId, zone);
+    return () => {
+      if (reg.nodes.get(cardId) !== node) return;
+      reg.nodes.delete(cardId);
+      reg.zones.delete(cardId);
+    };
   };
 }
 
-/** Ref callback for a named zone anchor (e.g. 'deck', 'pile-0'). Cards arriving
- *  in a zone with no prior recorded position slide in from this anchor. */
-export function useFlipAnchor(name: string): (node: HTMLElement | null) => void {
-  const ctx = useContext(Ctx);
+/** Ref callback for a named, card-sized anchor (`'deck'`, `'pile-0'`, …):
+ *  cards appearing from that part of the game state fly in from it. */
+export function useFlipAnchor(name: string): (node: HTMLElement | null) => (() => void) | void {
+  const reg = useContext(Ctx);
   return (node) => {
-    if (!ctx) return;
-    if (node) ctx.liveAnchors.set(name, node);
-    else ctx.liveAnchors.delete(name);
+    if (!reg || !node) return;
+    reg.anchors.set(name, node);
+    return () => {
+      if (reg.anchors.get(name) === node) reg.anchors.delete(name);
+    };
   };
 }

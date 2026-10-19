@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  cardPoints, collectorPoints, mermaidColorBonus, isValidDuoPair,
+  cardPoints, categoryBreakdown, collectorPoints, mermaidColorBonus, isValidDuoPair,
   isValidStarfishTrio, specialColorBonus, totalScore,
   SHELL_POINTS, OCTOPUS_POINTS, PENGUIN_POINTS, SAILOR_POINTS,
 } from './scoring';
@@ -296,6 +296,44 @@ describe('Extra Salt scoring', () => {
       [card(1, 'crab'), card(2, 'crab'), card(3, 'starfish')],
       { trioCancelledIds: trioIds, trios: 1 },
     )).toBe(3);
+  });
+
+  it('a trio replaces its duo\'s 1 pt: playing it is worth exactly +2', () => {
+    const hand = [card(1, 'boat'), card(2, 'boat'), card(3, 'starfish')];
+    const before = cardPoints(hand);
+    const after = cardPoints(hand, { trioCancelledIds: new Set([1, 2, 3]), trios: 1 });
+    expect(before).toBe(1);
+    expect(after).toBe(3);
+  });
+
+  it('trio cards still count for multipliers (the boats are still boats)', () => {
+    // Lighthouse scores 1 per boat held. Boats in a trio are still boats.
+    const hand = [card(1, 'boat'), card(2, 'boat'), card(3, 'starfish'), card(4, 'boat'), card(5, 'lighthouse')];
+    const trio = { trioCancelledIds: new Set([1, 2, 3]), trios: 1 };
+    expect(cardPoints(hand)).toBe(1 + 3);             // one boat pair + 3 boats under the lighthouse
+    expect(cardPoints(hand, trio)).toBe(3 + 3);       // the trio's 3 + 3 boats; the third boat has no partner
+    // Same for the shoal (fish) and the crab basket (crabs, with a lobster in the trio).
+    expect(cardPoints([card(1, 'fish'), card(2, 'fish'), card(3, 'starfish'), card(4, 'shoal')], { trioCancelledIds: new Set([1, 2, 3]), trios: 1 }))
+      .toBe(3 + 2);
+    expect(cardPoints([card(1, 'lobster'), card(2, 'crab'), card(3, 'starfish'), card(4, 'crabBasket')], { trioCancelledIds: new Set([1, 2, 3]), trios: 1 }))
+      .toBe(3 + 1);
+  });
+
+  it('trio cards stay out of the duo count: leftover cards still pair among themselves', () => {
+    // Four crabs + a starfish: a trio takes two crabs, the other two make a pair.
+    const hand = [card(1, 'crab'), card(2, 'crab'), card(3, 'starfish'), card(4, 'crab'), card(5, 'crab')];
+    expect(cardPoints(hand, { trioCancelledIds: new Set([1, 2, 3]), trios: 1 })).toBe(3 + 1);
+  });
+
+  it('the category breakdown adds up to cardPoints with trios in play', () => {
+    const hand = [
+      card(1, 'boat'), card(2, 'boat'), card(3, 'starfish'), card(4, 'boat'), card(5, 'lighthouse'),
+      card(6, 'shark'), card(7, 'swimmer'), card(8, 'shell'), card(9, 'shell'),
+    ];
+    const opts = { trioCancelledIds: new Set([1, 2, 3]), trios: 1 };
+    const cats = categoryBreakdown(hand, opts);
+    expect(cats).toMatchObject({ duos: 1, trios: 3, multipliers: 3, sets: 2 });
+    expect(cats.duos + cats.sets + cats.multipliers + cats.trios + cats.mermaidClaim).toBe(cardPoints(hand, opts));
   });
 });
 
