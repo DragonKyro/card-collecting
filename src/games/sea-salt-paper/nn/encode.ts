@@ -1,4 +1,4 @@
-// Sea Salt & Paper — observation → fixed-length feature vector.
+// Sea Salt & Paper — observation → fixed-length feature vector (encoder v3).
 //
 // Pure function of SspObservation (never SspState), so hidden information
 // can't leak in here. Layout is data-independent: every segment is written at
@@ -6,21 +6,49 @@
 // and so on are zeros), and `featureLayout()` reports the segment table for
 // the trainer and for debugging.
 //
-// Besides raw counts the vector carries a few derived signals — score deltas
-// for acquiring each family, the unseen-card pool — because they are cheap to
-// compute exactly here and slow to learn.
+// Cards are described by KIND (kinds.ts) — family and colour together, so a
+// teal crab and a yellow crab differ; the Extra Salt deck has 54. A card set
+// is one number per kind, the fraction of that kind's copies; a single card
+// is one-hot over the kinds. Family and colour totals are sums of the
+// kind counts, but the sets that drive scoring carry them directly too.
+//
+// What's in it: turn and match state; the viewer's hand and table; per
+// opponent their table, the cards the viewer knows they hold, and this
+// round's history of what they took off a top, discarded, and passed over to
+// draw from the deck; each pile's top three cards in order (taking the top
+// exposes the next one) with the rest as a set; the viewer's own draw and
+// lobster reveal; and the unseen pool. Plus derived signals that are cheap to
+// compute exactly here and slow to learn: what one more card of each kind is
+// worth to the viewer and to the next player, and so what each card on offer
+// is worth to either.
 //
 // Bump ENCODER_VERSION whenever a segment is added, removed, reordered or
-// rescaled; trained weights are only valid for the version they saw.
+// rescaled, or the kind list changes; trained weights are only valid for the
+// version they saw. Policies on older versions load through policy.ts.
 
-import type { SspCard, SspCardFamily, SspColor, SspEventId, SspSubPhase } from '../types';
-import { FAMILY_COLORS, FAMILY_ORDER, DUO_PAIRS, buildDeck } from '../cards';
-import { specialColorBonus, totalScore, type CardPointsOpts } from '../scoring';
+import type { SspCard, SspEventId, SspSubPhase } from '../types';
+import { FAMILY_ORDER, DUO_PAIRS, buildDeck } from '../cards';
+import { cardPoints, mermaidColorBonus, specialColorBonus, totalScore, type CardPointsOpts } from '../scoring';
 import { ALL_EVENT_IDS } from '../events';
 import { buriedStillThere } from '../knowledge';
 import { FAMILY_COUNT, FAMILY_INDEX, type SspObservation, type SspObservedPlayer } from './observation';
+import { COLORS, COLOR_COUNT, COLOR_INDEX, KINDS, KIND_COUNT, kindIndex } from './kinds';
 
-export const ENCODER_VERSION = 2;
+export const ENCODER_VERSION = 3;
+
+export interface FeatureSegment {
+  name: string;
+  offset: number;
+  size: number;
+}
+
+/** A versioned observation encoder; a policy file names the one it was trained with. */
+export interface SspEncoder {
+  version: number;
+  dim: number;
+  layout: readonly FeatureSegment[];
+  encode(obs: SspObservation, out?: Float32Array): Float32Array;
+}
 
 const MAX_OPPONENTS = 3;
 const DECK_NORM = 66;
@@ -39,20 +67,32 @@ const SUBPHASE_INDEX: Record<SspSubPhase, number> = {
 };
 const SUBPHASE_COUNT = Object.keys(SUBPHASE_INDEX).length;
 
-const COLOR_INDEX: Record<SspColor, number> = {
-  white: 0, yellow: 1, green: 2, pink: 3, purple: 4, teal: 5,
-  darkblue: 6, black: 7, gray: 8, orange: 9, tan: 10,
-};
-const COLOR_COUNT = Object.keys(COLOR_INDEX).length;
-
 const EVENT_COUNT = ALL_EVENT_IDS.length;
 const EVENT_INDEX = new Map(ALL_EVENT_IDS.map((id, i) => [id, i]));
 
-export interface FeatureSegment {
-  name: string;
-  offset: number;
-  size: number;
+interface DeckTotals { family: number[]; color: number[]; kind: number[] }
+const deckTotalsCache = new Map<boolean, DeckTotals>();
+function deckTotals(extraSalt: boolean): DeckTotals {
+  let t = deckTotalsCache.get(extraSalt);
+  if (!t) {
+    t = {
+      family: new Array<number>(FAMILY_COUNT).fill(0),
+      color: new Array<number>(COLOR_COUNT).fill(0),
+      kind: new Array<number>(KIND_COUNT).fill(0),
+    };
+    for (const c of buildDeck({ extraSalt })) {
+      t.family[FAMILY_INDEX[c.family]] += 1;
+      t.color[COLOR_INDEX[c.color]] += 1;
+      t.kind[kindIndex(c)] += 1;
+    }
+    deckTotalsCache.set(extraSalt, t);
+  }
+  return t;
 }
+
+/** Copies of each family / kind in the full (Extra Salt) deck — the count scales. */
+const FAMILY_COPIES = deckTotals(true).family;
+const KIND_COPIES = deckTotals(true).kind;
 
 class Writer {
   pos = 0;
@@ -71,14 +111,31 @@ class Writer {
   scalar(name: string, v: number): void {
     this.x[this.seg(name, 1)] = v;
   }
-  /** Per-family counts, each scaled by that family's copies in the deck. */
-  families(name: string, cards: SspCard[], weight = 1): void {
-    const o = this.seg(name, FAMILY_COUNT);
-    for (const c of cards) this.x[o + FAMILY_INDEX[c.family]] += weight / FAMILY_COPIES[FAMILY_INDEX[c.family]];
+  values(name: string, v: ArrayLike<number>): void {
+    const o = this.seg(name, v.length);
+    for (let i = 0; i < v.length; i++) this.x[o + i] = v[i];
   }
-  colors(name: string, cards: SspCard[], weight = 1): void {
+  /** Per-kind counts, each scaled by that kind's copies in the deck. */
+  kinds(name: string, cards: readonly SspCard[], weight = 1): void {
+    const o = this.seg(name, KIND_COUNT);
+    for (const c of cards) {
+      const k = kindIndex(c);
+      this.x[o + k] += weight / KIND_COPIES[k];
+    }
+  }
+  /** One card, one-hot over the kinds (all zero when absent). */
+  kind(name: string, card: SspCard | null | undefined, weight = 1): void {
+    const o = this.seg(name, KIND_COUNT);
+    if (card) this.x[o + kindIndex(card)] = weight;
+  }
+  /** Per-family counts, each scaled by that family's copies in the deck. */
+  families(name: string, cards: readonly SspCard[]): void {
+    const o = this.seg(name, FAMILY_COUNT);
+    for (const c of cards) this.x[o + FAMILY_INDEX[c.family]] += 1 / FAMILY_COPIES[FAMILY_INDEX[c.family]];
+  }
+  colors(name: string, cards: readonly SspCard[]): void {
     const o = this.seg(name, COLOR_COUNT);
-    for (const c of cards) this.x[o + COLOR_INDEX[c.color]] += weight / 10;
+    for (const c of cards) this.x[o + COLOR_INDEX[c.color]] += 1 / 10;
   }
   events(name: string, ids: readonly SspEventId[]): void {
     const o = this.seg(name, EVENT_COUNT);
@@ -101,48 +158,49 @@ function scoreOf(cards: SspCard[], opts: CardPointsOpts): number {
   return totalScore(cards, opts).total;
 }
 
-interface DeckTotals { family: number[]; color: number[] }
-const deckTotalsCache = new Map<boolean, DeckTotals>();
-function deckTotals(extraSalt: boolean): DeckTotals {
-  let t = deckTotalsCache.get(extraSalt);
-  if (!t) {
-    t = { family: new Array(FAMILY_COUNT).fill(0), color: new Array(COLOR_COUNT).fill(0) };
-    for (const c of buildDeck({ extraSalt })) {
-      t.family[FAMILY_INDEX[c.family]] += 1;
-      t.color[COLOR_INDEX[c.color]] += 1;
-    }
-    deckTotalsCache.set(extraSalt, t);
-  }
-  return t;
+/** What one more card of each kind adds to `cards`' score, as Δ / MARGINAL_NORM
+ *  clamped to ±4. That score is card points (which depend only on family) plus
+ *  mermaid claims (only on colour and the mermaid count), so 19 + 12
+ *  rescorings cover all 54 kinds. Pinned against a direct rescore per kind. */
+function marginalTable(cards: SspCard[], opts: CardPointsOpts): Float32Array {
+  const claims = (cs: SspCard[]) => (opts.mermaidsScoreZero ? 0 : mermaidColorBonus(cs, { forceMinMermaids: 0 }));
+  const n = cards.length;
+  const probe = cards.slice();
+  const points0 = cardPoints(cards, opts);
+  const claims0 = claims(cards);
+  const dPoints = FAMILY_ORDER.map((family) => {
+    probe[n] = { id: -1, family, color: 'white' };
+    return cardPoints(probe, opts) - points0;
+  });
+  const dClaims = COLORS.map((color) => {
+    probe[n] = { id: -1, family: 'shell', color };
+    return claims(probe) - claims0;
+  });
+  probe[n] = { id: -1, family: 'mermaid', color: 'white' };
+  const dMermaid = claims(probe) - claims0;
+  const out = new Float32Array(KIND_COUNT);
+  KINDS.forEach((k, i) => {
+    const d = dPoints[FAMILY_INDEX[k.family]] + (k.family === 'mermaid' ? dMermaid : dClaims[COLOR_INDEX[k.color]]);
+    out[i] = clamp(d / MARGINAL_NORM, -4, 4);
+  });
+  return out;
 }
-
-/** Copies of each family in the full (Extra Salt) deck — the count scale. */
-const FAMILY_COPIES = deckTotals(true).family;
-
-const DISTINCT_COLORS: Record<SspCardFamily, SspColor[]> = Object.fromEntries(
-  FAMILY_ORDER.map((f) => [f, [...new Set(FAMILY_COLORS[f])]]),
-) as Record<SspCardFamily, SspColor[]>;
 
 function writeFeatures(obs: SspObservation, w: Writer): void {
   const x = w.x;
   const me = obs.players[0];
+  const next: SspObservedPlayer | undefined = obs.players[1];
   const myCards = [...obs.hand, ...me.table];
   const myOpts = scoringOpts(me);
   const myScore = scoreOf(myCards, myOpts);
-  const heldColors = new Array<number>(COLOR_COUNT).fill(0);
-  for (const c of myCards) heldColors[COLOR_INDEX[c.color]] += 1;
-
-  const marginalOf = (card: SspCard): number =>
-    clamp((scoreOf([...myCards, card], myOpts) - myScore) / MARGINAL_NORM, -4, 4);
-  /** Value of one more `family` card, in the colour of that family the
-   *  viewer already holds most of (what they'd chase for mermaid claims). */
-  const familyMarginal = FAMILY_ORDER.map((f) => {
-    let color: SspColor = DISTINCT_COLORS[f][0];
-    for (const c of DISTINCT_COLORS[f]) {
-      if (heldColors[COLOR_INDEX[c]] > heldColors[COLOR_INDEX[color]]) color = c;
-    }
-    return marginalOf({ id: -1, family: f, color });
-  });
+  // Worth of each kind to the viewer, and to the next player as far as the
+  // viewer can see them (table + known hand) — what a discard hands over.
+  const mine = marginalTable(myCards, myOpts);
+  const theirs = next
+    ? marginalTable([...next.table, ...next.knownCards], scoringOpts(next))
+    : new Float32Array(KIND_COUNT);
+  const mineOf = (c: SspCard | null | undefined) => (c ? mine[kindIndex(c)] : 0);
+  const theirsOf = (c: SspCard | null | undefined) => (c ? theirs[kindIndex(c)] : 0);
 
   // ---- global ----
   let o = w.seg('subPhase', SUBPHASE_COUNT);
@@ -158,11 +216,17 @@ function writeFeatures(obs: SspObservation, w: Writer): void {
   w.scalar('deckLow', obs.deckSize < 2 ? 1 : 0);
   w.scalar('targetScore', obs.targetScore / 100);
   w.events('currentEvent', obs.currentEvent ? [obs.currentEvent] : []);
+  // The announced LAST CHANCE score is the number everyone else must beat.
+  const lcScore = obs.lastChanceScore;
+  w.scalar('lastChance.score', lcScore !== null ? lcScore / SCORE_NORM : 0);
+  w.scalar('lastChance.myMargin', lcScore !== null && obs.lastChanceOffset !== 0
+    ? clamp((myScore - lcScore) / SCORE_NORM, -2, 2) : 0);
 
   // ---- me ----
-  w.families('me.hand', obs.hand);
-  w.colors('me.handColors', obs.hand);
-  w.families('me.table', me.table);
+  w.kinds('me.hand', obs.hand);
+  w.families('me.handFamilies', obs.hand);
+  w.kinds('me.table', me.table);
+  w.families('me.tableFamilies', me.table);
   w.colors('me.allColors', myCards);
   w.scalar('me.handSize', obs.hand.length / 15);
   w.scalar('me.trios', me.trios.length / 3);
@@ -190,9 +254,8 @@ function writeFeatures(obs: SspObservation, w: Writer): void {
     x[o + t] = pairs / 3;
     x[o2 + t] = hasStarfish && pairs > 0 ? 1 : 0;
   });
-  w.families('me.exposedHand', me.knownCards);
-  o = w.seg('me.marginal', FAMILY_COUNT);
-  familyMarginal.forEach((v, i) => { x[o + i] = v; });
+  w.kinds('me.exposedHand', me.knownCards);
+  w.values('me.marginal', mine);
 
   // ---- opponents, by seat offset ----
   for (let k = 1; k <= MAX_OPPONENTS; k++) {
@@ -201,65 +264,70 @@ function writeFeatures(obs: SspObservation, w: Writer): void {
     w.scalar(`${tag}.present`, p ? 1 : 0);
     w.scalar(`${tag}.isActive`, p && obs.activeOffset === k ? 1 : 0);
     w.scalar(`${tag}.handSize`, p ? p.handSize / 15 : 0);
-    w.families(`${tag}.table`, p?.table ?? []);
-    w.colors(`${tag}.tableColors`, p?.table ?? []);
     w.scalar(`${tag}.trios`, p ? p.trios.length / 3 : 0);
-    w.families(`${tag}.knownHand`, p?.knownCards ?? []);
-    w.colors(`${tag}.knownColors`, p?.knownCards ?? []);
     // Score of what we can see of them (table + known cards) — a floor on
     // their real score.
     w.scalar(`${tag}.knownScore`, p ? scoreOf([...p.table, ...p.knownCards], scoringOpts(p)) / SCORE_NORM : 0);
     w.scalar(`${tag}.matchScore`, p ? p.matchScore / obs.targetScore : 0);
     w.scalar(`${tag}.matchLead`, p ? (p.matchScore - me.matchScore) / obs.targetScore : 0);
-    w.events(`${tag}.heldEvents`, p?.heldEvents ?? []);
+    w.scalar(`${tag}.stopThreshold`, p ? p.rules.stopThreshold / 10 : 0);
     w.scalar(`${tag}.locked`, p?.locked ? 1 : 0);
     w.scalar(`${tag}.calledLastChance`, p && obs.lastChanceOffset === k ? 1 : 0);
+    w.scalar(`${tag}.finalTurnPending`, p?.finalTurnPending ? 1 : 0);
     w.scalar(`${tag}.isRoundStarter`, p && obs.roundStarterOffset === k ? 1 : 0);
+    w.scalar(`${tag}.hiddenDigs`, p ? Math.min(p.hiddenDigs, 3) / 3 : 0);
+    w.events(`${tag}.heldEvents`, p?.heldEvents ?? []);
+    w.kinds(`${tag}.table`, p?.table ?? []);
+    w.families(`${tag}.tableFamilies`, p?.table ?? []);
+    w.kinds(`${tag}.knownHand`, p?.knownCards ?? []);
+    // This round's history: what they went for, and what they turned down.
+    w.kinds(`${tag}.pulls`, p?.pulls ?? []);
+    w.kinds(`${tag}.discards`, p?.discards ?? []);
+    w.kinds(`${tag}.passedTops`, p?.passedTops ?? []);
   }
+  w.values('next.marginal', theirs);
 
   // ---- discard piles, as remembered ----
   for (const pi of [0, 1] as const) {
     const pile = obs.piles[pi];
     const stillThere = buriedStillThere(pile);
+    const buried = pile.buried; // bottom first: the last one is exposed next
+    const second = buried[buried.length - 1];
+    const third = buried[buried.length - 2];
     w.scalar(`pile${pi}.size`, pile.size / 30);
-    w.families(`pile${pi}.top`, pile.top ? [pile.top] : []);
-    o = w.seg(`pile${pi}.topColor`, COLOR_COUNT);
-    if (pile.top) x[o + COLOR_INDEX[pile.top.color]] = 1;
-    w.families(`pile${pi}.buried`, pile.buried);
     w.scalar(`pile${pi}.unknownRemovals`, Math.min(pile.unknownRemovals, 3) / 3);
     w.scalar(`pile${pi}.lookingAt`, obs.crabLookPile === pi ? 1 : 0);
-    const topV = pile.top ? marginalOf(pile.top) : 0;
-    w.scalar(`pile${pi}.topMarginal`, topV);
+    w.kind(`pile${pi}.top`, pile.top);
+    w.kind(`pile${pi}.second`, second, stillThere);
+    w.kind(`pile${pi}.third`, third, stillThere);
+    w.kinds(`pile${pi}.rest`, buried.slice(0, Math.max(0, buried.length - 2)), stillThere);
+    w.scalar(`pile${pi}.topMarginal`, mineOf(pile.top));
+    w.scalar(`pile${pi}.topNextMarginal`, theirsOf(pile.top));
+    w.scalar(`pile${pi}.secondMarginal`, stillThere * mineOf(second));
+    w.scalar(`pile${pi}.secondNextMarginal`, stillThere * theirsOf(second));
     // Best crab target we remember, discounted for unseen digs.
-    let best = pile.top ? topV : 0;
-    for (const c of pile.buried) best = Math.max(best, stillThere * marginalOf(c));
+    let best = mineOf(pile.top);
+    for (const c of buried) best = Math.max(best, stillThere * mineOf(c));
     w.scalar(`pile${pi}.bestMarginal`, best);
   }
 
   // ---- own pending draw (ordered: keepIndex refers to it) ----
   for (const di of [0, 1] as const) {
     const c = obs.pendingDraw[di];
-    o = w.seg(`draw${di}.family`, FAMILY_COUNT);
-    if (c) x[o + FAMILY_INDEX[c.family]] = 1;
-    o = w.seg(`draw${di}.color`, COLOR_COUNT);
-    if (c) x[o + COLOR_INDEX[c.color]] = 1;
-    w.scalar(`draw${di}.marginal`, c ? marginalOf(c) : 0);
+    w.kind(`draw${di}.card`, c);
+    w.scalar(`draw${di}.marginal`, mineOf(c));
+    w.scalar(`draw${di}.nextMarginal`, theirsOf(c));
   }
 
   // ---- own lobster reveal ----
-  o = w.seg('lobster.families', FAMILY_COUNT);
-  for (const c of obs.lobsterReveal) x[o + FAMILY_INDEX[c.family]] += 1 / 5;
+  w.kinds('lobster.cards', obs.lobsterReveal);
   w.scalar('lobster.size', obs.lobsterReveal.length / 5);
 
   // ---- unseen pool: the deck plus whatever of opponents' hands we can't place ----
   const totals = deckTotals(obs.extraSalt);
-  const seenF = new Array<number>(FAMILY_COUNT).fill(0);
-  const seenC = new Array<number>(COLOR_COUNT).fill(0);
+  const seen = new Array<number>(KIND_COUNT).fill(0);
   const see = (cards: SspCard[], weight = 1) => {
-    for (const c of cards) {
-      seenF[FAMILY_INDEX[c.family]] += weight;
-      seenC[COLOR_INDEX[c.color]] += weight;
-    }
+    for (const c of cards) seen[kindIndex(c)] += weight;
   };
   see(obs.hand);
   see(obs.pendingDraw);
@@ -270,16 +338,22 @@ function writeFeatures(obs: SspObservation, w: Writer): void {
   }
   for (const p of obs.players) see(p.table);
   for (let k = 1; k < obs.players.length; k++) see(obs.players[k].knownCards);
-  const unseenF = totals.family.map((t, i) => Math.max(0, t - seenF[i]));
-  const unseenTotal = unseenF.reduce((a, b) => a + b, 0);
-  o = w.seg('unseen.families', FAMILY_COUNT);
-  unseenF.forEach((u, i) => { x[o + i] = totals.family[i] ? u / totals.family[i] : 0; });
-  o = w.seg('unseen.colors', COLOR_COUNT);
-  totals.color.forEach((t, i) => { x[o + i] = Math.max(0, t - seenC[i]) / 10; });
-  w.scalar('unseen.total', unseenTotal / DECK_NORM);
+  const unseen = totals.kind.map((t, i) => Math.max(0, t - seen[i]));
+  const unseenF = new Array<number>(FAMILY_COUNT).fill(0);
+  const unseenC = new Array<number>(COLOR_COUNT).fill(0);
+  let unseenTotal = 0;
   let expected = 0;
-  if (unseenTotal > 0) unseenF.forEach((u, i) => { expected += (u / unseenTotal) * familyMarginal[i]; });
-  w.scalar('unseen.expectedMarginal', expected);
+  KINDS.forEach((kd, i) => {
+    unseenF[FAMILY_INDEX[kd.family]] += unseen[i];
+    unseenC[COLOR_INDEX[kd.color]] += unseen[i];
+    unseenTotal += unseen[i];
+    expected += unseen[i] * mine[i];
+  });
+  w.values('unseen.kinds', unseen.map((u, i) => (totals.kind[i] ? u / totals.kind[i] : 0)));
+  w.values('unseen.families', unseenF.map((u, i) => (totals.family[i] ? u / totals.family[i] : 0)));
+  w.values('unseen.colors', unseenC.map((u) => u / 10));
+  w.scalar('unseen.total', unseenTotal / DECK_NORM);
+  w.scalar('unseen.expectedMarginal', unseenTotal > 0 ? expected / unseenTotal : 0);
 }
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -289,18 +363,18 @@ function clamp(v: number, lo: number, hi: number): number {
 const PLACEHOLDER_OBS: SspObservation = {
   viewerId: 'a', targetScore: 40, extraSalt: false, extraPepper: false, round: 1,
   phase: 'playing', subPhase: 'awaitingAction', activeOffset: 0, roundStarterOffset: 0,
-  lastChanceOffset: null, deckSize: 0, hand: [], pendingDraw: [],
+  lastChanceOffset: null, lastChanceScore: null, deckSize: 0, hand: [], pendingDraw: [],
   piles: [{ top: null, size: 0, buried: [], unknownRemovals: 0 }, { top: null, size: 0, buried: [], unknownRemovals: 0 }],
   crabLookPile: null, lobsterReveal: [], currentEvent: null, canStop: false, canLastChance: false,
   players: ['a', 'b'].map((id) => ({
     id, handSize: 0, table: [], trios: [], heldEvents: [], matchScore: 0, knownCards: [],
     rules: { shellPerCard: false, octopusPerCard: false, mermaidsScoreZero: false, stopThreshold: 7 },
-    locked: false,
+    locked: false, pulls: [], discards: [], passedTops: [], hiddenDigs: 0, finalTurnPending: false,
   })),
 };
 
 const LAYOUT: FeatureSegment[] = (() => {
-  const w = new Writer(new Float32Array(4096), true);
+  const w = new Writer(new Float32Array(8192), true);
   writeFeatures(PLACEHOLDER_OBS, w);
   return w.segments!;
 })();
@@ -321,3 +395,11 @@ export function encodeObservation(obs: SspObservation, out?: Float32Array): Floa
   if (w.pos !== OBS_DIM) throw new Error(`encode: wrote ${w.pos} features, layout has ${OBS_DIM}`);
   return x;
 }
+
+/** The current encoder, in the shape policy.ts dispatches on. */
+export const SSP_ENCODER: SspEncoder = {
+  version: ENCODER_VERSION, dim: OBS_DIM, layout: LAYOUT, encode: encodeObservation,
+};
+
+/** Exposed for tests. */
+export const _internals = { marginalTable, scoreOf };

@@ -18,10 +18,10 @@ import type { SspCard, SspCardFamily, SspState } from './types';
 import { FAMILY_ORDER } from './cards';
 import { applyAction } from './reducer';
 import { createSspState } from './setup';
-import { roundLog } from './knowledge';
+import { landingSeqs, roundLog } from './knowledge';
 import { actWithPolicy } from './nn/agent';
-import { ACTION_SPACE_VERSION, NUM_SLOTS } from './nn/actions';
-import { ENCODER_VERSION, OBS_DIM } from './nn/encode';
+import { SSP_ACTIONS, type SspActionSpace } from './nn/actions';
+import { SSP_ENCODER, type SspEncoder } from './nn/encode';
 import { SSP_POLICY_GAME, type SspPolicyFile } from './nn/policy';
 
 export interface SampleOptions {
@@ -81,7 +81,8 @@ export interface ScrambleOptions {
 /** Copy of `state` with everything `viewerId` must not know rewritten, and
  *  the number of hidden facts that actually changed (to catch a vacuous test):
  *   - which buried card each unseen opponent crab dig took (swapped with
- *     another buried card of the same pile, log entry rewritten to match);
+ *     another card it could have been — still under the top, landed earlier —
+ *     keeping the pile in landing order; log entry rewritten to match);
  *   - opponents' hand contents (swapped with deck cards);
  *   - an opponent's pending draw / lobster reveal;
  *   - deck order and the RNG state;
@@ -101,6 +102,8 @@ export function scrambleHidden(
       if (e.kind === 'crabPick' && e.playerId === viewerId && !e.auto) lastLook[e.pile] = i;
     });
     if (opts.lookingAt != null) lastLook[opts.lookingAt] = Infinity;
+    const landed = landingSeqs(entries);
+    const at = (c: SspCard) => landed.get(c.id) ?? -1;
     entries.forEach((e, i) => {
       if (e.kind !== 'crabPick' || e.playerId === viewerId || e.fromTop || !e.card) return;
       if (i < lastLook[e.pile]) return;
@@ -108,9 +111,18 @@ export function scrambleHidden(
       const hi = hand.findIndex((c) => c.id === e.card!.id);
       const pile = s.discards[e.pile];
       if (hi === -1 || pile.length < 2) return;
-      const j = rngInt(rng, pile.length - 1); // buried slots only — the top is in plain sight
-      const swapIn = pile[j];
-      pile[j] = hand[hi];
+      const dug = hand[hi];
+      // Landed after the visible top: the viewer can tell it's the one gone.
+      if (at(dug) > at(pile[pile.length - 1])) return;
+      // Anything under the top that landed before the dug card was in the
+      // pile, and not on top, when the dig happened.
+      const options = pile.slice(0, -1).filter((c) => at(c) < at(dug));
+      if (!options.length) return;
+      const swapIn = options[rngInt(rng, options.length)];
+      pile.splice(pile.indexOf(swapIn), 1);
+      let j = 0;
+      while (at(pile[j]) < at(dug)) j++;
+      pile.splice(j, 0, dug);
       hand[hi] = swapIn;
       if (swapIn.family !== e.card.family) changes++;
       e.card = { ...swapIn };
@@ -149,15 +161,19 @@ export function scrambleHidden(
   return { s, changes };
 }
 
-/** A randomly initialised OBS_DIM → 32 → NUM_SLOTS policy. */
-export function randomPolicyFile(seed: number): SspPolicyFile {
+/** A randomly initialised encoder.dim → 32 → numSlots policy (current encoder / action space by default). */
+export function randomPolicyFile(
+  seed: number, encoder: SspEncoder = SSP_ENCODER, actions: SspActionSpace = SSP_ACTIONS,
+): SspPolicyFile {
   const rng = createRng(seed);
+  const OBS_DIM = encoder.dim;
+  const NUM_SLOTS = actions.numSlots;
   const rand = (n: number, scale: number) => Array.from({ length: n }, () => (rngNext(rng) * 2 - 1) * scale);
   return {
     format: MLP_FORMAT,
     game: SSP_POLICY_GAME,
-    encoderVersion: ENCODER_VERSION,
-    actionSpaceVersion: ACTION_SPACE_VERSION,
+    encoderVersion: encoder.version,
+    actionSpaceVersion: actions.version,
     inputDim: OBS_DIM,
     outputDim: NUM_SLOTS,
     layers: [

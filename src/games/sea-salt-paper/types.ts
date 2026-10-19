@@ -173,9 +173,12 @@ export interface SspEventDeckState {
  *  `fromTop` on crabPick: the card was the pile's visible top, so everyone saw
  *  it go; a card dug from lower in the pile is seen only by the picker.
  *  `auto` on crabPick: taken by the Hermit Crab event without looking through
- *  the pile. */
+ *  the pile.
+ *  On drawDeck, `card` is the discarded card (it lands face-up) and `passed`
+ *  the pile tops the player passed over by drawing from the deck — omitted on
+ *  a jellyfish-locked turn, where the deck was forced. `keptFamily` is private. */
 export type SspLogEntry =
-  | { seq: number; round: number; kind: 'drawDeck';        playerId: PlayerId; keptFamily: SspCardFamily; discardedFamily: SspCardFamily; toPile: 0 | 1 }
+  | { seq: number; round: number; kind: 'drawDeck';        playerId: PlayerId; keptFamily: SspCardFamily; discardedFamily: SspCardFamily; toPile: 0 | 1; card?: SspCard; passed?: SspCard[] }
   | { seq: number; round: number; kind: 'drawDiscard';     playerId: PlayerId; pile: 0 | 1; family: SspCardFamily; card?: SspCard }
   | { seq: number; round: number; kind: 'playPair';        playerId: PlayerId; families: [SspCardFamily, SspCardFamily] }
   | { seq: number; round: number; kind: 'playTrio';        playerId: PlayerId; families: [SspCardFamily, SspCardFamily, SspCardFamily] }

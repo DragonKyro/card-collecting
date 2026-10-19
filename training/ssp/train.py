@@ -11,10 +11,17 @@ exits after the current update (the file is removed on the next start).
 
 Each update:
   1. Collect `--rollout` decisions from every env — `--workers` node processes
-     × `--envs-per-worker` matches. Self-play workers train on both seats; the
-     rest play a past checkpoint drawn from the pool (random play until the
-     first checkpoint exists).
-  2. PPO on every finished transition. Training starts from scratch.
+     × `--envs-per-worker` matches. Workers split three ways: self-play
+     (`--self-play`, both seats train), benchmark (`--bench-play`, the learner
+     faces the frozen `--bench-opponents`), and the rest face a past
+     checkpoint drawn from the pool (random play until one exists).
+  2. PPO on every finished transition (see "The update" below). Training
+     starts from scratch, or — with `--teacher` and `--imitate-updates N` —
+     from a copy of the teacher: the first N updates are supervised, the
+     network learns the teacher's move distribution on the states it reaches
+     (DAgger: it plays, mixing in the teacher's moves early on, and the
+     teacher labels every state). The teacher may be an older encoder / action
+     space; its moves are translated (teacher.ts).
   3. Every `--save-every`: a resumable checkpoint (ckpt/update_N.pt) and an
      exported policy (policies/update_N.json) the TypeScript side can play —
      `evaluate.py` and the opponent pool use these.
@@ -25,6 +32,18 @@ Each update:
      → tensorboard `eval/*` and evals.jsonl. Once a checkpoint's evals are all
      in, the log prints the latest 10 as a table and progress.md is rewritten
      (latest 10, then every checkpoint).
+
+The update. Self-play alone can stall: the policy keeps beating its own
+latest self by ways that don't transfer to a fixed benchmark. So:
+  - benchmark workers put the benchmark in the loop (train/winrate_vs_bench);
+  - advantages are normalised within each source (self / past / bench), so
+    every source pushes the policy with comparable force, with optional
+    `--source-weights` on top;
+  - the value head also sees who the opponent is (training only) — a benchmark
+    game and a self-play game have different expected results;
+  - `--kl-coef` anchors the policy to the teacher's distribution (forward KL),
+    fading to zero over `--kl-anneal` updates, so the first PPO steps can't
+    undo what the copy learned.
 
 Outputs go to training/runs/ssp/<run>/: config.json, metrics.jsonl, evals.jsonl,
 progress.md, tensorboard events, ckpt/, policies/.
@@ -82,7 +101,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     game.add_argument("--envs-per-worker", type=int, default=32)
     game.add_argument("--rollout", type=int, default=64, help="decisions per env per update")
     game.add_argument("--self-play", type=float, default=0.5,
-                      help="share of workers in self-play; the rest face past checkpoints")
+                      help="share of workers in self-play")
+    game.add_argument("--bench-play", type=float, default=0.0,
+                      help="share of workers facing the benchmark opponents; whatever is left of "
+                           "--self-play and this faces past checkpoints")
+    game.add_argument("--bench-opponents", default="hard-update10000",
+                      help="comma-separated benchmark names the bench workers face (round-robin)")
+    game.add_argument("--bench-sampled", type=float, default=0.5,
+                      help="share of bench workers whose benchmark samples its moves (the rest play it "
+                           "greedily, as the evals do); sampling keeps the learner from memorising one line")
     game.add_argument("--pool", type=int, default=20, help="newest checkpoints past opponents are drawn from")
     game.add_argument("--pool-refresh", type=int, default=10, help="updates between past-opponent re-draws")
     game.add_argument("--round-reward", type=float, default=0.02,
@@ -101,6 +128,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     learn.add_argument("--ent-coef", type=float, default=0.01)
     learn.add_argument("--vf-coef", type=float, default=0.5)
     learn.add_argument("--max-grad-norm", type=float, default=0.5)
+    learn.add_argument("--source-weights", default="self=1,past=1,bench=1",
+                       help="policy-loss weight per opponent source")
+    learn.add_argument("--no-per-source-norm", action="store_true",
+                       help="normalise advantages over the whole update instead of within each source")
+    learn.add_argument("--no-source-critic", action="store_true",
+                       help="don't tell the value head who the opponent is")
+
+    teach = p.add_argument_group("teacher: copy it first, then stay close while improving")
+    teach.add_argument("--teacher", default=None,
+                       help="policy to copy and anchor to: bench:<name>, a policy .json, a run dir or RUN@N")
+    teach.add_argument("--imitate-updates", type=int, default=0,
+                       help="supervised updates at the start (learn the teacher's moves on visited states)")
+    teach.add_argument("--imitate-lr", type=float, default=1e-3, help="learning rate while imitating")
+    teach.add_argument("--imitate-mix", default="0.5,0.1",
+                       help="share of moves played by the teacher itself, at the first and last imitation update")
+    teach.add_argument("--kl-coef", type=float, default=0.0,
+                       help="PPO-phase weight on KL(teacher || policy)")
+    teach.add_argument("--kl-anneal", type=int, default=1500,
+                       help="updates (after imitation) over which --kl-coef fades to zero (0 = never)")
 
     save = p.add_argument_group("checkpoints / eval")
     save.add_argument("--save-every", type=int, default=100)
@@ -119,17 +165,48 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 # ---------------------------------------------------------------- envs
 
+SOURCES = ("self", "past", "bench")  # who the learner faces; also the value head's extra input
+
+
 @dataclass
 class Worker:
-    role: str  # 'self' | 'past'
+    role: str  # one of SOURCES
     env: SspEnv
     opponent: str
     batch: Batch | None = None
 
 
-def worker_roles(n: int, self_share: float) -> list[str]:
+def worker_roles(n: int, self_share: float, bench_share: float = 0.0) -> list[str]:
     n_self = min(n, max(0, round(n * self_share)))
-    return ["self"] * n_self + ["past"] * (n - n_self)
+    n_bench = min(n - n_self, max(0, round(n * bench_share)))
+    return ["self"] * n_self + ["bench"] * n_bench + ["past"] * (n - n_self - n_bench)
+
+
+def parse_source_weights(text: str) -> np.ndarray:
+    weights = dict.fromkeys(SOURCES, 1.0)
+    for part in filter(None, (t.strip() for t in text.split(","))):
+        name, _, value = part.partition("=")
+        if name not in weights:
+            raise SystemExit(f"--source-weights: unknown source {name!r} (have {', '.join(SOURCES)})")
+        weights[name] = float(value)
+    return np.array([weights[k] for k in SOURCES], np.float32)
+
+
+def normalise_advantages(adv: torch.Tensor, src: torch.Tensor, per_source: bool) -> torch.Tensor:
+    """Zero-mean, unit-variance advantages — within each source when `per_source`,
+    so a source with small returns (a strong benchmark) isn't drowned out by
+    one with large returns. A source with a single sample is only centred."""
+    if not per_source:
+        return (adv - adv.mean()) / (adv.std() + 1e-8)
+    out = torch.zeros_like(adv)
+    for k in range(len(SOURCES)):
+        m = src == k
+        n = int(m.sum())
+        if n == 0:
+            continue
+        a = adv[m]
+        out[m] = (a - a.mean()) / (a.std() + 1e-8) if n > 1 else a - a.mean()
+    return out
 
 
 def build_typescript() -> None:
@@ -150,7 +227,12 @@ class Rollout:
     seat's newest transition is still collecting reward when the rollout ends
     — it is carried into the next update instead of being trained on."""
 
-    def __init__(self, capacity: int, obs_dim: int, num_slots: int):
+    def __init__(self, capacity: int, obs_dim: int, num_slots: int, with_teacher: bool = False):
+        self.fields = list(self.FIELDS)
+        if with_teacher:
+            self.fields.append("teacher")
+            self.teacher = np.zeros((capacity, num_slots), np.float32)
+        self.src = np.zeros(capacity, np.int8)
         self.obs = np.zeros((capacity, obs_dim), np.float32)
         self.mask = np.zeros((capacity, num_slots), bool)
         self.action = np.zeros(capacity, np.int64)
@@ -161,7 +243,7 @@ class Rollout:
         self.next = np.full(capacity, -1, np.int64)
         self.n = 0
 
-    FIELDS = ("obs", "mask", "action", "logp", "value", "reward", "done")
+    FIELDS = ("obs", "mask", "action", "logp", "value", "reward", "done", "src")
 
     def clear(self) -> None:
         self.reward[: self.n] = 0
@@ -178,7 +260,7 @@ class Rollout:
         return at
 
     def take(self, idx: np.ndarray) -> dict:
-        return {name: getattr(self, name)[idx].copy() for name in self.FIELDS}
+        return {name: getattr(self, name)[idx].copy() for name in self.fields}
 
 
 # ---------------------------------------------------------------- background eval
@@ -278,28 +360,53 @@ class Trainer:
             self.update, self.decisions, self.episodes = ck["update"], ck["decisions"], ck["episodes"]
             print(f"resumed {name} at update {self.update} ({self.decisions:,} decisions)")
         else:
-            self.net = PolicyValueNet(self.obs_dim, self.num_slots, a.hidden, a.layers).to(self.device)
+            self.net = PolicyValueNet(self.obs_dim, self.num_slots, a.hidden, a.layers,
+                                      aux_dim=0 if a.no_source_critic else len(SOURCES)).to(self.device)
             self.opt = torch.optim.Adam(self.net.parameters(), lr=a.lr, eps=1e-5)
 
         with open(os.path.join(self.run_dir, "config.json"), "w", encoding="utf-8") as f:
             json.dump({**vars(a), **self.versions, "obsDim": self.obs_dim, "numSlots": self.num_slots,
-                       "arch": {"hidden": self.net.hidden, "layers": self.net.layers}}, f, indent=2)
+                       "arch": {"hidden": self.net.hidden, "layers": self.net.layers, "aux_dim": self.net.aux_dim}},
+                      f, indent=2)
 
-        roles = worker_roles(a.workers, a.self_play)
+        self.teacher_path = os.path.abspath(ev.resolve(a.teacher)) if a.teacher else None
+        if (a.imitate_updates > 0 or a.kl_coef > 0) and not self.teacher_path:
+            raise SystemExit("--imitate-updates and --kl-coef need a --teacher")
+        self.imitate_mix = tuple(float(x) for x in a.imitate_mix.split(","))
+        self.source_weights = torch.from_numpy(parse_source_weights(a.source_weights)).to(self.device)
+        self.teacher_active = self.teacher_needed(self.update)
+
+        roles = worker_roles(a.workers, a.self_play, a.bench_play)
+        bench_specs = self.bench_specs(roles.count("bench"))
         for w, role in enumerate(roles):
             env = SspEnv()
             seed = a.seed * 10_007 + w * 7_919 + self.update * 104_729
-            opponent = "self" if role == "self" else "random"  # past workers get a checkpoint once one exists
+            if role == "self":
+                opponent = "self"
+            elif role == "bench":
+                opponent = bench_specs.pop(0)
+            else:
+                opponent = "random"  # past workers get a checkpoint once one exists
             worker = Worker(role, env, opponent)
             worker.batch = env.reset(num_envs=a.envs_per_worker, seed=seed, extra_salt=not a.base_game,
-                                     target_score=a.target, opponent=opponent, round_reward=a.round_reward)
+                                     target_score=a.target, opponent=opponent, round_reward=a.round_reward,
+                                     teacher=self.teacher_path if self.teacher_active else None)
             self.workers.append(worker)
         self.n_envs = a.workers * a.envs_per_worker
         self.slices = [slice(i * a.envs_per_worker, (i + 1) * a.envs_per_worker) for i in range(a.workers)]
+        self.src_ids = np.concatenate([np.full(a.envs_per_worker, SOURCES.index(wk.role), np.int8)
+                                       for wk in self.workers])
         print(f"run {self.run_dir}\n  {a.workers} workers ({', '.join(f'{roles.count(r)} {r}' for r in dict.fromkeys(roles))})"
               f" x {a.envs_per_worker} envs | obs {self.obs_dim} | slots {self.num_slots} | device {self.device}")
+        for wk in self.workers:
+            if wk.role == "bench":
+                print(f"  bench worker plays {wk.opponent}")
+        if self.teacher_path:
+            print(f"  teacher {self.teacher_path}: copy for {a.imitate_updates} updates"
+                  f"{f', then KL anchor {a.kl_coef} fading over {a.kl_anneal}' if a.kl_coef > 0 else ''}")
 
-        self.buf = Rollout(self.n_envs * (a.rollout + 2), self.obs_dim, self.num_slots)
+        self.buf = Rollout(self.n_envs * (a.rollout + 2), self.obs_dim, self.num_slots,
+                           with_teacher=self.teacher_path is not None)
         self.last = np.full((self.n_envs, 2), -1, np.int64)
         self.carry: dict | None = None
         self.carry_streams: np.ndarray | None = None
@@ -329,6 +436,47 @@ class Trainer:
                 self.eval_expected[u] = list(res)
                 self.progress_shown.add(u)
 
+    # ------------------------------------------------------------ schedules
+
+    def imitating(self, update: int | None = None) -> bool:
+        u = self.update if update is None else update
+        return self.teacher_path is not None and u < self.args.imitate_updates
+
+    def kl_coef(self, update: int | None = None) -> float:
+        """Weight on KL(teacher || policy) for the PPO update numbered `update`."""
+        a, u = self.args, self.update if update is None else update
+        if self.imitating(u) or a.kl_coef <= 0:
+            return 0.0
+        if a.kl_anneal <= 0:
+            return a.kl_coef
+        return a.kl_coef * max(0.0, 1.0 - (u - a.imitate_updates) / a.kl_anneal)
+
+    def teacher_needed(self, update: int) -> bool:
+        return self.teacher_path is not None and (self.imitating(update) or self.kl_coef(update) > 0)
+
+    def teacher_share(self) -> float:
+        """Share of moves the teacher plays itself during imitation (DAgger mixing)."""
+        a = self.args
+        if not self.imitating():
+            return 0.0
+        start, end = self.imitate_mix
+        return start + (end - start) * self.update / max(1, a.imitate_updates - 1)
+
+    def bench_specs(self, n: int) -> list[str]:
+        """Opponent specs for the bench workers: the benchmarks in turn, the first
+        `--bench-sampled` share of workers sampling their moves, the rest greedy."""
+        a = self.args
+        if n == 0:
+            return []
+        names = [x.strip() for x in a.bench_opponents.split(",") if x.strip()]
+        available = ev.list_benchmarks()
+        missing = [x for x in names if x not in available]
+        if missing:
+            raise SystemExit(f"unknown --bench-opponents {missing}; have {sorted(available)}")
+        n_sampled = round(n * a.bench_sampled)
+        return [("nn-sample:" if i < n_sampled else "nn:") + os.path.abspath(available[names[i % len(names)]])
+                for i in range(n)]
+
     # ------------------------------------------------------------ collection
 
     def collect(self) -> np.ndarray:
@@ -341,21 +489,34 @@ class Trainer:
             rows = buf.add(**self.carry)
             last[self.carry_streams[:, 0], self.carry_streams[:, 1]] = rows
         envs = np.arange(self.n_envs)
+        share = self.teacher_share()
+        src_aux = self.source_onehot(torch.from_numpy(self.src_ids.astype(np.int64)).to(self.device))
 
         for _ in range(a.rollout):
             batches = [w.batch for w in self.workers]
             obs = np.concatenate([b.obs for b in batches])
             mask = np.concatenate([b.mask for b in batches])
             seat = np.concatenate([b.seat for b in batches]).astype(np.int64)
+            teach = (np.concatenate([b.teacher for b in batches])
+                     if self.teacher_active and batches[0].teacher is not None else None)
             with torch.no_grad():
-                logits, value = self.net(torch.from_numpy(obs).to(self.device))
+                logits, value = self.net(torch.from_numpy(obs).to(self.device), src_aux)
                 logits = masked_logits(logits, torch.from_numpy(mask).to(self.device))
                 dist = torch.distributions.Categorical(logits=logits)
                 action = dist.sample()
+                if share > 0 and teach is not None:
+                    # Imitation: some moves are the teacher's own (its favourite), so the
+                    # states visited include where the teacher itself would go.
+                    played = np.random.random(len(obs)) < share
+                    action = torch.where(torch.from_numpy(played).to(self.device),
+                                         torch.from_numpy(teach.argmax(1)).to(self.device), action)
                 logp = dist.log_prob(action)
             action_np = action.cpu().numpy()
+            extra = {}
+            if "teacher" in buf.fields:
+                extra["teacher"] = teach if teach is not None else np.zeros((len(obs), self.num_slots), np.float32)
             rows = buf.add(obs=obs, mask=mask, action=action_np, logp=logp.cpu().numpy(),
-                           value=value.cpu().numpy())
+                           value=value.cpu().numpy(), src=self.src_ids, **extra)
             prev = last[envs, seat]
             linked = prev >= 0
             buf.next[prev[linked]] = rows[linked]
@@ -375,7 +536,7 @@ class Trainer:
             for w in self.workers:
                 for ep in w.batch.episodes:
                     self.episodes += 1
-                    if w.role != "self" and ep["winnerSeat"] is not None:
+                    if w.role != "self" and ep["winnerSeat"] is not None:  # self-play is 50% by construction
                         self.win_window[w.role].append(float(ep["winnerSeat"] in ep["learnerSeats"]))
             self.decisions += self.n_envs
 
@@ -404,8 +565,15 @@ class Trainer:
 
     # ------------------------------------------------------------ learning
 
+    def source_onehot(self, src: torch.Tensor) -> torch.Tensor | None:
+        """The value head's extra input: which kind of opponent each row was played against."""
+        return F.one_hot(src.long(), len(SOURCES)).float() if self.net.aux_dim else None
+
     def learn(self, pending: np.ndarray, adv: np.ndarray) -> dict:
         a, buf, dev = self.args, self.buf, self.device
+        imitating = self.imitating()
+        kl_coef = self.kl_coef()
+        use_teacher = (imitating or kl_coef > 0) and "teacher" in buf.fields and self.teacher_active
         idx = np.flatnonzero(~pending)
         obs = torch.from_numpy(buf.obs[idx]).to(dev)
         mask = torch.from_numpy(buf.mask[idx]).to(dev)
@@ -413,26 +581,46 @@ class Trainer:
         old_logp = torch.from_numpy(buf.logp[idx]).to(dev)
         advantage = torch.from_numpy(adv[idx]).to(dev)
         returns = advantage + torch.from_numpy(buf.value[idx]).to(dev)
-        # Normalised once over the whole update (a tiny last minibatch has no usable std).
-        norm_adv = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
+        src = torch.from_numpy(buf.src[idx]).long().to(dev)
+        aux = self.source_onehot(src)
+        teacher = torch.from_numpy(buf.teacher[idx]).to(dev) if use_teacher else None
+        # Normalised once over the whole update (a tiny last minibatch has no usable std),
+        # within each opponent source so none of them is drowned out.
+        norm_adv = normalise_advantages(advantage, src, per_source=not a.no_per_source_norm)
+        weight = self.source_weights[src]
         n = len(idx)
         stats = collections.defaultdict(list)
         for _ in range(a.epochs):
             perm = torch.randperm(n, device=dev)
             for start in range(0, n, a.minibatch):
                 b = perm[start:start + a.minibatch]
-                logits, value = self.net(obs[b])
+                logits, value = self.net(obs[b], aux[b] if aux is not None else None)
                 logp_all = F.log_softmax(masked_logits(logits, mask[b]), dim=-1)
                 entropy = -(logp_all.exp() * logp_all).sum(-1).mean()
-                new_logp = logp_all.gather(1, action[b, None]).squeeze(1)
-                log_ratio = new_logp - old_logp[b]
-                ratio = log_ratio.exp()
-                adv_b = norm_adv[b]
-                pi_loss = -torch.min(ratio * adv_b, ratio.clamp(1 - a.clip, 1 + a.clip) * adv_b).mean()
-                stats["approx_kl"].append(((ratio - 1) - log_ratio).mean().item())
-                stats["clipfrac"].append(((ratio - 1).abs() > a.clip).float().mean().item())
                 v_loss = 0.5 * (value - returns[b]).pow(2).mean()
-                loss = pi_loss + a.vf_coef * v_loss - a.ent_coef * entropy
+                if teacher is not None:
+                    t = teacher[b]
+                    # KL(teacher || policy) = cross-entropy minus the teacher's own entropy.
+                    t_entropy = -(t * torch.log(t.clamp_min(1e-12))).sum(-1)
+                    cross = -(t * logp_all).sum(-1)
+                    teacher_kl = (cross - t_entropy).mean()
+                    stats["teacher_kl"].append(teacher_kl.item())
+                    stats["agreement"].append((logp_all.argmax(-1) == t.argmax(-1)).float().mean().item())
+                if imitating:
+                    # Supervised: match the teacher's distribution; the value head still learns from play.
+                    pi_loss = teacher_kl
+                    loss = pi_loss + a.vf_coef * v_loss
+                else:
+                    new_logp = logp_all.gather(1, action[b, None]).squeeze(1)
+                    log_ratio = new_logp - old_logp[b]
+                    ratio = log_ratio.exp()
+                    adv_b = norm_adv[b]
+                    pi_loss = -(weight[b] * torch.min(ratio * adv_b, ratio.clamp(1 - a.clip, 1 + a.clip) * adv_b)).mean()
+                    stats["approx_kl"].append(((ratio - 1) - log_ratio).mean().item())
+                    stats["clipfrac"].append(((ratio - 1).abs() > a.clip).float().mean().item())
+                    loss = pi_loss + a.vf_coef * v_loss - a.ent_coef * entropy
+                    if teacher is not None and kl_coef > 0:
+                        loss = loss + kl_coef * teacher_kl
                 if not torch.isfinite(loss):
                     stats["skipped_steps"].append(1.0)
                     continue
@@ -447,6 +635,8 @@ class Trainer:
         ret_np, val_np = returns.cpu().numpy(), buf.value[idx]
         out["explained_variance"] = float(1 - np.var(ret_np - val_np) / (np.var(ret_np) + 1e-8))
         out["transitions"] = n
+        out["kl_coef"] = kl_coef
+        out["teacher_share"] = self.teacher_share()
         return out
 
     # ------------------------------------------------------------ checkpoints
@@ -505,8 +695,13 @@ class Trainer:
         with open(os.path.join(self.run_dir, "metrics.jsonl"), "a", encoding="utf-8") as f:
             f.write(json.dumps(line) + "\n")
         wins = " ".join(f"vs {r} {100 * np.mean(d):.0f}%" for r, d in self.win_window.items() if d)
-        head = f"pi {stats['policy_loss']:+.3f} kl {stats['approx_kl']:.4f} clip {stats['clipfrac']:.2f}"
-        print(f"u {u:5d} | {self.decisions / 1e6:6.2f}M dec | {rate / 1e3:5.1f}k/s | {head} "
+        if "approx_kl" in stats:
+            head = f"pi {stats['policy_loss']:+.3f} kl {stats['approx_kl']:.4f} clip {stats['clipfrac']:.2f}"
+        else:
+            head = f"COPY ce-gap {stats['teacher_kl']:.3f} (teacher plays {100 * stats['teacher_share']:.0f}%)"
+        anchor = f" tkl {stats['teacher_kl']:.3f}" if "approx_kl" in stats and "teacher_kl" in stats else ""
+        agree = f" agree {100 * stats['agreement']:.0f}%" if "agreement" in stats else ""
+        print(f"u {u:5d} | {self.decisions / 1e6:6.2f}M dec | {rate / 1e3:5.1f}k/s | {head}{anchor}{agree} "
               f"v {stats['value_loss']:.3f} ent {stats['entropy']:.2f} ev {stats['explained_variance']:+.2f} | {wins}",
               flush=True)
 
@@ -574,12 +769,26 @@ class Trainer:
                     cells.append(f"{100 * r[0]:.1f}%")
                 else:
                     cells.append(f"{100 * r[0]:.1f}% ({100 * r[1]:.1f}-{100 * r[2]:.1f})")
-            lines.append(f"| {u} | " + " | ".join(cells) + " |")
+            label = f"{u} (copy)" if u <= self.args.imitate_updates else str(u)
+            lines.append(f"| {label} | " + " | ".join(cells) + " |")
         head = cols[0][0] if cols else None
         if head and done:
             best = max(done, key=lambda u: self.eval_results[u].get(head, (-1, 0, 0))[0])
             lines.append(f"\nbest {cols[0][1]} so far: update {best} at {100 * self.eval_results[best][head][0]:.1f}%")
         return "\n".join(lines)
+
+    def setup_line(self) -> str:
+        """One line on how this run trains, for the top of progress.md."""
+        a = self.args
+        roles = collections.Counter(w.role for w in self.workers)
+        mix = ", ".join(f"{100 * roles[r] // max(1, len(self.workers))}% {r}" for r in SOURCES if roles[r])
+        parts = [f"Opponents: {mix}" + (f" ({a.bench_opponents})" if roles["bench"] else "") + "."]
+        if self.teacher_path:
+            parts.append(f"Teacher {os.path.basename(self.teacher_path)}: copied for {a.imitate_updates} updates"
+                         + (f", then KL anchor {a.kl_coef} fading over {a.kl_anneal}." if a.kl_coef > 0 else "."))
+        parts.append("Advantages normalised " + ("within each source" if not a.no_per_source_norm else "over the update")
+                     + (", value head sees the opponent source." if not a.no_source_critic else "."))
+        return " ".join(parts)
 
     def write_progress(self) -> None:
         a = self.args
@@ -590,6 +799,8 @@ class Trainer:
                f"({self.num_slots} slots), {a.hidden}x{a.layers} MLP. Seat-swapped evals, {a.eval_games} matches "
                f"each ({min(200, a.eval_games)} vs random); score = wins + half draws, 95% CI in brackets. "
                f"Updated {time.strftime('%Y-%m-%d %H:%M')}, update {self.update}.",
+               "",
+               self.setup_line(),
                "",
                "## Latest 10 checkpoints",
                "",
@@ -618,9 +829,9 @@ class Trainer:
                     if self.update % a.save_every:
                         self.save()
                     break
-                if a.anneal_lr:
-                    for g in self.opt.param_groups:
-                        g["lr"] = a.lr * (1 - self.update / a.updates)
+                lr = a.imitate_lr if self.imitating() else a.lr * (1 - self.update / a.updates if a.anneal_lr else 1)
+                for g in self.opt.param_groups:
+                    g["lr"] = lr
                 t0 = time.perf_counter()
                 pending = self.collect()
                 t1 = time.perf_counter()
@@ -629,9 +840,13 @@ class Trainer:
                 self.update += 1
                 stats["collect_seconds"], stats["learn_seconds"] = t1 - t0, t2 - t1
                 self.log_update(stats, t2 - t0)
-                if self.update % a.save_every == 0 or self.update == a.updates:
+                self.sync_teacher()
+                copied = self.update == a.imitate_updates and self.teacher_path is not None
+                if copied:
+                    print(f"  copy phase done after {self.update} updates - PPO from here", flush=True)
+                if self.update % a.save_every == 0 or self.update == a.updates or copied:
                     policy = self.save()
-                    if self.evaluator and self.update % a.eval_every == 0:
+                    if self.evaluator and (self.update % a.eval_every == 0 or copied):
                         jobs = self.eval_jobs()
                         if self.evaluator.submit(self.update, policy, jobs):
                             self.eval_expected[self.update] = [tag for tag, _, _ in jobs]
@@ -649,6 +864,15 @@ class Trainer:
             self.close(finish_evals=False)
             raise
         self.close(finish_evals=True)
+
+    def sync_teacher(self) -> None:
+        """Stop the env workers computing teacher targets once nothing uses them."""
+        needed = self.teacher_needed(self.update)
+        if self.teacher_active and not needed:
+            for w in self.workers:
+                w.env.set_teacher(None)
+            self.teacher_active = False
+            print("  teacher anchor faded out - no longer computing teacher targets", flush=True)
 
     def close(self, finish_evals: bool) -> None:
         for w in self.workers:

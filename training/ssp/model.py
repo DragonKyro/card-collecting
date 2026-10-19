@@ -4,6 +4,12 @@ to the TypeScript runtime (src/ai/mlp.ts, src/games/sea-salt-paper/nn/policy.ts)
 The network is a ReLU MLP trunk with two heads: one logit per action slot
 (policy) and a scalar match-outcome estimate (value). Only trunk + policy head
 are exported — playing needs no value estimate.
+
+The value head can take `aux_dim` extra inputs next to the trunk features
+(training only): the trainer feeds it who the opponent is (self-play, a past
+checkpoint, a benchmark), which changes the expected result but is not
+something the policy may see. With aux_dim 0 (the default) it is the plain
+value head other trainers use.
 """
 
 from __future__ import annotations
@@ -23,9 +29,10 @@ ILLEGAL_LOGIT = -1e9
 
 
 class PolicyValueNet(nn.Module):
-    def __init__(self, obs_dim: int, num_slots: int, hidden: int = 256, layers: int = 2):
+    def __init__(self, obs_dim: int, num_slots: int, hidden: int = 256, layers: int = 2, aux_dim: int = 0):
         super().__init__()
         self.obs_dim, self.num_slots, self.hidden, self.layers = obs_dim, num_slots, hidden, layers
+        self.aux_dim = aux_dim
         trunk: list[nn.Module] = []
         dims = [obs_dim] + [hidden] * layers
         for a, b in zip(dims, dims[1:]):
@@ -33,11 +40,16 @@ class PolicyValueNet(nn.Module):
         self.trunk = nn.Sequential(*trunk)
         # Small policy init → near-uniform play at the start; value starts near 0.
         self.policy = _linear(hidden, num_slots, 0.01)
-        self.value = _linear(hidden, 1, 1.0)
+        self.value = _linear(hidden + aux_dim, 1, 1.0)
 
-    def forward(self, obs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, obs: torch.Tensor, aux: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
         h = self.trunk(obs)
-        return self.policy(h), self.value(h).squeeze(-1)
+        v_in = h
+        if self.aux_dim:
+            if aux is None:
+                raise ValueError(f"this network's value head needs {self.aux_dim} aux inputs")
+            v_in = torch.cat([h, aux], dim=-1)
+        return self.policy(h), self.value(v_in).squeeze(-1)
 
 
 def _linear(n_in: int, n_out: int, gain: float) -> nn.Linear:
@@ -91,7 +103,8 @@ def save_checkpoint(path: str, net: PolicyValueNet, optimizer: torch.optim.Optim
     torch.save({
         "model": net.state_dict(),
         "optimizer": optimizer.state_dict(),
-        "arch": {"obs_dim": net.obs_dim, "num_slots": net.num_slots, "hidden": net.hidden, "layers": net.layers},
+        "arch": {"obs_dim": net.obs_dim, "num_slots": net.num_slots, "hidden": net.hidden, "layers": net.layers,
+                 "aux_dim": net.aux_dim},
         **state,
     }, tmp)
     os.replace(tmp, path)

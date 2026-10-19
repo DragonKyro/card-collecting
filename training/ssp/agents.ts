@@ -11,10 +11,9 @@ import { basename } from 'node:path';
 import type { PlayerId } from '@/core/types';
 import { createRng, rngNext } from '@/core/rng';
 import { sampleLegal } from '@/ai/masked';
-import type { Mlp } from '@/ai/mlp';
 import type { SspAction, SspState } from '@/games/sea-salt-paper/types';
 import { actWithPolicy } from '@/games/sea-salt-paper/nn/agent';
-import { greedyPolicy, loadSspPolicy, sampledPolicy, type SspPolicyFile } from '@/games/sea-salt-paper/nn/policy';
+import { greedyPolicy, loadSspPolicy, sampledPolicy, type SspPolicy, type SspPolicyFile } from '@/games/sea-salt-paper/nn/policy';
 
 export interface SspAgent {
   readonly name: string;
@@ -29,9 +28,11 @@ export const AGENT_SPECS = ['random', 'nn:<policy.json>', 'nn-sample:<policy.jso
 const NN = 'nn:';
 const NN_SAMPLE = 'nn-sample:';
 
-/** Policy files are parsed once per process (matches reuse the network). */
-const networks = new Map<string, Mlp>();
-function network(path: string): Mlp {
+/** Policy files are parsed once per process (matches reuse the network). Each
+ *  plays through the encoder and action space it names, so older benchmarks
+ *  still load. */
+const networks = new Map<string, SspPolicy>();
+export function loadPolicyAt(path: string): SspPolicy {
   let net = networks.get(path);
   if (!net) {
     net = loadSspPolicy(JSON.parse(readFileSync(path, 'utf8')) as SspPolicyFile);
@@ -44,16 +45,16 @@ export function agentFactory(spec: string): AgentFactory {
   if (spec.startsWith(NN) || spec.startsWith(NN_SAMPLE)) {
     const sample = spec.startsWith(NN_SAMPLE);
     const path = spec.slice(sample ? NN_SAMPLE.length : NN.length);
-    const net = network(path);
+    const net = loadPolicyAt(path);
     const name = agentLabel(spec);
     if (!sample) {
       const policy = greedyPolicy(net);
-      return () => ({ name, act: (state, playerId) => actWithPolicy(state, playerId, policy) });
+      return () => ({ name, act: (state, playerId) => actWithPolicy(state, playerId, policy, net.actions) });
     }
     return (seed) => {
       const rng = createRng(seed);
       const policy = sampledPolicy(net, () => rngNext(rng));
-      return { name, act: (state, playerId) => actWithPolicy(state, playerId, policy) };
+      return { name, act: (state, playerId) => actWithPolicy(state, playerId, policy, net.actions) };
     };
   }
   switch (spec) {

@@ -5,12 +5,12 @@
 //   ← {"ok":true,"obsDim":…,"numSlots":…,"slotNames":[…],"featureLayout":[…],
 //      "encoderVersion":…,"actionSpaceVersion":…}
 //   → {"cmd":"reset","options":{numEnvs, seed, extraSalt, extraPepper,
-//      targetScore, opponent, learnerSeat, roundReward, maxSteps}}
+//      targetScore, opponent, learnerSeat, roundReward, maxSteps, teacher}}
 //   → {"cmd":"step","actions":[slot, …]}          (one per env)
 //   ← {"ok":true,"n":…,"seat":[…],"obs":"<base64 f32 n×obsDim>",
 //      "mask":"<base64 u8 n×numSlots>","reward":[r00,r01,r10,…],
-//      "done":[…],"episodes":[…]}
-//   → {"cmd":"configure","options":{opponent}}  ← {"ok":true}
+//      "done":[…],"episodes":[…],"teacher":"<base64 f32 n×numSlots>"|null}
+//   → {"cmd":"configure","options":{opponent, teacher}}  ← {"ok":true}
 //   → {"cmd":"policyLogits","path":"<policy.json>","obs":"<base64 f32>"}
 //   ← {"ok":true,"logits":[…]}       (the TS forward pass — export parity checks)
 //   → {"cmd":"close"}
@@ -38,6 +38,7 @@ function batchReply(b: VecBatch) {
     reward: Array.from(b.reward),
     done: Array.from(b.done),
     episodes: b.episodes,
+    teacher: b.teacher ? b64(b.teacher) : null,
   };
 }
 
@@ -76,7 +77,7 @@ function handle(msg: Request): object {
       return { ok: true };
     case 'policyLogits': {
       if (!msg.path || !msg.obs) throw new Error('policyLogits needs "path" and "obs"');
-      const net = loadSspPolicy(JSON.parse(readFileSync(msg.path, 'utf8')) as SspPolicyFile);
+      const { net } = loadSspPolicy(JSON.parse(readFileSync(msg.path, 'utf8')) as SspPolicyFile);
       return { ok: true, logits: Array.from(net.forward(decodeFloat32(msg.obs))) };
     }
     case 'close':

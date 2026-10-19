@@ -19,6 +19,11 @@
 // agents.ts plays the non-learner seat otherwise. `configure` swaps that
 // opponent for matches that start afterwards (the self / fixed split can't
 // change mid-run).
+//
+// With a `teacher` (a policy file), every decision row also carries the
+// teacher's move distribution for that observation, in the current action
+// space (teacher.ts) — for imitation and for anchoring the learner to it.
+// `configure({ teacher: null })` stops computing it.
 
 import type { SspState } from '@/games/sea-salt-paper/types';
 import { applyAction } from '@/games/sea-salt-paper/reducer';
@@ -27,6 +32,7 @@ import { NUM_SLOTS, decodeSlot, legalMask } from '@/games/sea-salt-paper/nn/acti
 import { OBS_DIM, encodeObservation } from '@/games/sea-salt-paper/nn/encode';
 import { agentFactory, agentSeed, type AgentFactory, type SspAgent } from './agents';
 import { newMatch, winnerSeatOf } from './sim';
+import { Teacher } from './teacher';
 
 export interface VecEnvOptions {
   numEnvs: number;
@@ -40,6 +46,8 @@ export interface VecEnvOptions {
   learnerSeat: 'alternate' | 0 | 1;
   roundReward: number;
   maxSteps: number;
+  /** Policy file whose move distribution is reported with every decision (null = none). */
+  teacher: string | null;
 }
 
 export const DEFAULT_VEC_ENV_OPTIONS: VecEnvOptions = {
@@ -52,6 +60,7 @@ export const DEFAULT_VEC_ENV_OPTIONS: VecEnvOptions = {
   learnerSeat: 'alternate',
   roundReward: 0,
   maxSteps: 10_000,
+  teacher: null,
 };
 
 export interface Episode {
@@ -77,6 +86,8 @@ export interface VecBatch {
   reward: Float32Array;
   done: Uint8Array;
   episodes: Episode[];
+  /** numEnvs × NUM_SLOTS teacher move probabilities, or null without a teacher. */
+  teacher: Float32Array | null;
 }
 
 interface EnvSlot {
@@ -95,6 +106,7 @@ export class SspVecEnv {
   readonly opts: VecEnvOptions;
   private readonly envs: EnvSlot[] = [];
   private opponentFactory: AgentFactory | null;
+  private teacher: Teacher | null;
   private batch: VecBatch;
 
   constructor(options: Partial<VecEnvOptions> = {}) {
@@ -102,6 +114,7 @@ export class SspVecEnv {
     const n = this.opts.numEnvs;
     if (!(Number.isInteger(n) && n >= 1)) throw new Error('numEnvs must be a positive integer');
     this.opponentFactory = this.opts.opponent === 'self' ? null : agentFactory(this.opts.opponent);
+    this.teacher = this.opts.teacher ? new Teacher(this.opts.teacher) : null;
     this.batch = {
       seat: new Int8Array(n),
       obs: new Float32Array(n * OBS_DIM),
@@ -109,11 +122,18 @@ export class SspVecEnv {
       reward: new Float32Array(n * 2),
       done: new Uint8Array(n),
       episodes: [],
+      teacher: this.teacher ? new Float32Array(n * NUM_SLOTS) : null,
     };
   }
 
-  /** Change the fixed opponent for matches that start from now on. */
-  configure(update: { opponent?: string }): void {
+  /** Change the fixed opponent for matches that start from now on, and/or
+   *  switch the teacher (its targets appear from the next batch). */
+  configure(update: { opponent?: string; teacher?: string | null }): void {
+    if (update.teacher !== undefined) {
+      this.opts.teacher = update.teacher;
+      this.teacher = update.teacher ? new Teacher(update.teacher) : null;
+      this.batch.teacher = this.teacher ? new Float32Array(this.opts.numEnvs * NUM_SLOTS) : null;
+    }
     if (update.opponent !== undefined) {
       if ((update.opponent === 'self') !== (this.opponentFactory === null)) {
         throw new Error('configure: cannot switch between self-play and a fixed opponent mid-run');
@@ -236,6 +256,7 @@ export class SspVecEnv {
       b.seat[i] = env.seat;
       encodeObservation(obs, b.obs.subarray(i * OBS_DIM, (i + 1) * OBS_DIM));
       b.mask.set(legalMask(obs), i * NUM_SLOTS);
+      if (this.teacher && b.teacher) this.teacher.targets(obs, b.teacher.subarray(i * NUM_SLOTS, (i + 1) * NUM_SLOTS));
     });
     return b;
   }
