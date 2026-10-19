@@ -245,7 +245,7 @@ function LogLine({ entry, state, localPlayerId }: { entry: SspLogEntry; state: S
       break;
     case 'playTrio': {
       const [a, b, c] = entry.families;
-      body = (<>{name(entry.playerId)} played a <strong>{fam(a)}+{fam(b)}+{fam(c)}</strong> trio (3 pts, ability cancelled).</>);
+      body = (<>{name(entry.playerId)} played a <strong>{fam(a)}+{fam(b)}+{fam(c)}</strong> trio — 3 pts in place of the duo&apos;s 1, no duo ability.</>);
       break;
     }
     case 'lobsterPick': {

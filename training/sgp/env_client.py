@@ -109,7 +109,7 @@ class SushiGoEnv:
         max_steps: int = 5_000,
         menu: str | list[str] = "random",
     ) -> Batch:
-        """opponent: 'self' (both seats are the learner), 'random', 'heuristic',
+        """opponent: 'self' (both seats are the learner), 'random',
         'nn:<policy.json>' or 'nn-sample:<policy.json>'. menu: 'random' (a new
         random legal menu every match) or a fixed list of 8 card kinds."""
         options = {

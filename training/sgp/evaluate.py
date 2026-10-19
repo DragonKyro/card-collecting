@@ -6,14 +6,21 @@ rules, with every seed — its deal AND its random menu — played from both sea
 
 Agents are named by reference:
     random                    uniformly random legal moves
-    heuristic                 the game's hand-written AI (src/games/sushi-go/ai.ts)
+    bench:<name>              a policy the game ships (src/games/sushi-go/policies/<name>.json)
     path/to/update_000120.json  an exported policy file
     path/to/run_dir           that run's latest checkpoint
     path/to/run_dir@120       that run's checkpoint at update 120
 
-    python training/sgp/evaluate.py match RUN@2000 heuristic --games 2000
-    python training/sgp/evaluate.py baselines RUN             # vs random and the heuristic
-    python training/sgp/evaluate.py progress RUN --vs heuristic --every 1000
+    python training/sgp/evaluate.py match RUN@2000 bench:hard-update10000 --games 2000
+    python training/sgp/evaluate.py baselines RUN             # vs random and every benchmark
+    python training/sgp/evaluate.py progress RUN --vs bench:hard-update10000 --every 1000
+    python training/sgp/evaluate.py freeze RUN@1000 --name normal-update1000 --note "..."   # pin a policy
+    python training/sgp/evaluate.py benchmarks               # list them
+
+Benchmarks are the policies the game ships as AI levels (aiLevels.ts): fixed
+opponents that never change, so scores against them stay comparable across
+runs. `freeze` copies a policy into the game's policy folder and records where
+it came from and how it scored vs the baselines and the other benchmarks.
 
 Reading results: `score` is wins (+½ draws) per match with a 95% Wilson
 interval. A policy is better than an opponent when the interval's LOWER end is
@@ -29,6 +36,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.normpath(os.path.join(HERE, "..", ".."))
@@ -36,7 +44,10 @@ EVAL_SCRIPT = os.path.join(HERE, "dist", "sgp-eval.mjs")
 # Eval seeds start far from the training env seeds so agents are scored on
 # deals (and menus) they never trained on.
 EVAL_SEED = 900_000
-BASELINES = ("random", "heuristic")
+BASELINES = ("random",)
+# Benchmarks are the policies the game ships as AI levels (see aiLevels.ts).
+BENCH_DIR = os.path.join(REPO, "src", "games", "sushi-go", "policies")
+BENCH = "bench:"
 _UPDATE_RE = re.compile(r"update_(\d+)\.json$")
 
 
@@ -53,10 +64,23 @@ def list_policies(run_dir: str) -> list[tuple[int, str]]:
     return sorted(out)
 
 
+def list_benchmarks() -> dict[str, str]:
+    """Benchmark name → policy file."""
+    if not os.path.isdir(BENCH_DIR):
+        return {}
+    return {f[:-5]: os.path.join(BENCH_DIR, f) for f in sorted(os.listdir(BENCH_DIR)) if f.endswith(".json")}
+
+
 def resolve(ref: str) -> str:
     """Reference → policy file path (or a baseline name)."""
     if ref in BASELINES:
         return ref
+    if ref.startswith(BENCH):
+        benches = list_benchmarks()
+        name = ref[len(BENCH):]
+        if name not in benches:
+            raise FileNotFoundError(f"no benchmark {name!r} (have {sorted(benches)})")
+        return os.path.abspath(benches[name])
     if ref.endswith(".json"):
         if not os.path.isfile(ref):
             raise FileNotFoundError(ref)
@@ -86,6 +110,8 @@ def label(ref: str) -> str:
     path = resolve(ref)
     if path in BASELINES:
         return path
+    if os.path.dirname(path) == os.path.abspath(BENCH_DIR):
+        return BENCH + os.path.basename(path)[:-5]
     m = _UPDATE_RE.search(path)
     return f"u{int(m.group(1))}" if m else os.path.basename(path)
 
@@ -122,6 +148,54 @@ def score_line(name: str, s: dict) -> str:
     lo, hi = s["aScoreCi95"]
     return (f"{name:<32} {100 * s['aScore']:5.1f}%  [{100 * lo:4.1f}-{100 * hi:4.1f}]  "
             f"margin {s['aMargin']:+5.1f}  n={s['matches']}")
+
+
+def freeze(ref: str, name: str, note: str = "", games: int = 2000, workers: int | None = None,
+           force: bool = False, log=print) -> str:
+    """Copy a policy into the game's policy folder as <name>.json, recording where
+    it came from and how it scored vs the baselines and the other benchmarks when frozen."""
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name):
+        raise ValueError("benchmark names use letters, digits, '.', '_' and '-'")
+    src = resolve(ref)
+    if src in BASELINES:
+        raise ValueError("baselines are built in; freeze a policy file or run checkpoint")
+    dest = os.path.join(BENCH_DIR, f"{name}.json")
+    if os.path.exists(dest) and not force:
+        raise FileExistsError(f"benchmark {name!r} exists (pass --force to replace it)")
+    with open(src, encoding="utf-8") as f:
+        doc = json.load(f)
+    scores = {}
+    others = [BENCH + n for n, p in list_benchmarks().items() if os.path.abspath(p) != os.path.abspath(dest)]
+    for opp in [*BASELINES, *others]:
+        s = evaluate(src, opp, games=games, workers=workers)
+        scores[opp] = {"score": s["aScore"], "ci95": s["aScoreCi95"], "margin": s["aMargin"], "matches": s["matches"]}
+        log(score_line(f"{name} vs {opp}", s))
+    doc.setdefault("meta", {})["benchmark"] = {
+        "name": name,
+        "source": os.path.relpath(src, REPO).replace(os.sep, "/"),
+        "frozen": time.strftime("%Y-%m-%d"),
+        "note": note,
+        "evalAtFreeze": scores,
+    }
+    os.makedirs(BENCH_DIR, exist_ok=True)
+    with open(dest, "w", encoding="utf-8") as f:
+        json.dump(doc, f)
+    log(f"froze {label(ref)} as {BENCH}{name} -> {os.path.relpath(dest, REPO)}")
+    return dest
+
+
+def describe_benchmarks(log=print) -> None:
+    benches = list_benchmarks()
+    if not benches:
+        log(f"no benchmarks yet in {os.path.relpath(BENCH_DIR, REPO)}")
+    for name, path in benches.items():
+        with open(path, encoding="utf-8") as f:
+            info = json.load(f).get("meta", {}).get("benchmark", {})
+        at = info.get("evalAtFreeze", {})
+        scores = "  ".join(f"vs {opp} {100 * v['score']:.1f}%" for opp, v in at.items())
+        log(f"{BENCH}{name:<20} from {info.get('source', '?')} ({info.get('frozen', '?')})  {scores}")
+        if info.get("note"):
+            log(f"    {info['note']}")
 
 
 def progress(run_dir: str, vs: str, every: int = 1000, games: int = 2000, workers: int | None = None,
@@ -165,8 +239,16 @@ def main(argv: list[str] | None = None) -> None:
     m.add_argument("b")
     m.add_argument("--seed", type=int, default=EVAL_SEED)
 
-    b = sub.add_parser("baselines", parents=[common], help="a policy vs random and the heuristic")
+    b = sub.add_parser("baselines", parents=[common], help="a policy vs random and every benchmark")
     b.add_argument("policy")
+
+    fr = sub.add_parser("freeze", parents=[common], help="save a policy as a named benchmark")
+    fr.add_argument("ref")
+    fr.add_argument("--name", required=True)
+    fr.add_argument("--note", default="")
+    fr.add_argument("--force", action="store_true", help="replace an existing benchmark of that name")
+
+    sub.add_parser("benchmarks", help="list the benchmarks")
 
     pr = sub.add_parser("progress", parents=[common], help="a run's checkpoints over time vs one opponent")
     pr.add_argument("run")
@@ -178,8 +260,12 @@ def main(argv: list[str] | None = None) -> None:
     if args.cmd == "match":
         s = evaluate(args.a, args.b, games=args.games, workers=args.workers, seed=args.seed)
         print(s["report"])
+    elif args.cmd == "freeze":
+        freeze(args.ref, args.name, note=args.note, games=args.games, workers=args.workers, force=args.force)
+    elif args.cmd == "benchmarks":
+        describe_benchmarks()
     elif args.cmd == "baselines":
-        for opp in BASELINES:
+        for opp in [*BASELINES, *(BENCH + n for n in list_benchmarks())]:
             s = evaluate(args.policy, opp, games=args.games, workers=args.workers)
             print(score_line(f"{label(args.policy)} vs {opp}", s))
     else:

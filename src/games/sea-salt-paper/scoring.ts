@@ -35,6 +35,16 @@ export function countBy<T extends string>(items: T[]): Record<T, number> {
   return out;
 }
 
+/** Cards per family, leaving out the cards whose ids are in `skipIds`. */
+function countFamilies(cards: SspCard[], skipIds?: ReadonlySet<number>): Partial<Record<SspCardFamily, number>> {
+  const out: Partial<Record<SspCardFamily, number>> = {};
+  for (const c of cards) {
+    if (skipIds?.has(c.id)) continue;
+    out[c.family] = (out[c.family] ?? 0) + 1;
+  }
+  return out;
+}
+
 /** Mermaid claims (counted as CARD POINTS in our display): for each mermaid
  *  held, claim the largest unclaimed color group. White counts like any other
  *  color — the mermaids themselves are white, so they form a group of their
@@ -101,30 +111,26 @@ export interface CardPointsOpts {
 
 /** Sum of point values from the cards themselves (no color bonus). */
 export function cardPoints(cards: SspCard[], opts: CardPointsOpts = {}): number {
-  // Optionally drop trio-bound cards from duo-pair counting so they don't
-  // double-score (the trio bonus is added separately below).
-  const effective = opts.trioCancelledIds
-    ? cards.filter((c) => !opts.trioCancelledIds!.has(c.id))
-    : cards;
-
-  const familyCounts: Partial<Record<SspCardFamily, number>> = {};
-  for (const c of effective) {
-    familyCounts[c.family] = (familyCounts[c.family] ?? 0) + 1;
-  }
+  const familyCounts = countFamilies(cards);
 
   let total = 0;
 
   // Duo pairs: number of completed pairs we can form from the input set.
+  // Cards played in a starfish trio are left out here — the trio scores 3 pts
+  // in place of their 1-pt pair (added below) — but they stay boats / crabs /
+  // fish in `familyCounts`, so multipliers (lighthouse, shoal, crab basket)
+  // still count them.
   // Salt: lobster pairs with crab, jellyfish pairs with swimmer. Greedy
   // pairing: dedicated Salt pairings first so we don't double-spend a crab/
   // swimmer that could match its base partner.
-  const crab = familyCounts.crab ?? 0;
-  const boat = familyCounts.boat ?? 0;
-  const fish = familyCounts.fish ?? 0;
-  const shark = familyCounts.shark ?? 0;
-  const swimmer = familyCounts.swimmer ?? 0;
-  const jellyfish = familyCounts.jellyfish ?? 0;
-  const lobster = familyCounts.lobster ?? 0;
+  const pairable = countFamilies(cards, opts.trioCancelledIds);
+  const crab = pairable.crab ?? 0;
+  const boat = pairable.boat ?? 0;
+  const fish = pairable.fish ?? 0;
+  const shark = pairable.shark ?? 0;
+  const swimmer = pairable.swimmer ?? 0;
+  const jellyfish = pairable.jellyfish ?? 0;
+  const lobster = pairable.lobster ?? 0;
 
   const lobsterPairs = Math.min(lobster, crab);
   const crabAfterLobster = crab - lobsterPairs;
@@ -312,21 +318,19 @@ export interface CategoryBreakdown {
 export function categoryBreakdown(cards: SspCard[], opts: TotalScoreOpts = {}): CategoryBreakdown {
   // Re-run scoring per category. We compute each category in isolation to keep
   // this function readable; the result MUST be consistent with cardPoints()'s
-  // sum. Cards in trios are excluded from duo counting (matches cardPoints).
-  const effective = opts.trioCancelledIds
-    ? cards.filter((c) => !opts.trioCancelledIds!.has(c.id))
-    : cards;
-  const counts: Partial<Record<SspCardFamily, number>> = {};
-  for (const c of effective) counts[c.family] = (counts[c.family] ?? 0) + 1;
+  // sum. Cards in trios are excluded from duo counting only (matches cardPoints);
+  // they still count for multipliers.
+  const counts = countFamilies(cards);
 
   // Duo pairs (Salt-aware): replicate cardPoints' greedy pairing.
-  const crab = counts.crab ?? 0;
-  const boat = counts.boat ?? 0;
-  const fish = counts.fish ?? 0;
-  const shark = counts.shark ?? 0;
-  const swimmer = counts.swimmer ?? 0;
-  const jellyfish = counts.jellyfish ?? 0;
-  const lobster = counts.lobster ?? 0;
+  const pairable = countFamilies(cards, opts.trioCancelledIds);
+  const crab = pairable.crab ?? 0;
+  const boat = pairable.boat ?? 0;
+  const fish = pairable.fish ?? 0;
+  const shark = pairable.shark ?? 0;
+  const swimmer = pairable.swimmer ?? 0;
+  const jellyfish = pairable.jellyfish ?? 0;
+  const lobster = pairable.lobster ?? 0;
   let duos = 0;
   const lobsterPairs = Math.min(lobster, crab);
   duos += lobsterPairs;

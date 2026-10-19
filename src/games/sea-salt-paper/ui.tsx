@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { GameUiBundle } from '@/core/module';
 import type { PlayerId, Seat } from '@/core/types';
 import type {
@@ -11,7 +11,6 @@ import { EVENT_BY_ID, ALL_EVENT_IDS } from './events';
 import { Sidebar } from './Sidebar';
 import { RulesBook, RulesHero, RulesGrid, RulesTile } from '@/ui/RulesBook';
 import { SspFlipProvider, useFlipAnchor } from './cardFlip';
-import { OpponentMoveAnim } from './OpponentMoveAnim';
 import { MultiLine, GroupedBar, StackedBar, HBarGrouped, Pie } from './SvgCharts';
 import { useSspTiming, formatElapsed } from './timingStore';
 import { AI_LEVELS, aiLevelOf, prepareAiLevel } from './aiLevels';
@@ -409,6 +408,8 @@ function GameView({
     ? state.players
     : state.players.filter((p) => p.id !== localPlayerId);
   const mySeatName = getSeat(state, localPlayerId ?? '')?.name ?? 'You';
+  const flipOrigins = useMemo(() => cardOrigins(state), [state]);
+  const flipScene = `${state.round}:${state.phase === 'gameOver' ? 'over' : state.subPhase === 'roundEnd' ? 'summary' : 'board'}`;
 
   // ----- Auto-end-turn: if active human has no plays AND can't stop, just pass.
   // We let the AI driver in GameHost handle AI seats; for humans we only auto
@@ -441,7 +442,7 @@ function GameView({
 
   if (state.phase === 'gameOver') {
     return (
-      <SspFlipProvider>
+      <SspFlipProvider origins={flipOrigins} scene={flipScene}>
       <div className="ssp-layout">
         <div className="ssp"><GameOver state={state} /></div>
         <Sidebar state={state} mySeatName={mySeatName} localPlayerId={localPlayerId} />
@@ -452,7 +453,7 @@ function GameView({
 
   if (state.subPhase === 'roundEnd') {
     return (
-      <SspFlipProvider>
+      <SspFlipProvider origins={flipOrigins} scene={flipScene}>
       <div className="ssp-layout">
         <div className="ssp">
           <RoundSummary state={state} dispatch={dispatch} />
@@ -540,8 +541,7 @@ function GameView({
   };
 
   return (
-    <SspFlipProvider>
-    <>
+    <SspFlipProvider origins={flipOrigins} scene={flipScene}>
     <div className="ssp-layout">
       <div className="ssp">
         <div className="board">
@@ -616,7 +616,7 @@ function GameView({
           )}
 
           {isAllAI ? null : me ? (
-            <div className="hand-area" data-anchor="hand-me">
+            <div className="hand-area">
               <h3>
                 <span>{getSeat(state, me.id)?.name ?? 'You'} — {myTentative} pt{myTentative === 1 ? '' : 's'}</span>
                 <ColorCountStrip cards={[...me.hand, ...me.table]} />
@@ -732,8 +732,6 @@ function GameView({
 
       <Sidebar state={state} mySeatName={mySeatName} localPlayerId={localPlayerId} />
     </div>
-    <OpponentMoveAnim state={state} localPlayerId={localPlayerId} />
-    </>
     </SspFlipProvider>
   );
 }
@@ -763,19 +761,18 @@ function CenterStrip({
   return (
     <div className="center">
       <div
-        ref={deckAnchorRef}
-        data-anchor="deck"
         className={`deck-stack ${canDraw && state.deck.length >= 2 ? 'clickable' : ''}`}
         onClick={canDraw && state.deck.length >= 2 ? onDeckClick : undefined}
         title={canDraw ? 'Click to draw two from the deck' : ''}
       >
-        <FaceDownCard />
+        <div className="card-slot" ref={deckAnchorRef}><FaceDownCard /></div>
         <div className="label">Deck · {state.deck.length}</div>
         <div className="label hint">{deckHint}</div>
       </div>
       {[0, 1].map((i) => {
         const pile = state.discards[i];
         const top = pile[pile.length - 1];
+        const under = pile[pile.length - 2];
         const canTakeFromPile = canDraw && !!top;
         const canDropHere = canCommitKeep;
         // Crab phase: clicking a non-empty pile commits to digging into it.
@@ -805,6 +802,7 @@ function CenterStrip({
             i={i as 0 | 1}
             pile={pile}
             top={top}
+            under={under}
             clickable={clickable}
             highlight={!!(canDropHere || isThisCrabTarget)}
             onPileClick={onPileClick}
@@ -818,30 +816,33 @@ function CenterStrip({
 }
 
 function PileSlot({
-  i, pile, top, clickable, highlight, onPileClick, titleText, hint,
+  i, pile, top, under, clickable, highlight, onPileClick, titleText, hint,
 }: {
   i: 0 | 1;
   pile: SspCard[];
   top: SspCard | undefined;
+  /** The card beneath the top, kept rendered (hidden under it) so a card
+   *  flying in covers it and a card taken off uncovers it, as with real cards. */
+  under: SspCard | undefined;
   clickable: boolean;
   highlight: boolean;
   onPileClick: (pile: 0 | 1) => void;
   titleText: string;
   hint: string;
 }) {
-  // Register the pile slot as a FLIP anchor so the card that becomes the
-  // new top after another card is taken off has a sensible "no movement"
-  // source (its own zone) instead of flying in from the deck.
+  // The card slot is the pile's FLIP anchor: a card dug out from under the
+  // top (an opponent's crab) flies from here.
   const anchorRef = useFlipAnchor(`pile-${i}`);
   return (
     <div
-      ref={anchorRef}
-      data-anchor={`pile-${i}`}
       className={`pile ${pile.length === 0 ? 'empty' : ''} ${clickable ? 'clickable' : ''} ${highlight ? 'target-discard' : ''}`}
       onClick={clickable ? () => onPileClick(i) : undefined}
       title={titleText}
     >
-      {top ? <CardView card={top} zone={`pile-${i}`} /> : <div className="empty-slot">empty</div>}
+      <div className="card-slot stacked" ref={anchorRef}>
+        {under && <CardView key={under.id} card={under} zone={`pile-${i}`} />}
+        {top ? <CardView key={top.id} card={top} zone={`pile-${i}`} /> : <div className="empty-slot">empty</div>}
+      </div>
       <div className="label">Pile {i + 1} · {pile.length} card{pile.length === 1 ? '' : 's'}</div>
       <div className="label hint">{hint}</div>
     </div>
@@ -1059,7 +1060,7 @@ function PlayerStrip({ player, seat, isActive, reveal }: {
     trios: player.trios?.length ?? 0,
   });
   return (
-    <div className={`player-strip ${isActive ? 'active' : ''}`} data-anchor={`hand-${player.id}`}>
+    <div className={`player-strip ${isActive ? 'active' : ''}`}>
       <header>
         <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <span style={{ width: 10, height: 10, background: seat?.color ?? '#888', borderRadius: 2 }} />
@@ -1067,7 +1068,7 @@ function PlayerStrip({ player, seat, isActive, reveal }: {
           {seat?.isAI ? <span style={{ fontSize: 10, opacity: 0.6, marginLeft: 4 }}>(AI)</span> : null}
         </span>
       </header>
-      <div className="table-strip" data-anchor={`strip-${player.id}`}>
+      <div className="table-strip">
         {/* Opponent hand cards: face-down placeholders KEYED BY CARD ID so
          *  the FLIP harness animates cross-zone movement (deck/pile → here,
          *  here → table on play, here → here on shark steal) automatically.
@@ -1727,6 +1728,21 @@ function DraggableHandCard({
       />
     </div>
   );
+}
+
+/** Where the state keeps each card the board doesn't show face-up, as FLIP
+ *  anchor names: the deck (also a two-card draw or lobster reveal still being
+ *  decided) or the discard pile it's in. A card appearing on screen without
+ *  having been shown before flies in from there. */
+function cardOrigins(state: SspState): Map<number, string> {
+  const origins = new Map<number, string>();
+  for (const c of state.deck) origins.set(c.id, 'deck');
+  for (const c of state.pendingDraw) origins.set(c.id, 'deck');
+  for (const c of state.pendingLobsterPick ?? []) origins.set(c.id, 'deck');
+  state.discards.forEach((pile, i) => {
+    for (const c of pile) origins.set(c.id, `pile-${i}`);
+  });
+  return origins;
 }
 
 function getSeat(state: SspState, id: PlayerId): Seat | undefined {

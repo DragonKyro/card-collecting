@@ -42,7 +42,7 @@ export function CardView({ card, size, selectable, selected, onClick, zone }: Pr
           <CardArt family={card.family} bodyColor={card.color} />
         </svg>
       </div>
-      <div className="footer">{info.label}</div>
+      <div className={`footer${footerSize(info.label)}`}>{info.label}</div>
       <div className="card-tooltip" role="tooltip">
         <strong>{info.label}</strong>
         <div className="rule">{info.rule}</div>
@@ -70,6 +70,11 @@ export function TrackedFaceDownCard({
 }) {
   const flipRef = useFlipCard(card.id, zone);
   return <div ref={flipRef} className={`card facedown ${size === 'small' ? 'small' : ''}`} />;
+}
+
+/** Long names shrink to fit the footer (see `.footer.long` in ssp.css). */
+function footerSize(label: string): string {
+  return label.length > 13 ? ' long longer' : label.length > 9 ? ' long' : '';
 }
 
 function ribbonValue(family: SspCardFamily): string {
