@@ -297,7 +297,7 @@ function startNewRound(state: SspState): void {
   state.lastChanceFrom = null;
   state.lastChanceRemaining = [];
   state.pendingLobsterPick = [];
-  state.nextTurnLockedPlayerId = null;
+  state.lockedPlayerIds = [];
   state.subPhase = 'awaitingAction';
   for (const p of state.players) {
     p.hand = [];
@@ -402,12 +402,6 @@ function gameOverIfReached(state: SspState): void {
 }
 
 function advanceTurnAfterEndChoice(state: SspState): void {
-  // Clear the jellyfish lock now that the locked player's turn is ending
-  // (we only lock for a single turn).
-  if (state.activePlayerId && state.activePlayerId === state.nextTurnLockedPlayerId) {
-    state.nextTurnLockedPlayerId = null;
-  }
-
   // Either continue rotation, or progress the lastChance counter.
   if (state.lastChanceFrom) {
     // Pop the next remaining player; if empty, score the round.
@@ -415,8 +409,7 @@ function advanceTurnAfterEndChoice(state: SspState): void {
       const next = state.lastChanceRemaining.shift()!;
       // Skip the caller if it somehow appears.
       if (next === state.lastChanceFrom) continue;
-      state.activePlayerId = next;
-      state.subPhase = 'awaitingAction';
+      startTurn(state, next);
       return;
     }
     // No one left → score with lastChance semantics.
@@ -426,14 +419,55 @@ function advanceTurnAfterEndChoice(state: SspState): void {
 
   // Normal rotation.
   if (!state.activePlayerId) throw new Error('no active player');
-  state.activePlayerId = nextSeatId(state, state.activePlayerId);
-  state.subPhase = 'awaitingAction';
+  startTurn(state, nextSeatId(state, state.activePlayerId));
 }
 
-/** True if the active player is currently locked by a jellyfish ability. */
-function isActiveLocked(state: SspState): boolean {
-  return state.nextTurnLockedPlayerId != null
-    && state.activePlayerId === state.nextTurnLockedPlayerId;
+/** Hand the turn to `playerId`. A player locked by an opponent's jellyfish +
+ *  swimmer pair can only take the top card of the deck — no discard pile, no
+ *  pairs, no STOP or LAST CHANCE — so the game plays that turn for them and
+ *  moves on (an empty deck ends the round, as when a player can't draw). */
+function startTurn(state: SspState, playerId: PlayerId): void {
+  state.activePlayerId = playerId;
+  state.subPhase = 'awaitingAction';
+  const locked = state.lockedPlayerIds ?? [];
+  if (!locked.includes(playerId)) return;
+  state.lockedPlayerIds = locked.filter((id) => id !== playerId);
+  const card = popDeck(state);
+  if (!card) {
+    endRound(state, 'deckEmpty', playerId);
+    return;
+  }
+  const p = playerById(state, playerId);
+  p.hand.push(card);
+  pushLog(state, { kind: 'jellyfishDraw', playerId, family: card.family });
+  const mm = checkMermaidWin(state);
+  if (mm) {
+    state.mermaidWinnerId = mm;
+    pushLog(state, { kind: 'mermaidWin', playerId: mm });
+    pushLog(state, { kind: 'matchEnd', winnerId: mm });
+    state.phase = 'gameOver';
+    state.subPhase = 'gameOver';
+    state.finalScores = {};
+    for (const player of state.players) state.finalScores[player.id] = player.matchScore;
+    return;
+  }
+  state.subPhase = 'awaitingPlayOrEnd';
+  endTurn(state, p);
+}
+
+/** End the active player's turn (a pass): end-of-turn effects, then the next
+ *  turn — or the round, if the deck has run out. */
+function endTurn(state: SspState, p: SspPlayer): void {
+  // Angelfish (Pepper, global): if both discard tops share a color at end
+  // of turn, current player gets a free draw from the deck.
+  maybeAngelfishDraw(state, p);
+  pushLog(state, { kind: 'pass', playerId: p.id });
+  // If the deck is empty after the player's turn, end the round (no scoring penalty).
+  if (state.deck.length === 0 && state.pendingDraw.length === 0 && state.lastChanceFrom === null) {
+    endRound(state, 'deckEmpty', state.activePlayerId);
+    return;
+  }
+  advanceTurnAfterEndChoice(state);
 }
 
 type DuoFamily = 'crab' | 'boat' | 'fish' | 'shark' | 'swimmer' | 'jellyfish' | 'lobster';
@@ -498,14 +532,11 @@ function applyDuoEffect(state: SspState, p: SspPlayer, family: DuoFamily, other:
     return;
   }
   if (family === 'jellyfish' || other === 'jellyfish') {
-    // Salt: lock the next player. Stealing logic identical: nobody is stolen
-    // from, just record the lock and move on.
-    const idx = state.players.findIndex((q) => q.id === p.id);
-    const nextId = state.players[(idx + 1) % state.players.length]?.id ?? null;
-    if (nextId && nextId !== p.id) {
-      state.nextTurnLockedPlayerId = nextId;
-      pushLog(state, { kind: 'jellyfishLock', playerId: p.id, targetPlayerId: nextId });
-    }
+    // Salt: every opponent's next turn is only "take the top card of the
+    // deck" (played for them when it comes up — see startTurn).
+    const opponents = state.players.filter((q) => q.id !== p.id).map((q) => q.id);
+    state.lockedPlayerIds = [...new Set([...(state.lockedPlayerIds ?? []), ...opponents])];
+    for (const id of opponents) pushLog(state, { kind: 'jellyfishLock', playerId: p.id, targetPlayerId: id });
     state.subPhase = 'awaitingPlayOrEnd';
     return;
   }
@@ -620,7 +651,6 @@ export function applyAction(state: SspState, action: SspAction): SspState {
 
     case 'drawFromDiscard': {
       if (s.subPhase !== 'awaitingAction') throw new Error('drawFromDiscard: wrong subPhase');
-      if (isActiveLocked(s)) throw new Error('drawFromDiscard: locked by jellyfish');
       const pile = s.discards[action.pile];
       if (pile.length === 0) throw new Error('drawFromDiscard: pile empty');
       const c = pile.pop()!;
@@ -644,7 +674,6 @@ export function applyAction(state: SspState, action: SspAction): SspState {
 
     case 'playPair': {
       if (s.subPhase !== 'awaitingPlayOrEnd') throw new Error('playPair: wrong subPhase');
-      if (isActiveLocked(s)) throw new Error('playPair: locked by jellyfish');
       const p = requireActivePlayer(s);
       const [idA, idB] = action.cardIds;
       const a = p.hand.find((c) => c.id === idA);
@@ -667,7 +696,6 @@ export function applyAction(state: SspState, action: SspAction): SspState {
 
     case 'playTrio': {
       if (s.subPhase !== 'awaitingPlayOrEnd') throw new Error('playTrio: wrong subPhase');
-      if (isActiveLocked(s)) throw new Error('playTrio: locked by jellyfish');
       const p = requireActivePlayer(s);
       const [idA, idB, idC] = action.cardIds;
       const a = p.hand.find((c) => c.id === idA);
@@ -776,7 +804,6 @@ export function applyAction(state: SspState, action: SspAction): SspState {
 
     case 'stop': {
       if (s.subPhase !== 'awaitingPlayOrEnd') throw new Error('stop: wrong subPhase');
-      if (isActiveLocked(s)) throw new Error('stop: locked by jellyfish');
       // Rulebook: once LAST CHANCE has been called, the remaining players take
       // their final turn but cannot themselves call STOP / LAST CHANCE.
       if (s.lastChanceFrom !== null) throw new Error('stop: LAST CHANCE already called');
@@ -793,7 +820,6 @@ export function applyAction(state: SspState, action: SspAction): SspState {
 
     case 'lastChance': {
       if (s.subPhase !== 'awaitingPlayOrEnd') throw new Error('lastChance: wrong subPhase');
-      if (isActiveLocked(s)) throw new Error('lastChance: locked by jellyfish');
       if (s.lastChanceFrom !== null) throw new Error('lastChance: already called this round');
       const p = requireActivePlayer(s);
       const opts = scoringOptsFor(s, p);
@@ -813,17 +839,7 @@ export function applyAction(state: SspState, action: SspAction): SspState {
 
     case 'pass': {
       if (s.subPhase !== 'awaitingPlayOrEnd') throw new Error('pass: wrong subPhase');
-      const p = requireActivePlayer(s);
-      // Angelfish (Pepper, global): if both discard tops share a color at end
-      // of turn, current player gets a free draw from the deck.
-      maybeAngelfishDraw(s, p);
-      pushLog(s, { kind: 'pass', playerId: p.id });
-      // If the deck is empty after the player's turn, end the round (no scoring penalty).
-      if (s.deck.length === 0 && s.pendingDraw.length === 0 && s.lastChanceFrom === null) {
-        endRound(s, 'deckEmpty', s.activePlayerId);
-        return s;
-      }
-      advanceTurnAfterEndChoice(s);
+      endTurn(s, requireActivePlayer(s));
       return s;
     }
 
@@ -862,7 +878,6 @@ export function canEndRound(state: SspState): boolean {
   if (!state.activePlayerId) return false;
   if (state.subPhase !== 'awaitingPlayOrEnd') return false;
   if (state.lastChanceFrom) return false; // lastChance window — opponents can't re-trigger
-  if (isActiveLocked(state)) return false;
   const p = playerById(state, state.activePlayerId);
   const opts = scoringOptsFor(state, p);
   return tentativeScore(p.hand, p.table, opts) >= stopThresholdFor(state, p);

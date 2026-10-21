@@ -89,14 +89,13 @@ export function legalMask(obs: SspObservation): Uint8Array {
   }
   if (obs.activeOffset !== 0) return mask;
 
-  const locked = obs.players[0].locked;
+  // A jellyfish-locked player never decides anything: the reducer plays
+  // that whole turn (top card of the deck, then pass) for them.
   switch (obs.subPhase) {
     case 'awaitingAction':
       mask[SLOT_DRAW_PAIR] = 1;
-      if (!locked) {
-        for (const p of [0, 1] as const) {
-          if (obs.piles[p].size > 0) mask[SLOT_DRAW_DISCARD[p]] = 1;
-        }
+      for (const p of [0, 1] as const) {
+        if (obs.piles[p].size > 0) mask[SLOT_DRAW_DISCARD[p]] = 1;
       }
       break;
 
@@ -112,14 +111,12 @@ export function legalMask(obs: SspObservation): Uint8Array {
     }
 
     case 'awaitingPlayOrEnd': {
-      if (!locked) {
-        const counts = familyCounts(obs.hand);
-        const starfish = counts[FAMILY_INDEX.starfish] >= 1;
-        for (let t = 0; t < DUO_PAIRS.length; t++) {
-          if (!canFormPair(counts, t)) continue;
-          mask[SLOT_PLAY_PAIR[t]] = 1;
-          if (starfish) mask[SLOT_PLAY_TRIO[t]] = 1;
-        }
+      const counts = familyCounts(obs.hand);
+      const starfish = counts[FAMILY_INDEX.starfish] >= 1;
+      for (let t = 0; t < DUO_PAIRS.length; t++) {
+        if (!canFormPair(counts, t)) continue;
+        mask[SLOT_PLAY_PAIR[t]] = 1;
+        if (starfish) mask[SLOT_PLAY_TRIO[t]] = 1;
       }
       if (obs.canStop) mask[SLOT_STOP] = 1;
       if (obs.canLastChance) mask[SLOT_LAST_CHANCE] = 1;

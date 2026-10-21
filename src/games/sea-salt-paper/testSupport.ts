@@ -3,7 +3,7 @@
 //   sampleStates   a spread of mid-game states from matches where every seat
 //                  picks uniformly random legal slots. Random play runs rounds
 //                  long, so it reaches the odd corners (lobster picks, trios,
-//                  locked turns, deep crab digs, STOP / LAST CHANCE windows)
+//                  jellyfish draws, deep crab digs, STOP / LAST CHANCE windows)
 //                  without depending on any trained policy file.
 //   scrambleHidden rewrites everything one seat must NOT know, so a fair AI's
 //                  view (and choice) has to come out identical.
@@ -139,6 +139,7 @@ export function scrambleHidden(
   for (const e of s.log) {
     if (e.kind === 'drawDeck' && e.playerId !== viewerId) { e.keptFamily = randomFamily(); changes++; }
     if (e.kind === 'fishDraw' && e.playerId !== viewerId) { e.family = randomFamily(); changes++; }
+    if (e.kind === 'jellyfishDraw' && e.playerId !== viewerId) { e.family = randomFamily(); changes++; }
     if (e.kind === 'lobsterPick' && e.playerId !== viewerId) { e.family = randomFamily(); changes++; }
     if (e.kind === 'sharkSteal' && e.playerId !== viewerId && e.targetPlayerId !== viewerId) {
       e.family = randomFamily();

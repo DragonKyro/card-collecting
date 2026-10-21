@@ -293,7 +293,7 @@ function Rules() {
             <>
               <h3>Extra Salt (+8 cards)</h3>
               <RulesGrid cols={2}>
-                <RulesTile icon="🪼" label="Jellyfish ×2" hint="Pair with swimmer: lock next opponent's turn." accent="#b984c9" />
+                <RulesTile icon="🪼" label="Jellyfish ×2" hint="Pair with swimmer: each opponent's next turn is only the deck's top card." accent="#b984c9" />
                 <RulesTile icon="🦞" label="Lobster ×1" hint="Pair with crab: peek top 5, keep 1." accent="#2a2a36" />
                 <RulesTile icon="⭐" label="Starfish ×3" hint="Form a trio with any duo for 3 pts (skips ability)." accent="#f4d268" />
                 <RulesTile icon="🐴" label="Seahorse ×1" hint="Wildcard collector (joins your largest set)." accent="#f9f6ed" />
@@ -492,10 +492,9 @@ function GameView({
   } : {};
   const myTentative = me ? tentativeScore(me.hand, me.table, myScoringOpts) : 0;
   const myStopThreshold = myHasEvent('treasureChest') ? 10 : 7;
-  const isLocked = state.nextTurnLockedPlayerId != null && state.activePlayerId === state.nextTurnLockedPlayerId;
   // Diodon Fish: may not call STOP — only LAST CHANCE ends the round.
-  const canStop = isLocalActive && state.subPhase === 'awaitingPlayOrEnd' && myTentative >= myStopThreshold && state.lastChanceFrom === null && !isLocked && !myHasEvent('diodonFish');
-  const canLastChanceFromScore = isLocalActive && state.subPhase === 'awaitingPlayOrEnd' && myTentative >= myStopThreshold && state.lastChanceFrom === null && !isLocked;
+  const canStop = isLocalActive && state.subPhase === 'awaitingPlayOrEnd' && myTentative >= myStopThreshold && state.lastChanceFrom === null && !myHasEvent('diodonFish');
+  const canLastChanceFromScore = isLocalActive && state.subPhase === 'awaitingPlayOrEnd' && myTentative >= myStopThreshold && state.lastChanceFrom === null;
   const canLastChance = canLastChanceFromScore && state.players.length > 1;
   const canPass = isLocalActive && state.subPhase === 'awaitingPlayOrEnd';
 
@@ -661,13 +660,8 @@ function GameView({
               <div className="actions">
                 {state.subPhase === 'awaitingPlayOrEnd' && (
                   <>
-                    {isLocked && (
-                      <div className="locked-banner">
-                        Locked by Jellyfish — you can only draw two cards and pass this turn.
-                      </div>
-                    )}
                     <button
-                      disabled={!canPlaySelectedPair || isLocked}
+                      disabled={!canPlaySelectedPair}
                       onClick={() => {
                         if (!canPlaySelectedPair) return;
                         dispatch({ type: 'playPair', cardIds: [selected[0], selected[1]] });
@@ -678,7 +672,7 @@ function GameView({
                     </button>
                     {selected.length === 3 && (
                       <button
-                        disabled={!canPlaySelectedTrio || isLocked}
+                        disabled={!canPlaySelectedTrio}
                         onClick={() => {
                           if (!canPlaySelectedTrio) return;
                           dispatch({ type: 'playTrio', cardIds: [selected[0], selected[1], selected[2]] });

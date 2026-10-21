@@ -30,7 +30,7 @@ export function createSspState(config: SspConfig, seed: number, seats: Seat[]): 
     roundHistory: [],
     mermaidWinnerId: null,
     pendingLobsterPick: [],
-    nextTurnLockedPlayerId: null,
+    lockedPlayerIds: [],
     event: usingPepper
       ? { deck: buildEventDeck(rngState), current: null }
       : null,

@@ -184,6 +184,7 @@ export type SspLogEntry =
   | { seq: number; round: number; kind: 'fishDraw';        playerId: PlayerId; family: SspCardFamily }
   | { seq: number; round: number; kind: 'lobsterPick';     playerId: PlayerId; family: SspCardFamily }
   | { seq: number; round: number; kind: 'jellyfishLock';   playerId: PlayerId; targetPlayerId: PlayerId }
+  | { seq: number; round: number; kind: 'jellyfishDraw';   playerId: PlayerId; family: SspCardFamily }
   | { seq: number; round: number; kind: 'angelfishDraw';   playerId: PlayerId; family: SspCardFamily; card?: SspCard }
   | { seq: number; round: number; kind: 'eventReveal';     eventId: SspEventId }
   | { seq: number; round: number; kind: 'eventAwarded';    eventId: SspEventId; playerId: PlayerId | null }
@@ -230,10 +231,11 @@ export interface SspState {
   mermaidWinnerId: PlayerId | null;
   /** Buffer of 5 cards while the lobster+crab ability is being resolved (Salt). */
   pendingLobsterPick?: SspCard[];
-  /** Set when jellyfish+swimmer was just played; the named player is locked
-   *  on their next turn (drawPair only, no playPair, must pass). Cleared after
-   *  that player takes their next turn. */
-  nextTurnLockedPlayerId?: PlayerId | null;
+  /** Players locked by a jellyfish + swimmer pair (every opponent of whoever
+   *  played it). A locked player's next turn is only "take the top card of
+   *  the deck" — no discard pile, no pairs, no STOP / LAST CHANCE — so the
+   *  game plays it for them as it comes up and removes them from the list. */
+  lockedPlayerIds?: PlayerId[];
   /** Extra Pepper event-deck state, null when expansion disabled. */
   event?: SspEventDeckState | null;
   /** When 2+ players reach the target score in the same round AND tie on
