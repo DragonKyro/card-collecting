@@ -256,8 +256,15 @@ function LogLine({ entry, state, localPlayerId }: { entry: SspLogEntry; state: S
       break;
     }
     case 'jellyfishLock':
-      body = (<>{name(entry.playerId)} (jellyfish) locked {name(entry.targetPlayerId)}'s next turn.</>);
+      body = (<>{name(entry.playerId)} (jellyfish): {name(entry.targetPlayerId)}'s next turn is only the top card of the deck.</>);
       break;
+    case 'jellyfishDraw': {
+      const isMine = entry.playerId === localPlayerId;
+      body = isMine
+        ? (<>{name(entry.playerId)} (jellyfish) could only draw the top card of the deck: <strong>{fam(entry.family)}</strong>.</>)
+        : (<>{name(entry.playerId)} (jellyfish) could only draw the top card of the deck.</>);
+      break;
+    }
     case 'angelfishDraw': {
       const isMine = entry.playerId === localPlayerId;
       body = isMine

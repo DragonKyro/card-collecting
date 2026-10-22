@@ -808,18 +808,6 @@
   flex: 1 1 200px;
 }
 
-.locked-banner {
-  background: #2a1a3a;
-  border: 1px dashed #c98aff;
-  color: #c98aff;
-  padding: 6px 10px;
-  border-radius: 6px;
-  font-size: 12px;
-  width: 100%;
-  text-align: center;
-  margin-bottom: 6px;
-}
-
 /* Card tooltip on hover */
 .ssp .card .card-tooltip {
   position: absolute;

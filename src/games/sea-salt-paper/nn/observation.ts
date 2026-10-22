@@ -51,7 +51,7 @@ export interface SspObservedPlayer {
    *  (offset 0) it is what every opponent knows about the viewer's hand. */
   knownCards: SspCard[];
   rules: SspPlayerRules;
-  /** Jellyfish lock: this player's next (or current) turn is draw-and-pass only. */
+  /** Jellyfish lock: this player's next turn is only the top card of the deck, played for them. */
   locked: boolean;
 }
 
@@ -134,7 +134,7 @@ export function observe(state: SspState, viewerId: PlayerId, opts: ObserveOption
         mermaidsScoreZero: opts.mermaidsScoreZero,
         stopThreshold: stopThresholdFor(state, p),
       },
-      locked: state.nextTurnLockedPlayerId === p.id,
+      locked: (state.lockedPlayerIds ?? []).includes(p.id),
     });
   }
 

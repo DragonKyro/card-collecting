@@ -69,7 +69,7 @@ export const FAMILY: Record<SspCardFamily, FamilyInfo> = {
   // ---------- Extra Salt expansion (only mixed into deck when extraSalt is on) ----------
   jellyfish:      { count: 2, category: 'duo',        label: 'Jellyfish',
                     rule: 'Pair (jellyfish + swimmer): 1 pt + ability.',
-                    ability: "Opponent's next turn is locked: they can only draw from the deck (no discard, no pair plays, can't end the round).",
+                    ability: "Every opponent's next turn is only the top card of the deck, drawn for them: no discard pile, no pairs, no STOP or LAST CHANCE.",
                     expansion: 'extraSalt' },
   lobster:        { count: 1, category: 'duo',        label: 'Lobster',
                     rule: 'Pair (lobster + crab): 1 pt + ability.',

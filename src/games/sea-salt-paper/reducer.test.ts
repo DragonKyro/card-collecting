@@ -323,25 +323,127 @@ describe('Extra Salt: lobster + crab ability', () => {
 });
 
 describe('Extra Salt: jellyfish + swimmer ability', () => {
-  it('locks the next player so they can only drawPair and pass', () => {
-    let s = freshStateWithSalt();
+  function saltState(ids: string[]): SspState {
+    const seats = ids.map((id) => makeSeat(id, id.toUpperCase()));
+    const s = seaSaltPaperModule.createInitialState(
+      { targetScore: 40, expansions: { extraSalt: true } },
+      12345, seats,
+    );
+    if (s.players.length === 0) attachSeatsAndStart(s, seats);
+    return s;
+  }
+
+  /** a plays jellyfish + swimmer on their turn; returns the state at the end of a's turn. */
+  function aPlaysJellyfish(ids = ['a', 'b']): SspState {
+    let s = saltState(ids);
     const a = s.players.find((q) => q.id === 'a')!;
     a.hand = [card(800, 'jellyfish'), card(801, 'swimmer')];
-    // a plays jellyfish+swimmer, then passes.
     s = applyAction(s, { type: 'drawFromDiscard', pile: 0 });
     s = applyAction(s, { type: 'playPair', cardIds: [800, 801] });
     expect(s.subPhase).toBe('awaitingPlayOrEnd');
-    expect(s.nextTurnLockedPlayerId).toBe('b');
+    return s;
+  }
+
+  const seat = (s: SspState, id: string) => s.players.find((q) => q.id === id)!;
+  const fiveShells = (base: number) =>
+    (['darkblue', 'teal', 'black', 'yellow', 'green'] as const).map((c, i) => card(base + i, 'shell', c));
+
+  it("the next player's turn is played for them: top card of the deck, then the turn passes on", () => {
+    let s = aPlaysJellyfish();
+    expect(s.lockedPlayerIds).toEqual(['b']);
+    expect(s.log.at(-1)).toMatchObject({ kind: 'jellyfishLock', playerId: 'a', targetPlayerId: 'b' });
+    const top = s.deck[s.deck.length - 1];
+    const deckBefore = s.deck.length;
+    const handBefore = seat(s, 'b').hand.length;
+    const piles = s.discards.map((p) => p.length);
+    s = applyAction(s, { type: 'pass' });
+    expect(seat(s, 'b').hand).toHaveLength(handBefore + 1);
+    expect(seat(s, 'b').hand.some((c) => c.id === top.id)).toBe(true);
+    expect(s.deck).toHaveLength(deckBefore - 1);
+    expect(s.discards.map((p) => p.length)).toEqual(piles);
+    expect(s.log.slice(-2)).toMatchObject([
+      { kind: 'jellyfishDraw', playerId: 'b', family: top.family },
+      { kind: 'pass', playerId: 'b' },
+    ]);
+    // Straight back to a for a normal turn; the lock is used up.
+    expect(s.activePlayerId).toBe('a');
+    expect(s.subPhase).toBe('awaitingAction');
+    expect(s.lockedPlayerIds).toEqual([]);
+  });
+
+  it('the locked player plays no pairs, even one already in hand', () => {
+    let s = aPlaysJellyfish();
+    seat(s, 'b').hand.push(card(810, 'boat'), card(811, 'boat'));
+    s = applyAction(s, { type: 'pass' });
+    expect(seat(s, 'b').table).toEqual([]);
+    expect(seat(s, 'b').hand.map((c) => c.id)).toEqual(expect.arrayContaining([810, 811]));
+    expect(s.activePlayerId).toBe('a');
+  });
+
+  it('the locked player cannot end the round, whatever their score', () => {
+    let s = aPlaysJellyfish();
+    seat(s, 'b').hand.push(...fiveShells(820));
+    const round = s.round;
+    s = applyAction(s, { type: 'pass' });
+    expect(s.round).toBe(round);
+    expect(s.subPhase).toBe('awaitingAction');
+    expect(s.activePlayerId).toBe('a');
+    expect(s.log.some((e) => e.kind === 'stop' || e.kind === 'lastChance')).toBe(false);
+  });
+
+  it('locks every opponent: each one\'s turn is played for them in seat order', () => {
+    let s = aPlaysJellyfish(['a', 'b', 'c']);
+    expect(s.lockedPlayerIds).toEqual(['b', 'c']);
+    const deckBefore = s.deck.length;
+    s = applyAction(s, { type: 'pass' });
+    expect(s.deck).toHaveLength(deckBefore - 2);
+    expect(seat(s, 'b').hand).toHaveLength(1);
+    expect(seat(s, 'c').hand).toHaveLength(1);
+    expect(s.log.slice(-4).map((e) => `${e.kind}:${'playerId' in e ? e.playerId : ''}`)).toEqual([
+      'jellyfishDraw:b', 'pass:b', 'jellyfishDraw:c', 'pass:c',
+    ]);
+    expect(s.activePlayerId).toBe('a');
+    expect(s.subPhase).toBe('awaitingAction');
+    expect(s.lockedPlayerIds).toEqual([]);
+  });
+
+  it('the lock lasts one turn; the next one is a normal draw', () => {
+    let s = aPlaysJellyfish();
+    s = applyAction(s, { type: 'pass' }); // a ends; b's locked turn is played for them
+    s = applyAction(s, { type: 'drawFromDiscard', pile: 1 }); // a again
     s = applyAction(s, { type: 'pass' });
     expect(s.activePlayerId).toBe('b');
-    // b is locked: drawFromDiscard, playPair, playTrio, stop, lastChance all throw.
-    expect(() => applyAction(s, { type: 'drawFromDiscard', pile: 0 })).toThrow();
-    // b's only legal action is drawPair → keep → pass.
+    expect(s.subPhase).toBe('awaitingAction');
     s = applyAction(s, { type: 'drawPair' });
-    s = applyAction(s, { type: 'keepFromDraw', keepIndex: 0, discardToPile: 0 });
-    // Lock should clear when b's turn ends (advanceTurnAfterEndChoice).
+    expect(s.pendingDraw).toHaveLength(2);
+  });
+
+  it('a LAST CHANCE final turn is played for the locked player, then the round ends', () => {
+    let s = aPlaysJellyfish();
+    seat(s, 'a').hand.push(...fiveShells(830));
+    const deckBefore = s.deck.length;
+    s = applyAction(s, { type: 'lastChance' });
+    expect(s.deck).toHaveLength(deckBefore - 1);
+    expect(s.subPhase).toBe('roundEnd');
+    expect(s.lastRoundSummary?.endedBy).toBe('lastChance');
+  });
+
+  it('an empty deck when the locked turn comes up ends the round', () => {
+    let s = aPlaysJellyfish();
+    seat(s, 'a').hand.push(...fiveShells(840));
+    s.deck = [];
+    s = applyAction(s, { type: 'lastChance' });
+    expect(s.subPhase).toBe('roundEnd');
+    expect(s.lastRoundSummary?.endedBy).toBe('deckEmpty');
+  });
+
+  it('a forced draw of the fourth mermaid still wins', () => {
+    let s = aPlaysJellyfish();
+    seat(s, 'b').hand.push(card(850, 'mermaid', 'white'), card(851, 'mermaid', 'white'), card(852, 'mermaid', 'white'));
+    s.deck.push(card(853, 'mermaid', 'white'));
     s = applyAction(s, { type: 'pass' });
-    expect(s.nextTurnLockedPlayerId).toBeNull();
+    expect(s.mermaidWinnerId).toBe('b');
+    expect(s.subPhase).toBe('gameOver');
   });
 });
 

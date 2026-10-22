@@ -179,10 +179,9 @@ function analyseMatch(agents: SspAgent[], seed: number, opts: SimOptions, tallie
       case 'awaitingAction': {
         add(t, 'acq');
         const tops = s.discards.filter((pile) => pile.length).map((pile) => pile[pile.length - 1].family);
-        const locked = s.nextTurnLockedPlayerId === pid; // jellyfish: deck draw is forced, no choice
         const turnKind = boatTurn[seat] ? 'boatTurn' : 'normalTurn';
         boatTurn[seat] = false;
-        if (!locked && tops.length) {
+        if (tops.length) {
           add(t, `${turnKind}.acq`);
           if (action.type === 'drawFromDiscard') {
             add(t, `${turnKind}.discard`);
@@ -190,7 +189,7 @@ function analyseMatch(agents: SspAgent[], seed: number, opts: SimOptions, tallie
             add(t, `${turnKind}.take.${pile[pile.length - 1].family}`);
           }
         }
-        if (!locked) for (const f of new Set(tops)) { add(t, `offer.${f}`); contextual(t, 'offer', f, me); }
+        for (const f of new Set(tops)) { add(t, `offer.${f}`); contextual(t, 'offer', f, me); }
         if (action.type === 'drawFromDiscard') {
           const pile = s.discards[action.pile];
           const top = pile[pile.length - 1];
@@ -199,7 +198,7 @@ function analyseMatch(agents: SspAgent[], seed: number, opts: SimOptions, tallie
           contextual(t, 'take', top.family, me);
           prefer(t, top.family, ['deck', ...tops]);
           if (top.id === lastDiscard[1 - seat]) add(tallies[1 - seat], 'fed');
-        } else if (!locked) {
+        } else {
           prefer(t, 'deck', tops);
         }
         break;
@@ -255,7 +254,7 @@ function analyseMatch(agents: SspAgent[], seed: number, opts: SimOptions, tallie
           add(t, `pair.${pairKey(x, y)}`);
           add(t, 'pairs');
           if (x.family === 'boat' && y.family === 'boat') boatTurn[seat] = true;
-        } else if (action.type !== 'playTrio' && s.nextTurnLockedPlayerId !== pid) {
+        } else if (action.type !== 'playTrio') {
           // Ending the turn: any pair still playable is being kept back on purpose.
           const lcPending = s.lastChanceFrom === opp.id;
           for (const type of playablePairTypes(me.hand)) {
@@ -494,7 +493,7 @@ function cardImportance(name: string, t: Tally): string {
     `  takes a discard top: bonus turn ${turn('boatTurn')} (n=${g('boatTurn.acq')}), normal turn ${turn('normalTurn')}`,
     `    taken on the bonus turn: ${topTaken('boatTurn')}`,
     `    taken on normal turns:   ${topTaken('normalTurn')}`);
-  lines.push('', '  Pairs: played, or still in hand when the turn ends (jellyfish-locked turns excluded):',
+  lines.push('', '  Pairs: played, or still in hand when the turn ends:',
     '  pair               played   held at turn end   held %   of which during opp LAST CHANCE');
   for (const [x, y] of DUO_PAIRS) {
     const k = `${x}+${y}`;
