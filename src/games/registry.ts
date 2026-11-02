@@ -10,6 +10,8 @@ import { sevenWondersModule } from './seven-wonders/module';
 import { sevenWondersDuelModule } from './seven-wonders-duel/module';
 import { airLandSeaModule } from './air-land-sea/module';
 import { setModule } from './set/module';
+import { machiKoroModule } from './machi-koro/module';
+import { jaipurModule } from './jaipur/module';
 
 export const GAMES: AnyGameModule[] = [
   sushiGoModule as unknown as AnyGameModule,
@@ -18,6 +20,8 @@ export const GAMES: AnyGameModule[] = [
   sevenWondersDuelModule as unknown as AnyGameModule,
   airLandSeaModule as unknown as AnyGameModule,
   setModule as unknown as AnyGameModule,
+  machiKoroModule as unknown as AnyGameModule,
+  jaipurModule as unknown as AnyGameModule,
 ];
 
 export function getGameById(id: string): AnyGameModule | undefined {

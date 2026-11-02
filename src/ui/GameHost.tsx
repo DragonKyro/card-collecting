@@ -66,7 +66,7 @@ export function GameHost({ onExit, onReturnToLobby }: Props) {
     if (!isAITurn) return;
 
     const anyHuman = state.seats.some((s) => !s.isAI);
-    const delay = anyHuman ? 380 : 80;
+    const delay = anyHuman ? (module.aiDelayMs?.(state) ?? 380) : 80;
 
     tickingRef.current = true;
     const timer = setTimeout(() => {
@@ -116,10 +116,12 @@ export function GameHost({ onExit, onReturnToLobby }: Props) {
   // Hot-seat pass screen: show whenever the active human seat differs from
   // the last seat the player explicitly acknowledged via "Ready". We only
   // gate when there are 2+ human seats (otherwise there's no one to pass to
-  // — single-human-vs-AI matches don't need a hand-off).
+  // — single-human-vs-AI matches don't need a hand-off), and only for games
+  // with something to hide.
   const humanSeatCount = state.seats.filter((s) => !s.isAI).length;
   const needsPassGate =
     role === 'solo'
+    && module.hiddenInfo !== false
     && state.phase === 'playing'
     && humanSeatCount >= 2
     && hotSeatLocal !== null

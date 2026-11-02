@@ -57,6 +57,10 @@ export interface GameModule<
    *  changed before re-dealing) instead of re-dealing immediately. Defaults to
    *  false. */
   readonly replayInLobby?: boolean;
+  /** Set false for games with no hidden information (every card and coin is
+   *  public): hot-seat play then skips the "pass the device" screen between
+   *  human turns. Defaults to true. */
+  readonly hiddenInfo?: boolean;
 
   /** Build the lobby config component's initial value. Pure. */
   defaultConfig(seats: Seat[]): C;
@@ -75,6 +79,11 @@ export interface GameModule<
 
   /** Optional AI hook — return next action for `playerId`, or null to pass/end. */
   chooseAIAction?(state: S, playerId: PlayerId): A | null;
+
+  /** Optional AI pacing: how long the AI driver waits before an AI move in a
+   *  match with at least one human seat (so the human can follow dice, coin
+   *  animations, etc.). Defaults to 380ms. All-AI matches always run fast. */
+  aiDelayMs?(state: S): number;
 
   /** Optional async setup the shell awaits before starting a match on the
    *  device that drives the AI (local play, or the online host) — e.g.

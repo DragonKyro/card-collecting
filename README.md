@@ -11,6 +11,8 @@ Shipping targets:
 - **7 Wonders Duel** (standalone 2-player variant — pyramid draft + three supremacy paths)
 - **Air, Land & Sea**
 - **Set** (all 16 variants: Junior, Set-Chain, UltraSet, GhostSet, 4Set, MegaSet, Puzzle, Shuffle, Memory, …)
+- **Machi Koro** (Machi Koro 2 by default, incl. the landmark promo pack; the original base game as an edition option)
+- **Jaipur** (2-player trading duel — hot-seat, online, or vs AI)
 - More to follow.
 
 ## Tech stack
@@ -40,6 +42,8 @@ src/
     seven-wonders-duel/         7 Wonders Duel (standalone two-player).
     air-land-sea/               Air, Land & Sea (+ Spies, Lies, & Supplies scaffolding).
     set/                        Set — cards as vectors, 16 modes off one rule engine.
+    machi-koro/                 Machi Koro 2 + the original Machi Koro, one dice engine.
+    jaipur/                     Jaipur — trading duel, heuristic AI + learned-agent pipeline.
 ```
 
 Each game lives in its own folder behind the `GameModule<S, A, C>` contract from `src/core/module.ts`. To add a new game: create `src/games/<id>/`, export a module, add it to `src/games/registry.ts`. **No other file needs to change.**
@@ -96,5 +100,7 @@ npm run test:run    # vitest single run
 - [ ] **Phase 9** — Additional games as desired.
   - [x] *Set* — solo / shared-screen, all 16 variants of the classic pattern game. Cards are modelled as vectors over a product of cyclic groups, so "all the same or all different" is just `sum ≡ 0 (mod 3)` and every variant is the same algebra with different numbers: 3/4/5 features, 3 or 4 variants each, groups of 3 / 4 / 6 cards, and the chain / puzzle / shuffle / face-down twists. Own card art (four shapes, four fills, three borders). Session-only split-time stats. **Not yet:** online racing (concurrent claims need host-authoritative arbitration, so "Host online" is hidden for Set), AI opponents, and Kyle's custom drilling modes — the mode registry in `set/modes.ts` is the seam for those.
   - [x] *7 Wonders Duel* — standalone 2-player variant. Separate game module under `src/games/seven-wonders-duel/`; shares zero state with the base 7 Wonders module. Pyramid draft (face-up + face-down rows of cards, "available when uncovered"), 12 unique wonders (8 drafted per match, 4 each), 5 of 10 Progress Tokens (claimed by matching a 2nd science symbol), single-line two-sided military track. Three victory conditions: Civilian Victory (most VP at endgame), Military Supremacy (pawn at ±9), Science Supremacy (6 different science symbols). Effects modeled v1; the wonder-only "extra turn" and "pick from discard" mechanics are stubbed pending follow-up.
+  - [x] *Machi Koro* — one module, two editions. **Machi Koro 2** (default, 2–5 players): 5 coins and an empty town, three build-only opening rounds, a 5-5-5 market (1–6 / 7+ / landmarks) dealt from shuffled decks with duplicates stacking, landmark price ladders, "everyone" landmarks that change the rules for all players, win on the 3rd landmark or the Launch Pad; all 20 establishments and 20 + 3 promo landmarks. **Machi Koro** base (2–4 players): starting Wheat Field + Bakery, open supply, the four personal landmarks, Train Station two dice, Radio Tower reroll, TV Station target. Hand-drawn SVG art for all 47 buildings; tumbling dice, coins flying between purses and the bank, built cards flying from the market into the town. Heuristic AI over an expected-income model. **Not yet:** Machi Koro 1's Harbor / Millionaire's Row expansions.
+  - [x] *Jaipur* — 2 players, best of three rounds (1 / 3 / 5 in the lobby). Market of five, take one / take all camels / trade 2+ / sell one good with tokens that fall in value, ×3 / ×4 / ×5 bonus tokens, the camel token, Seals of Excellence; the hand limit and both round endings. Hand-drawn SVG cards and tokens; cards and tokens fly between deck, market, hands, herds, the discard pile and the price board. Plays hot-seat, online and vs a heuristic AI that plays only from what its seat may know. The learned-agent pipeline (observation, 63-slot action space, 231-feature encoder) and its PPO trainer under `training/jaipur/` are ready; **not yet:** a trained policy.
 
 Game-specific design notes live in each game's `types.ts` and in [CLAUDE.md](CLAUDE.md).

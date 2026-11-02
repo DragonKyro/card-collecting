@@ -15,7 +15,9 @@
     "ssp:analyze": "npm run train:build && node training/dist/ssp-analyze.mjs",
     "sgp:build": "vite build --config training/sgp/vite.config.ts",
     "sgp:eval": "npm run sgp:build && node training/sgp/dist/sgp-eval.mjs",
-    "sgp:analyze": "npm run sgp:build && node training/sgp/dist/sgp-analyze.mjs"
+    "sgp:analyze": "npm run sgp:build && node training/sgp/dist/sgp-analyze.mjs",
+    "jaipur:build": "vite build --config training/jaipur/vite.config.ts",
+    "jaipur:eval": "npm run jaipur:build && node training/jaipur/dist/jaipur-eval.mjs"
   },
   "dependencies": {
     "react": "^19.0.0",
