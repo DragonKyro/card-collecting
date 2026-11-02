@@ -13,6 +13,9 @@ import { JaipurThumbnail } from './Thumbnail';
 type AiLevels = typeof import('./aiLevels');
 let aiLevels: AiLevels | null = null;
 
+/** Pause before an AI move when a human is playing (the shell's default is 380 ms). */
+const AI_DELAY_MS = 1000;
+
 export const jaipurModule: GameModule<JaipurState, JaipurAction, JaipurConfig> = {
   id: 'jaipur',
   name: 'Jaipur',
@@ -21,7 +24,7 @@ export const jaipurModule: GameModule<JaipurState, JaipurAction, JaipurConfig> =
   maxPlayers: 2,
 
   defaultConfig(_seats: Seat[]): JaipurConfig {
-    return { sealsToWin: 2, memoryAid: true, aiLevel: DEFAULT_AI_LEVEL };
+    return { sealsToWin: 2, aiLevel: DEFAULT_AI_LEVEL };
   },
 
   validateConfig(config, seats) {
@@ -40,6 +43,13 @@ export const jaipurModule: GameModule<JaipurState, JaipurAction, JaipurConfig> =
 
   applyAction(state, action) {
     return applyAction(state, action);
+  },
+
+  // With a human at the table, the AI waits a beat before moving: the
+  // human's own move finishes landing first, then the AI's flies slowly
+  // (ui.tsx), so it can be seen and followed.
+  aiDelayMs() {
+    return AI_DELAY_MS;
   },
 
   chooseAIAction(state, playerId: PlayerId) {

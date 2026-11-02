@@ -14,9 +14,10 @@
 //   - not shown before → it flies from the anchor the game state kept it
 //     behind (`origins`: deck cards) and turns face up on the way.
 //
-// Items that land together are staggered (`STAGGER_MS` apart, in the order
-// they registered) so a sale's tokens peel off the pile one by one instead
-// of moving as a block.
+// Items that land together are staggered (in the order they registered) so a
+// sale's tokens peel off the pile one by one instead of moving as a block.
+// `pace` sets the speed: 'slow' for a move a human should follow (the AI's,
+// with a human watching), 'normal' otherwise.
 //
 // "Where it was" is read in getSnapshotBeforeUpdate, before React touches the
 // DOM, so it covers items about to unmount and items still mid-flight: an
@@ -27,9 +28,12 @@
 
 import { Component, createContext, useContext, type ReactNode } from 'react';
 
-const DURATION_MS = 420;
-const STAGGER_MS = 70;
-const MAX_STAGGER_MS = 420;
+export type FlipPace = 'normal' | 'slow';
+
+const PACES: Record<FlipPace, { duration: number; stagger: number; maxStagger: number }> = {
+  normal: { duration: 420, stagger: 70, maxStagger: 420 },
+  slow: { duration: 760, stagger: 130, maxStagger: 650 },
+};
 const EASING = 'cubic-bezier(0.2, 0.7, 0.3, 1)';
 
 interface Registry {
@@ -51,6 +55,8 @@ interface ProviderProps {
   origins: ReadonlyMap<string, string>;
   /** Changes when the view is swapped out wholesale: that commit animates nothing. */
   scene: string;
+  /** Speed of the flights this commit starts (default 'normal'). */
+  pace?: FlipPace;
   children: ReactNode;
 }
 
@@ -89,17 +95,18 @@ export class JaipurFlipProvider extends Component<ProviderProps> {
         const from = before.anchors.get(origin) ?? this.registry.anchors.get(origin)?.getBoundingClientRect();
         if (from) moves.push({ node, from, reveal: true, zone });
       }
+      const pace = PACES[this.props.pace ?? 'normal'];
       const landed = new Map<string, number>();
       for (const m of moves) {
         const k = landed.get(m.zone) ?? 0;
         landed.set(m.zone, k + 1);
-        this.fly(m.node, m.from, m.reveal, Math.min(MAX_STAGGER_MS, k * STAGGER_MS));
+        this.fly(m.node, m.from, m.reveal, pace.duration, Math.min(pace.maxStagger, k * pace.stagger));
       }
     }
     this.remember();
   }
 
-  private fly(node: HTMLElement, from: DOMRect, reveal: boolean, delay: number): void {
+  private fly(node: HTMLElement, from: DOMRect, reveal: boolean, duration: number, delay: number): void {
     this.flights.get(node)?.cancel();
     const to = node.getBoundingClientRect();
     if (to.width === 0 || to.height === 0) return;
@@ -122,7 +129,7 @@ export class JaipurFlipProvider extends Component<ProviderProps> {
         { transform: 'none', transformOrigin: o, opacity: 1 },
       ]
       : [{ transform: start, transformOrigin: o, opacity: 1 }, { transform: 'none', transformOrigin: o, opacity: 1 }];
-    this.flights.set(node, node.animate(frames, { duration: DURATION_MS, delay, easing: EASING, fill: 'backwards' }));
+    this.flights.set(node, node.animate(frames, { duration, delay, easing: EASING, fill: 'backwards' }));
   }
 
   private remember(): void {

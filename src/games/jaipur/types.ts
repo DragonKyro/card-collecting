@@ -70,9 +70,6 @@ export interface JaipurPlayer {
 export interface JaipurConfig {
   /** Seals of Excellence needed to win: 2 = best of three rounds. */
   sealsToWin: number;
-  /** UI aid: list the cards an opponent is known to hold (taken from the
-   *  market and not yet played). Public information either way; omitted = on. */
-  memoryAid?: boolean;
   /** Who plays the AI seats: the hand-written heuristic or a trained policy
    *  level (see levels.ts); omitted = the default level. */
   aiLevel?: JaipurAiLevel;

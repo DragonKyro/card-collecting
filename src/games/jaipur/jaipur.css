@@ -21,6 +21,7 @@
 
 .jp-board {
   position: relative;
+  container-type: inline-size;
   padding: 12px;
   border-radius: 14px;
   color: #f8ecd8;
@@ -90,12 +91,27 @@
 .jp-seals { display: inline-flex; gap: 2px; vertical-align: middle; }
 .jp-seals svg.earned { filter: drop-shadow(0 0 3px rgba(243, 207, 99, 0.7)); }
 
-.jp-player-body {
+/* The viewer's hand gets a row to itself (seven full-size cards are wider
+ * than what's left beside a herd and a token pile); herd and tokens share
+ * the row below. The opponent's small hand, herd and tokens share one row
+ * while they fit, and wrap when the board is narrow. */
+.jp-player-bottom .jp-player-body {
+  display: grid;
+  gap: 8px 18px;
+  align-items: start;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas: "hand hand" "herd tokens";
+}
+.jp-player-bottom .jp-hand-zone { grid-area: hand; min-width: 0; }
+.jp-player-bottom .jp-herd-zone { grid-area: herd; }
+.jp-player-bottom .jp-tokens-zone { grid-area: tokens; min-width: 0; }
+.jp-player-top .jp-player-body {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px 18px;
+  gap: 8px 18px;
   align-items: flex-start;
 }
+.jp-player-top .jp-hand-zone { flex: 1 1 200px; min-width: 0; }
 .jp-zone-label {
   font-size: 11px;
   text-transform: uppercase;
@@ -103,24 +119,30 @@
   color: #c7aa98;
   margin-bottom: 4px;
 }
-.jp-hand-zone { flex: 1 1 320px; min-width: 0; }
-.jp-player-top .jp-hand-zone { flex-basis: 240px; }
-
+/* A hand never overflows its zone: the gap between cards (--n of them, set
+ * inline) shrinks, down to a deep overlap, until they fit; each card's
+ * corner pip stays visible. */
 .jp-hand {
+  --n: 1;
+  --card-w: 84px;
+  --gap: 6px;
+  --min-gap: -62px;
   display: flex;
-  gap: 6px;
   min-height: 122px;
   align-items: flex-end;
   padding-top: 12px;
 }
-.jp-hand-small { min-height: 72px; padding-top: 0; gap: 0; }
-.jp-hand-small .jp-card + .jp-card { margin-left: -16px; }
+.jp-hand-small { --card-w: 50px; --gap: -16px; --min-gap: -36px; min-height: 72px; padding-top: 0; }
+.jp-hand .jp-card + .jp-card {
+  margin-left: clamp(var(--min-gap), calc((100% - var(--n) * var(--card-w)) / max(var(--n) - 1, 1)), var(--gap));
+}
 
 .jp-herd { display: flex; align-items: flex-end; min-height: 60px; padding-top: 12px; }
 .jp-herd .jp-card + .jp-card { margin-left: -26px; }
 .jp-player-top .jp-herd { padding-top: 0; }
 
-.jp-tokens { display: flex; flex-wrap: wrap; gap: 2px; max-width: 250px; min-height: 26px; }
+.jp-tokens { display: flex; flex-wrap: wrap; gap: 2px; min-height: 26px; }
+.jp-player-top .jp-tokens { max-width: 250px; }
 .jp-empty { font-size: 12px; color: #a98d7c; font-style: italic; align-self: center; }
 
 .jp-known {
@@ -181,7 +203,7 @@
   align-items: center;
   justify-content: center;
   gap: 22px;
-  margin: 12px 0 6px;
+  margin: 12px 0;
   padding: 16px 14px 10px;
   border-radius: 14px;
   background:
@@ -198,34 +220,18 @@
   padding-top: 12px;
 }
 .jp-pile { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+
+/* A narrow board: the market takes a line of its own (its cards overlapping
+ * as needed, --n of them set inline), deck and sold pile below it. */
+@container (max-width: 720px) {
+  .jp-rug { flex-wrap: wrap; gap: 10px 28px; }
+  .jp-market { order: -1; flex: 1 1 100%; justify-content: center; gap: 0; }
+  .jp-market .jp-card + .jp-card {
+    margin-left: clamp(-50px, calc((100% - var(--n) * 84px) / max(var(--n) - 1, 1)), 10px);
+  }
+}
 .jp-deck, .jp-discard { position: relative; width: 84px; height: 118px; }
 .jp-pile-label { font-size: 11px; color: #f0d6c0; }
-
-.jp-lastmove {
-  text-align: center;
-  font-size: 13px;
-  color: #f3e1cf;
-  margin: 8px 0 10px;
-  min-height: 20px;
-  animation: jp-fade-in 400ms ease-out;
-}
-.jp-lastmove-tag {
-  display: inline-block;
-  margin-right: 8px;
-  padding: 1px 7px;
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  background: rgba(231, 184, 74, 0.2);
-  color: #f3cf63;
-}
-
-@keyframes jp-fade-in {
-  from { opacity: 0; transform: translateY(-3px); }
-  to { opacity: 1; transform: none; }
-}
 
 /* ---------- actions ---------- */
 
@@ -304,8 +310,8 @@
   padding: 36px 12px;
   border-radius: 14px;
   background: rgba(20, 8, 10, 0.74);
-  /* Late, so the round's last move finishes flying first. */
-  animation: jp-overlay-in 420ms ease-out 520ms both;
+  /* Late, so the round's last move finishes flying first (an AI's flies slowly). */
+  animation: jp-overlay-in 420ms ease-out 1000ms both;
 }
 @keyframes jp-overlay-in {
   from { opacity: 0; }
@@ -319,7 +325,7 @@
   background: #2b1519;
   border: 2px solid #e7b84a;
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
-  animation: jp-card-in 480ms cubic-bezier(0.2, 0.9, 0.3, 1.1) 560ms both;
+  animation: jp-card-in 480ms cubic-bezier(0.2, 0.9, 0.3, 1.1) 1050ms both;
 }
 @keyframes jp-card-in {
   from { opacity: 0; transform: translateY(16px) scale(0.97); }
@@ -361,7 +367,7 @@
   position: absolute;
   top: -30px;
   right: 6px;
-  animation: jp-seal-pop 900ms cubic-bezier(0.2, 1.5, 0.4, 1) 1000ms both;
+  animation: jp-seal-pop 900ms cubic-bezier(0.2, 1.5, 0.4, 1) 1500ms both;
   filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.5));
 }
 @keyframes jp-seal-pop {
@@ -392,5 +398,5 @@
 .jp-rules-table { width: 100%; }
 
 @media (prefers-reduced-motion: reduce) {
-  .jp-card.fresh, .jp-lastmove, .jp-overlay, .jp-overlay-card, .jp-seal-pop { animation: none; }
+  .jp-card.fresh, .jp-overlay, .jp-overlay-card, .jp-seal-pop { animation: none; }
 }

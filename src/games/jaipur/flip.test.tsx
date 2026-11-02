@@ -5,7 +5,7 @@ import { JaipurFlipProvider, useFlip, useFlipAnchor } from './flip';
 // jsdom has no layout and no Web Animations: each test node reports its
 // position and size in data attributes, and animate() is recorded.
 
-interface Flight { key: string; frames: Keyframe[]; delay: number }
+interface Flight { key: string; frames: Keyframe[]; delay: number; duration: number }
 let flights: Flight[];
 const realRect = Element.prototype.getBoundingClientRect;
 
@@ -16,7 +16,7 @@ beforeEach(() => {
     return new DOMRect(Number(el.dataset.x ?? 0), Number(el.dataset.y ?? 0), Number(el.dataset.w ?? 84), Number(el.dataset.h ?? 118));
   };
   (Element.prototype as unknown as { animate: unknown }).animate = function (this: HTMLElement, frames: Keyframe[], opts: KeyframeAnimationOptions) {
-    flights.push({ key: this.dataset.key ?? '?', frames, delay: Number(opts.delay ?? 0) });
+    flights.push({ key: this.dataset.key ?? '?', frames, delay: Number(opts.delay ?? 0), duration: Number(opts.duration) });
     return { cancel: vi.fn() } as unknown as Animation;
   };
 });
@@ -36,9 +36,11 @@ function Anchor() {
   return <div ref={useFlipAnchor('deck')} data-x={10} data-y={300} />;
 }
 
-function Board({ items, origins = new Map(), scene = 's' }: { items: ItemSpec[]; origins?: Map<string, string>; scene?: string }) {
+function Board({ items, origins = new Map(), scene = 's', pace }: {
+  items: ItemSpec[]; origins?: Map<string, string>; scene?: string; pace?: 'normal' | 'slow';
+}) {
   return (
-    <JaipurFlipProvider origins={origins} scene={scene}>
+    <JaipurFlipProvider origins={origins} scene={scene} pace={pace}>
       <Anchor />
       {items.map((it) => <Item key={`${it.zone}:${it.k}`} {...it} />)}
     </JaipurFlipProvider>
@@ -76,5 +78,15 @@ describe('jaipur flights', () => {
     const { rerender } = render(<Board items={before} />);
     rerender(<Board items={after} />);
     expect(flights.map((f) => f.delay)).toEqual([0, 70, 140]);
+    expect(flights.every((f) => f.duration === 420)).toBe(true);
+  });
+
+  it('a slow pace (an AI move with a human watching) flies longer and further apart', () => {
+    const before = [0, 1, 2].map((i) => ({ k: `t${i}`, zone: 'pile-cloth', x: 600 + i * 22, y: 40, w: 22, h: 22 }));
+    const after = [0, 1, 2].map((i) => ({ k: `t${i}`, zone: 'tokens-ai', x: 100 + i * 26, y: 60, w: 25, h: 25 }));
+    const { rerender } = render(<Board items={before} pace="slow" />);
+    rerender(<Board items={after} pace="slow" />);
+    expect(flights.map((f) => f.delay)).toEqual([0, 130, 260]);
+    expect(flights.every((f) => f.duration === 760)).toBe(true);
   });
 });

@@ -85,17 +85,6 @@ function LobbyConfig({ config, seats, onChange }: { config: JaipurConfig; seats:
           </button>
         ))}
       </div>
-      <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <input
-          type="checkbox"
-          checked={config.memoryAid !== false}
-          onChange={(e) => onChange({ ...config, memoryAid: e.target.checked })}
-        />
-        <span><strong>Memory aid</strong> — show the cards your rival is known to hold</span>
-      </label>
-      <p className="help" style={{ marginTop: 10 }}>
-        Two players. Untick AI on the second seat for two humans sharing this screen.
-      </p>
     </div>
   );
 }
@@ -300,6 +289,9 @@ function GameView({ state, localPlayerId, dispatch }: {
   // the round's last move still flies; a new round or a change of point of
   // view (hot-seat hand-over) animates nothing.
   const scene = `${state.round}:${bottom.id}`;
+  // An AI's move flies slowly when a human is watching, so it can be followed.
+  const lastMove = [...state.log].reverse().find((e) => 'playerId' in e);
+  const pace = !allAI && lastMove && 'playerId' in lastMove && seatOf(state, lastMove.playerId)?.isAI ? 'slow' : 'normal';
 
   const act = (a: JaipurAction | null) => {
     if (!a) return;
@@ -331,7 +323,7 @@ function GameView({ state, localPlayerId, dispatch }: {
   const takingTypes = new Set(sel.market.map((id) => state.market.find((c) => c.id === id)?.type).filter(Boolean));
 
   return (
-    <JaipurFlipProvider origins={origins} scene={scene}>
+    <JaipurFlipProvider origins={origins} scene={scene} pace={pace}>
       <div className="jp-layout">
         <div className="jp-board">
           <StatusStrip state={state} />
@@ -341,7 +333,7 @@ function GameView({ state, localPlayerId, dispatch }: {
             position="top"
             reveal={revealAll}
             active={state.activePlayerId === top.id && state.subPhase === 'turn'}
-            memoryAid={state.config.memoryAid !== false && !revealAll}
+            memoryAid={!revealAll}
             viewerId={viewer?.id ?? null}
           />
           <MarketRug
@@ -351,7 +343,6 @@ function GameView({ state, localPlayerId, dispatch }: {
             freshIds={freshIds}
             onClick={clickMarket}
           />
-          <LastMove state={state} viewerId={viewer?.id ?? null} revealAll={revealAll} />
           <PlayerRow
             state={state}
             player={bottom}
@@ -470,7 +461,7 @@ function PlayerRow({
           <div className="jp-zone-label">
             Hand <span className="muted">{player.hand.length}/{HAND_LIMIT}</span>
           </div>
-          <div className={`jp-hand ${small ? 'jp-hand-small' : ''}`}>
+          <div className={`jp-hand ${small ? 'jp-hand-small' : ''}`} style={{ ['--n' as string]: Math.max(1, player.hand.length) }}>
             {hand.map((c) => {
               const selected = selection?.hand.includes(c.id) ?? false;
               const blocked = !!onHandClick && !selected && takingTypes?.has(c.type);
@@ -567,7 +558,7 @@ function MarketRug({ state, selected, selectable, freshIds, onClick }: {
         </div>
         <div className="jp-pile-label">Deck · {state.deck.length}</div>
       </div>
-      <div className="jp-market" aria-label="Market">
+      <div className="jp-market" aria-label="Market" style={{ ['--n' as string]: Math.max(1, state.market.length) }}>
         {state.market.map((c) => (
           <CardView
             key={c.id}
@@ -598,20 +589,6 @@ function MarketRug({ state, selected, selectable, freshIds, onClick }: {
         </div>
         <div className="jp-pile-label">Sold · {state.discard.length}</div>
       </div>
-    </div>
-  );
-}
-
-function LastMove({ state, viewerId, revealAll }: { state: JaipurState; viewerId: PlayerId | null; revealAll: boolean }) {
-  const last = [...state.log].reverse().find((e) => e.round === state.round && e.kind !== 'roundEnd' && e.kind !== 'matchEnd');
-  const text = last
-    ? describe(state, last, viewerId, revealAll)
-    : `Round ${state.round} — ${nameOf(state, state.roundStarterId)} starts.`;
-  const mine = last && 'playerId' in last && last.playerId === viewerId;
-  return (
-    <div className="jp-lastmove" key={state.logSeq}>
-      <span className="jp-lastmove-tag">{mine ? 'You' : last ? 'Last move' : 'New round'}</span>
-      {text}
     </div>
   );
 }

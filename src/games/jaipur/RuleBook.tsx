@@ -228,8 +228,8 @@ export function Rules() {
                 <li><strong>Sell:</strong> click cards of one good in your hand, then <em>Sell</em> — or use the quick-sell buttons.</li>
               </ul>
               <p className="jp-rules-note">
-                The <em>memory aid</em> (on by default, lobby option) lists the cards your rival is known to hold: the goods
-                they took from the market and haven't played. It's public information anyway, so the AI uses it too.
+                The <em>Known</em> line under your rival's hand lists the cards they are known to hold: the goods they
+                took from the market and haven't played. It's public information anyway, so the AI uses it too.
               </p>
             </>
           ),
