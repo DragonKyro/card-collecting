@@ -31,19 +31,46 @@ import { BonusTokenArt, CamelTokenArt, GoodsTokenArt, SealArt, TokenSvg, TypeIco
 import { BonusTokenView, CardBack, CardView, GoodsTokenView } from './Card';
 import { JaipurFlipProvider, cardKey, useFlipAnchor } from './flip';
 import { Rules } from './RuleBook';
+import { AI_LEVELS, aiLevelOf } from './levels';
 import './jaipur.css';
 
 // ---------------------------------------------------------------------------
 // Lobby
 
-function LobbyConfig({ config, onChange }: { config: JaipurConfig; seats: Seat[]; onChange: (c: JaipurConfig) => void }) {
+function LobbyConfig({ config, seats, onChange }: { config: JaipurConfig; seats: Seat[]; onChange: (c: JaipurConfig) => void }) {
   const options: Array<{ seals: number; label: string }> = [
     { seals: 1, label: 'Single round' },
     { seals: 2, label: 'Best of 3' },
     { seals: 3, label: 'Best of 5' },
   ];
+  const hasAI = seats.some((s) => s.isAI);
+  const level = aiLevelOf(config);
+  // Start fetching a trained level's policy while the lobby is still open
+  // (the Start button awaits it either way).
+  useEffect(() => {
+    if (hasAI && level !== 'heuristic') void import('./aiLevels').then((m) => m.prepareAiLevel(level)).catch(() => {});
+  }, [hasAI, level]);
   return (
     <div className="game-config">
+      {hasAI && AI_LEVELS.length > 1 && (
+        <>
+          <h4 className="jp-lobby-h">AI difficulty</h4>
+          <div role="radiogroup" aria-label="AI difficulty" style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
+            {AI_LEVELS.map((l) => (
+              <button
+                key={l.id}
+                role="radio"
+                aria-checked={level === l.id}
+                className={level === l.id ? undefined : 'secondary'}
+                title={l.trained ? 'Trained neural network' : 'Hand-written heuristic'}
+                onClick={() => onChange({ ...config, aiLevel: l.id })}
+              >
+                {l.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
       <h4 className="jp-lobby-h">Match length</h4>
       <div role="radiogroup" aria-label="Match length" style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
         {options.map((o) => (

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { JaipurState } from '../types';
+import { BONUS_VALUES, CARD_COUNTS, GOODS, TOKEN_VALUES } from '../cards';
 import { sampleStates } from '../testSupport';
 import { observe } from './observation';
 import { ENCODER_VERSION, OBS_DIM, encodeObservation, featureLayout } from './encode';
@@ -30,7 +31,40 @@ describe('jaipur feature encoder', () => {
   });
 
   it('matches the versioned size (bump ENCODER_VERSION when it changes)', () => {
-    expect({ version: ENCODER_VERSION, dim: OBS_DIM }).toEqual({ version: 1, dim: 231 });
+    expect({ version: ENCODER_VERSION, dim: OBS_DIM }).toEqual({ version: 2, dim: 310 });
+  });
+
+  it('encodes the price ladders, unsold cards, expected deck and unseen bonus values exactly', () => {
+    let checked = 0;
+    for (const s of STATES) {
+      if (s.phase !== 'playing') continue;
+      for (const p of s.players) {
+        const obs = observe(s, p.id);
+        const x = encodeObservation(obs);
+        GOODS.forEach((g) => {
+          const ladder = Array.from(segment(x, `tokens.ladder.${g}`)).map((v) => Math.round(v * 7));
+          expect(ladder).toEqual(TOKEN_VALUES[g].map((_, k) => s.tokens[g][k]?.value ?? 0));
+          const unsold = CARD_COUNTS[g] - s.discard.filter((c) => c.type === g).length;
+          expect(segment(x, 'cards.unsold')[GOODS.indexOf(g)]).toBeCloseTo(unsold / CARD_COUNTS[g], 5);
+        });
+        // The deck's expected make-up adds up to the deck, camels exactly.
+        const deck = Array.from(segment(x, 'deck.expected')).map((v) => v * 10);
+        expect(deck.reduce((a, b) => a + b, 0)).toBeCloseTo(s.deck.length, 3);
+        expect(deck[6]).toBeCloseTo(s.deck.filter((c) => c.type === 'camel').length, 3);
+        const odds = Array.from(segment(x, 'deck.nextOdds'));
+        if (s.deck.length) expect(odds.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 4);
+        // Unseen bonus values = the printed piles minus the viewer's own tokens.
+        for (const size of [3, 4, 5] as const) {
+          const faces = [...new Set(BONUS_VALUES[size])].sort((a, b) => b - a);
+          const got = Array.from(segment(x, `bonus.unseenValues.${size}`))
+            .map((v, i) => Math.round(v * BONUS_VALUES[size].filter((b) => b === faces[i]).length));
+          const own = p.bonusTokens.filter((t) => t.size === size).map((t) => t.value);
+          expect(got).toEqual(faces.map((f) => BONUS_VALUES[size].filter((b) => b === f).length - own.filter((o) => o === f).length));
+        }
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThan(200);
   });
 
   it('writes bounded, finite values for every sampled state, seat and draft', () => {

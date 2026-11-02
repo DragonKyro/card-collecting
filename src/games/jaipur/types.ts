@@ -73,7 +73,13 @@ export interface JaipurConfig {
   /** UI aid: list the cards an opponent is known to hold (taken from the
    *  market and not yet played). Public information either way; omitted = on. */
   memoryAid?: boolean;
+  /** Who plays the AI seats: the hand-written heuristic or a trained policy
+   *  level (see levels.ts); omitted = the default level. */
+  aiLevel?: JaipurAiLevel;
 }
+
+/** 'heuristic' = ai.ts; the others are trained policies shipped in ./policies. */
+export type JaipurAiLevel = 'heuristic' | 'easy' | 'normal' | 'hard';
 
 export type JaipurSubPhase = 'turn' | 'roundEnd';
 

@@ -1,4 +1,4 @@
-// Jaipur — observation → fixed-length feature vector (encoder v1).
+// Jaipur — observation → fixed-length feature vector (encoder v2).
 //
 // Pure function of JaipurObservation (never JaipurState), so hidden
 // information can't leak in here. The layout is data-independent: every
@@ -8,15 +8,34 @@
 //
 //   match     round, seals, who started the round
 //   clock     deck size, empty goods piles (3 end the round)
-//   hands     own hand and the opponent's known / unknown cards, what the
-//             opponent knows of the viewer's hand, hand sizes
-//   camels    herds, the camel-token race, camels in the market and unseen
-//   market    goods on offer, sold cards, cards the viewer can't place
-//   tokens    each pile's size, its next three values and what's left in it;
-//             what selling the viewer's whole holding of a good pays now
+//   hands     own hand; the opponent's hand size, the cards they're known to
+//             hold (taken from the market) and how many are unknown; what
+//             the opponent knows of the viewer's hand
+//   camels    herds, the camel-token race, camels in the market and in the
+//             deck (exact: camels never stay in a hand)
+//   cards     per good: in the market, not yet sold, unseen (deck + the
+//             opponent's unknown cards); the deck's expected make-up and the
+//             odds of each type being the next card turned up — the unseen
+//             goods split pro rata between the deck and the opponent's
+//             unknown cards, since the viewer can't tell them apart
+//   tokens    each goods pile: size, the full remaining price ladder (next
+//             token first), what's left in it
+//   sales     what selling 1..7 of each good pays right now (bonus at its
+//             expected value)
+//   bonus     tokens left per pile, and the bonus values the viewer hasn't
+//             seen (piles + the opponent's tokens) as counts per value
 //   score     rupees on both sides (the opponent's bonus tokens at the
-//             expected value of the bonus values the viewer hasn't seen)
+//             expected value of those unseen values), margins, tiebreak leads
 //   decision  main decision or an exchange in progress (taken / given so far)
+//
+// Never encoded (and not in the observation): the deck's order or exact
+// contents, the opponent's unknown cards, which bonus values are in the
+// piles and which the opponent holds.
+//
+// v2 (from v1): full price ladders instead of the top three values; unsold
+// cards instead of sold; expected deck make-up and next-card odds; unseen
+// bonus values per value instead of only their mean; sale values for every
+// count instead of selling everything.
 //
 // Bump ENCODER_VERSION whenever a segment is added, removed, reordered or
 // rescaled; trained weights are only valid for the version they saw.
@@ -29,14 +48,25 @@ import {
 import { countCards, emptyCounts, emptyGoodCounts, sumGoods } from '../rules';
 import type { JaipurObservation } from './observation';
 
-export const ENCODER_VERSION = 1;
+export const ENCODER_VERSION = 2;
 
 const DECK_NORM = 40;
 const HERD_NORM = 11;
 const SCORE_NORM = 60;
 const MARGIN_NORM = 30;
 const SALE_NORM = 30;
+const TOKEN_NORM = 7;
+const EXPECTED_NORM = 10;
 const ROUNDS = 5;
+const MAX_SALE = HAND_LIMIT;
+
+/** The distinct values of each bonus pile, highest first, and how many of each it starts with. */
+const BONUS_FACES: Record<JaipurBonusSize, Array<{ value: number; copies: number }>> = Object.fromEntries(
+  BONUS_SIZES.map((size) => {
+    const values = [...new Set(BONUS_VALUES[size])].sort((a, b) => b - a);
+    return [size, values.map((value) => ({ value, copies: BONUS_VALUES[size].filter((v) => v === value).length }))];
+  }),
+) as Record<JaipurBonusSize, Array<{ value: number; copies: number }>>;
 
 export interface FeatureSegment {
   name: string;
@@ -109,6 +139,18 @@ export function myRupees(obs: JaipurObservation): number {
   return sum(obs.goodsTokens) + sum(obs.bonusTokens.map((t) => t.value));
 }
 
+/** Expected count of each card type in the deck. Unseen camels are all in the
+ *  deck; unseen goods are split between the deck and the opponent's unknown
+ *  cards in proportion to their sizes. */
+export function expectedDeck(obs: JaipurObservation): Record<JaipurCardType, number> {
+  const out = emptyCounts();
+  out.camel = obs.unseen.camel;
+  const unseenGoods = sumGoods(obs.unseen);
+  const deckGoods = Math.max(0, obs.deckSize - obs.unseen.camel);
+  for (const g of GOODS) out[g] = unseenGoods > 0 ? (obs.unseen[g] * deckGoods) / unseenGoods : 0;
+  return out;
+}
+
 function writeFeatures(obs: JaipurObservation, w: Writer): void {
   const hand = countCards(obs.hand);
   const market = countCards(obs.market);
@@ -143,23 +185,39 @@ function writeFeatures(obs: JaipurObservation, w: Writer): void {
   w.scalar('camels.lead', clamp((herd - opp.herd) / 5, -2, 2));
   w.oneHot('camels.race', 3, Math.sign(herd - opp.herd) + 1);
   w.oneHot('camels.market', 6, market.camel);
-  w.scalar('camels.unseen', obs.unseen.camel / HERD_NORM);
+  w.scalar('camels.inDeck', obs.unseen.camel / HERD_NORM);
 
-  // ---- market and the rest of the cards ----
-  w.goods('market.count', (g) => market[g] / 5);
-  w.goods('cards.discard', (g) => obs.discard[g] / CARD_COUNTS[g]);
+  // ---- where the cards are ----
+  w.goods('cards.market', (g) => market[g] / 5);
+  w.goods('cards.unsold', (g) => (CARD_COUNTS[g] - obs.discard[g]) / CARD_COUNTS[g]);
   w.goods('cards.unseen', (g) => obs.unseen[g] / CARD_COUNTS[g]);
   w.scalar('cards.unseenTotal', sumGoods(obs.unseen) / DECK_NORM);
+  const deck = expectedDeck(obs);
+  w.values('deck.expected', CARD_TYPES.map((t) => deck[t] / EXPECTED_NORM));
+  w.values('deck.nextOdds', CARD_TYPES.map((t) => (obs.deckSize > 0 ? deck[t] / obs.deckSize : 0)));
 
-  // ---- tokens ----
+  // ---- price ladders ----
   w.goods('tokens.left', (g) => obs.tokens[g].length / TOKEN_VALUES[g].length);
-  for (let k = 0; k < 3; k++) w.goods(`tokens.next${k}`, (g) => (obs.tokens[g][k] ?? 0) / 7);
+  for (const g of GOODS) {
+    w.values(`tokens.ladder.${g}`, TOKEN_VALUES[g].map((_, k) => (obs.tokens[g][k] ?? 0) / TOKEN_NORM));
+  }
   w.goods('tokens.sum', (g) => sum(obs.tokens[g]) / sum(TOKEN_VALUES[g]));
-  w.goods('sell.all', (g) => saleValue(obs, g, hand[g]) / SALE_NORM);
+
+  // ---- what selling pays now ----
+  for (const g of GOODS) {
+    w.values(`sell.value.${g}`, Array.from({ length: MAX_SALE }, (_, i) =>
+      (i + 1 <= hand[g] ? saleValue(obs, g, i + 1) / SALE_NORM : 0)));
+  }
   w.goods('sell.legal', (g) => (hand[g] >= minSale(g) ? 1 : 0));
+
+  // ---- bonus piles ----
   w.values('bonus.left', BONUS_SIZES.map((s) => obs.bonusLeft[s] / BONUS_VALUES[s].length));
   const ev = bonusExpectation(obs);
   w.values('bonus.unseenMean', BONUS_SIZES.map((s) => ev[s] / 10));
+  for (const s of BONUS_SIZES) {
+    w.values(`bonus.unseenValues.${s}`, BONUS_FACES[s].map((f) =>
+      obs.unseenBonus[s].filter((v) => v === f.value).length / f.copies));
+  }
 
   // ---- score ----
   const mine = myRupees(obs);

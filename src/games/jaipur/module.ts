@@ -5,7 +5,13 @@ import type { Seat, PlayerId } from '@/core/types';
 import type { JaipurState, JaipurAction, JaipurConfig } from './types';
 import { applyAction, createJaipurState } from './reducer';
 import { chooseJaipurAction } from './ai';
+import { DEFAULT_AI_LEVEL, aiLevelOf, isAiLevel } from './levels';
 import { JaipurThumbnail } from './Thumbnail';
+
+// Trained levels (encoder + network runtime) are loaded on demand by
+// prepare(), keeping them out of the game-picker bundle.
+type AiLevels = typeof import('./aiLevels');
+let aiLevels: AiLevels | null = null;
 
 export const jaipurModule: GameModule<JaipurState, JaipurAction, JaipurConfig> = {
   id: 'jaipur',
@@ -15,7 +21,7 @@ export const jaipurModule: GameModule<JaipurState, JaipurAction, JaipurConfig> =
   maxPlayers: 2,
 
   defaultConfig(_seats: Seat[]): JaipurConfig {
-    return { sealsToWin: 2, memoryAid: true };
+    return { sealsToWin: 2, memoryAid: true, aiLevel: DEFAULT_AI_LEVEL };
   },
 
   validateConfig(config, seats) {
@@ -23,6 +29,7 @@ export const jaipurModule: GameModule<JaipurState, JaipurAction, JaipurConfig> =
     if (!(Number.isInteger(config.sealsToWin) && config.sealsToWin >= 1 && config.sealsToWin <= 3)) {
       errors.push('Seals to win must be 1–3.');
     }
+    if (config.aiLevel !== undefined && !isAiLevel(config.aiLevel)) errors.push('Unknown AI difficulty.');
     if (seats && seats.length !== 2) errors.push('Jaipur is for exactly 2 players.');
     return errors;
   },
@@ -36,7 +43,14 @@ export const jaipurModule: GameModule<JaipurState, JaipurAction, JaipurConfig> =
   },
 
   chooseAIAction(state, playerId: PlayerId) {
-    return chooseJaipurAction(state, playerId);
+    if (aiLevelOf(state.config) === 'heuristic') return chooseJaipurAction(state, playerId);
+    return aiLevels ? aiLevels.chooseLeveledAction(state, playerId) : null;
+  },
+
+  async prepare(config, seats) {
+    if (!seats.some((s) => s.isAI) || aiLevelOf(config) === 'heuristic') return;
+    aiLevels ??= await import('./aiLevels');
+    await aiLevels.prepareAiLevel(aiLevelOf(config));
   },
 
   Thumbnail: JaipurThumbnail,

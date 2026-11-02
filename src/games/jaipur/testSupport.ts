@@ -78,8 +78,9 @@ export function scrambleHidden(
   const opp = s.players[oi];
   const known = knowledgeOf(state, viewerId).knownHands[oi];
 
-  // The opponent's cards beyond the known ones, plus the deck, are one pool.
-  const slots: Slot[] = s.deck.map((_, i) => ({ arr: s.deck, i }));
+  // The opponent's cards beyond the known ones and the deck's goods are one
+  // pool (camels never sit in a hand, so they stay in the deck).
+  const slots: Slot[] = s.deck.flatMap((c, i) => (c.type === 'camel' ? [] : [{ arr: s.deck, i }]));
   const keep: Record<JaipurGood, number> = { ...known };
   opp.hand.forEach((c, i) => {
     const g = c.type as JaipurGood;
@@ -92,6 +93,10 @@ export function scrambleHidden(
     if (sl.arr[sl.i].type !== cards[k].type) changes++;
     sl.arr[sl.i] = cards[k];
   });
+  // And the deck's order.
+  const order = s.deck.map((c) => c.type).join();
+  s.deck = shuffle(rng, s.deck);
+  if (s.deck.map((c) => c.type).join() !== order) changes++;
 
   // Bonus values: the piles and the opponent's tokens share one pool per size.
   for (const size of BONUS_SIZES) {

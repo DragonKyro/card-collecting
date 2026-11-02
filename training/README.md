@@ -220,12 +220,23 @@ CLAUDE.md.
 
 ## Jaipur (`jaipur/`)
 
-The same pipeline for Jaipur (2 players, first to 2 seals by default). Nothing
-has been trained yet: the game's "vs AI" opponent is the hand-written
-heuristic (`src/games/jaipur/ai.ts`), which is also the baseline every
+The same pipeline for Jaipur (2 players, first to 2 seals by default). The
+hand-written heuristic (`src/games/jaipur/ai.ts`) is the baseline every
 checkpoint is scored against, next to random and the checkpoint 500 updates
 earlier. Reward is ±1 for the match, plus `--round-reward` (0.005) × the
 round's rupee margin and `--seal-reward` (0.1) to the round's winner / loser.
+Workers: `--self-play` (half) train both seats against themselves,
+`--vs-heuristic` (0.17 → 2 of 12) spar with the heuristic — a fixed,
+competent opponent from update 1 — and the rest play past checkpoints.
+
+The main run is launched by `training\runs\jaipur\main\train.cmd` (10k
+updates, `--resume`, output appended to `train.log`; run it again to carry on).
+At the defaults (12 workers × 32 envs × 64 decisions) it does ~17.5k
+decisions/s on this machine, ~1.4 s per update, ~4 h for 10k updates.
+Frozen policies named `easy-…` / `normal-…` / `hard-…` in
+`src/games/jaipur/policies/` become the game's AI levels automatically.
+`python -m pytest training/jaipur -q` checks TS ↔ PyTorch export parity,
+zero-sum self-play rewards, train → checkpoint → resume → evaluate, and freeze.
 
 ```sh
 npm run jaipur:build                                   # → training/jaipur/dist (train.py also builds it)
@@ -253,7 +264,8 @@ decisions/s per process at 32 envs.
 
 | File | Role |
 |---|---|
-| `jaipur/train.py` | PPO trainer (derived from `sgp/train.py`; shares `ssp/model.py`) |
+| `jaipur/train.py` | PPO trainer (derived from `sgp/train.py`; shares `ssp/model.py`), plus heuristic sparring workers |
+| `jaipur/test_training.py` | pytest: export parity, zero-sum rewards, train → resume → evaluate, freeze |
 | `jaipur/evaluate.py` | eval API + CLI (`match`, `baselines`, `progress`, `freeze`, `benchmarks`) |
 | `jaipur/env_client.py` | Python `JaipurEnv` client, plus a random-agent smoke test |
 | `jaipur/agents.ts` | `random`, `heuristic`, `heuristic:k=v,…`, `nn:`, `nn-sample:` |

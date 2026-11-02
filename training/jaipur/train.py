@@ -11,9 +11,10 @@ exits after the current update (the file is removed on the next start).
 
 Each update:
   1. Collect `--rollout` decisions from every env — `--workers` node processes
-     × `--envs-per-worker` matches. Self-play workers train on both seats; the
-     rest play a past checkpoint drawn from the pool (random play until the
-     first checkpoint exists).
+     × `--envs-per-worker` matches. Self-play workers train on both seats;
+     `--vs-heuristic` of them spar with the hand-written heuristic; the rest
+     play a past checkpoint drawn from the pool (random play until the first
+     checkpoint exists).
   2. PPO on every finished transition. Training starts from scratch.
   3. Every `--save-every`: a resumable checkpoint (ckpt/update_N.pt) and an
      exported policy (policies/update_N.json) the TypeScript side can play —
@@ -87,7 +88,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     game.add_argument("--envs-per-worker", type=int, default=32)
     game.add_argument("--rollout", type=int, default=64, help="decisions per env per update")
     game.add_argument("--self-play", type=float, default=0.5,
-                      help="share of workers in self-play; the rest face past checkpoints")
+                      help="share of workers in self-play; the rest face the heuristic or past checkpoints")
+    game.add_argument("--vs-heuristic", type=float, default=0.17,
+                      help="share of workers playing the hand-written heuristic (a fixed, competent sparring partner)")
     game.add_argument("--pool", type=int, default=20, help="newest checkpoints past opponents are drawn from")
     game.add_argument("--pool-refresh", type=int, default=10, help="updates between past-opponent re-draws")
     game.add_argument("--round-reward", type=float, default=0.005,
@@ -125,15 +128,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 @dataclass
 class Worker:
-    role: str  # 'self' | 'past'
+    role: str  # 'self' | 'heuristic' | 'past'
     env: JaipurEnv
     opponent: str
     batch: Batch | None = None
 
 
-def worker_roles(n: int, self_share: float) -> list[str]:
+def worker_roles(n: int, self_share: float, heuristic_share: float = 0.0) -> list[str]:
     n_self = min(n, max(0, round(n * self_share)))
-    return ["self"] * n_self + ["past"] * (n - n_self)
+    n_heur = min(n - n_self, max(0, round(n * heuristic_share)))
+    return ["self"] * n_self + ["heuristic"] * n_heur + ["past"] * (n - n_self - n_heur)
 
 
 def build_typescript() -> None:
@@ -289,11 +293,12 @@ class Trainer:
             json.dump({**vars(a), **self.versions, "obsDim": self.obs_dim, "numSlots": self.num_slots,
                        "arch": {"hidden": self.net.hidden, "layers": self.net.layers}}, f, indent=2)
 
-        roles = worker_roles(a.workers, a.self_play)
+        roles = worker_roles(a.workers, a.self_play, a.vs_heuristic)
         for w, role in enumerate(roles):
             env = JaipurEnv()
             seed = a.seed * 10_007 + w * 7_919 + self.update * 104_729
-            opponent = "self" if role == "self" else "random"  # past workers get a checkpoint once one exists
+            # Past workers play random until the first checkpoint exists.
+            opponent = {"self": "self", "heuristic": "heuristic"}.get(role, "random")
             worker = Worker(role, env, opponent)
             worker.batch = env.reset(num_envs=a.envs_per_worker, seed=seed, opponent=opponent,
                                      round_reward=a.round_reward, seal_reward=a.seal_reward, seals_to_win=a.seals)
