@@ -7,6 +7,7 @@ import { useLayoutEffect, useRef, useState } from 'react';
 import { create } from 'zustand';
 import type { SspState, SspLogEntry, SspCardFamily } from './types';
 import { FAMILY, FAMILY_ORDER } from './cards';
+import { EVENT_BY_ID } from './events';
 import type { PlayerId } from '@/core/types';
 
 interface ChatMsg { id: number; who: string; text: string; at: number }
@@ -265,23 +266,51 @@ function LogLine({ entry, state, localPlayerId }: { entry: SspLogEntry; state: S
         : (<>{name(entry.playerId)} (jellyfish) could only draw the top card of the deck.</>);
       break;
     }
-    case 'angelfishDraw': {
-      const isMine = entry.playerId === localPlayerId;
-      body = isMine
-        ? (<>{name(entry.playerId)} (Angelfish event) drew <strong>{fam(entry.family)}</strong> for free.</>)
-        : (<>{name(entry.playerId)} (Angelfish event) drew a card for free.</>);
+    case 'angelfishDraw':
+      // A pile top: everyone saw it go.
+      body = (<>{name(entry.playerId)} (Angelfish) took <strong>{fam(entry.family)}</strong>{entry.pile != null ? ` from pile ${entry.pile + 1}` : ''}.</>);
+      break;
+    case 'rodeoLook':
+      body = (<>{name(entry.playerId)} (swimmer pair) looked at {name(entry.targetPlayerId)}&apos;s hand.</>);
+      break;
+    case 'rodeoSwap': {
+      const isParticipant = entry.playerId === localPlayerId || entry.targetPlayerId === localPlayerId;
+      body = !entry.swapped
+        ? (<>{name(entry.playerId)} swapped nothing.</>)
+        : isParticipant && entry.given && entry.taken
+          ? (<>{name(entry.playerId)} swapped <strong>{fam(entry.given.family)}</strong> for {name(entry.targetPlayerId)}&apos;s <strong>{fam(entry.taken.family)}</strong>.</>)
+          : (<>{name(entry.playerId)} swapped a card with {name(entry.targetPlayerId)}.</>);
       break;
     }
+    case 'pairSteal': {
+      const [a, b] = entry.cards;
+      body = (<>{name(entry.playerId)} (shark pair) took {name(entry.targetPlayerId)}&apos;s <strong>{fam(a.family)} + {fam(b.family)}</strong> pair.</>);
+      break;
+    }
+    case 'coralShell':
+      body = (<>{name(entry.playerId)} (Coral Reef) placed a shell face down — immune to attacks.</>);
+      break;
     case 'eventReveal':
       cls += ' system';
-      body = (<><span className="who system-who">Round {entry.round}</span> — Event revealed: <strong>{entry.eventId}</strong>.</>);
+      body = (<><span className="who system-who">Round {entry.round}</span> — Event revealed: <strong>{EVENT_BY_ID[entry.eventId].name}</strong>.</>);
       break;
     case 'eventAwarded':
       cls += ' system';
       body = entry.playerId
-        ? (<><span className="who system-who">Event awarded</span> — <strong>{entry.eventId}</strong> goes to {name(entry.playerId)}.</>)
-        : (<><span className="who system-who">Event discarded</span> — <strong>{entry.eventId}</strong> applied this round only.</>);
+        ? (<><span className="who system-who">Event awarded</span> — <strong>{EVENT_BY_ID[entry.eventId].name}</strong> goes to {name(entry.playerId)}.</>)
+        : (<><span className="who system-who">Event discarded</span> — <strong>{EVENT_BY_ID[entry.eventId].name}</strong>.</>);
       break;
+    case 'eventDiscarded': {
+      cls += ' system';
+      const ev = EVENT_BY_ID[entry.eventId];
+      const why = entry.reason === 'tie'
+        ? `tie for the ${ev.sign === '+' ? 'most' : 'fewest'} points`
+        : entry.reason === 'lostPlace'
+          ? (<>{name(entry.playerId)} is no longer {ev.sign === '+' ? 'in the lead' : 'in last place'}</>)
+          : (<>{name(entry.playerId)} kept the other card</>);
+      body = (<><span className="who system-who">Event discarded</span> — <strong>{ev.name}</strong> ({why}).</>);
+      break;
+    }
   }
   return <div className={cls}>{body}</div>;
 }

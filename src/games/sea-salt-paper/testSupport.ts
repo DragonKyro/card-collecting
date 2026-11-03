@@ -85,8 +85,9 @@ export interface ScrambleOptions {
  *   - opponents' hand contents (swapped with deck cards);
  *   - an opponent's pending draw / lobster reveal;
  *   - deck order and the RNG state;
- *   - private log fields (deck keeps, fish draws, lobster picks, and steals
- *     the viewer wasn't party to). */
+ *   - other players' face-down Coral Reef shells;
+ *   - private log fields (deck keeps, fish draws, lobster picks, steals and
+ *     Water Rodeo looks / swaps the viewer wasn't party to, face-down shells). */
 export function scrambleHidden(
   state: SspState, viewerId: PlayerId, rng: RngState, opts: ScrambleOptions = {},
 ): { s: SspState; changes: number } {
@@ -136,7 +137,22 @@ export function scrambleHidden(
   s.rngState = { seed: (rngNext(rng) * 0x100000000) >>> 0 };
 
   const randomFamily = (): SspCardFamily => FAMILY_ORDER[rngInt(rng, FAMILY_ORDER.length)];
+  const randomCard = (family = randomFamily()): SspCard => ({ id: 100_000 + rngInt(rng, 1000), family, color: 'tan' });
+  for (const p of s.players) {
+    if (p.id !== viewerId && p.coralShell) { p.coralShell = randomCard('shell'); changes++; }
+  }
   for (const e of s.log) {
+    // The player looked at knows their own hand, so knows what the looker saw.
+    if (e.kind === 'rodeoLook' && e.playerId !== viewerId && e.targetPlayerId !== viewerId && e.hand) {
+      e.hand = e.hand.map(() => randomCard());
+      changes++;
+    }
+    if (e.kind === 'rodeoSwap' && e.swapped && e.playerId !== viewerId && e.targetPlayerId !== viewerId) {
+      e.given = randomCard();
+      e.taken = randomCard();
+      changes++;
+    }
+    if (e.kind === 'coralShell' && e.playerId !== viewerId) { e.card = randomCard('shell'); changes++; }
     if (e.kind === 'drawDeck' && e.playerId !== viewerId) { e.keptFamily = randomFamily(); changes++; }
     if (e.kind === 'fishDraw' && e.playerId !== viewerId) { e.family = randomFamily(); changes++; }
     if (e.kind === 'jellyfishDraw' && e.playerId !== viewerId) { e.family = randomFamily(); changes++; }

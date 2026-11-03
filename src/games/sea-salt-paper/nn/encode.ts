@@ -27,17 +27,26 @@ const DECK_NORM = 66;
 const SCORE_NORM = 20;
 const MARGINAL_NORM = 5;
 
+// The Extra Pepper decisions (Water Rodeo, Angelfish, event choice) have no
+// action slots — fixedChoices.ts answers them, so the network never decides
+// in those subphases. They share the slot of the closest one, which keeps the
+// layout (and the shipped policies) unchanged.
 const SUBPHASE_INDEX: Record<SspSubPhase, number> = {
   awaitingAction: 0,
   awaitingKeep: 1,
   awaitingPlayOrEnd: 2,
   awaitingCrabPick: 3,
   awaitingSharkSteal: 4,
+  awaitingRodeoTarget: 4,
+  awaitingRodeoSwap: 4,
+  awaitingPairSteal: 4,
   awaitingLobsterPick: 5,
+  awaitingAngelfishPick: 5,
   roundEnd: 6,
+  awaitingEventChoice: 6,
   gameOver: 7,
 };
-const SUBPHASE_COUNT = Object.keys(SUBPHASE_INDEX).length;
+const SUBPHASE_COUNT = 8;
 
 const COLOR_INDEX: Record<SspColor, number> = {
   white: 0, yellow: 1, green: 2, pink: 3, purple: 4, teal: 5,
@@ -86,13 +95,14 @@ class Writer {
   }
 }
 
-function scoringOpts(p: SspObservedPlayer): CardPointsOpts {
+export function scoringOpts(p: SspObservedPlayer): CardPointsOpts {
   return {
     trioCancelledIds: new Set(p.trios.flat()),
     trios: p.trios.length,
     shellPerCard: p.rules.shellPerCard,
     octopusPerCard: p.rules.octopusPerCard,
     mermaidsScoreZero: p.rules.mermaidsScoreZero,
+    waterRodeo: p.rules.waterRodeo,
   };
 }
 
@@ -292,10 +302,11 @@ const PLACEHOLDER_OBS: SspObservation = {
   lastChanceOffset: null, deckSize: 0, hand: [], pendingDraw: [],
   piles: [{ top: null, size: 0, buried: [], unknownRemovals: 0 }, { top: null, size: 0, buried: [], unknownRemovals: 0 }],
   crabLookPile: null, lobsterReveal: [], currentEvent: null, canStop: false, canLastChance: false,
+  crabPiles: [], canPlaceCoral: false, eventChoice: null, rodeoLook: null,
   players: ['a', 'b'].map((id) => ({
     id, handSize: 0, table: [], trios: [], heldEvents: [], matchScore: 0, knownCards: [],
-    rules: { shellPerCard: false, octopusPerCard: false, mermaidsScoreZero: false, stopThreshold: 7 },
-    locked: false,
+    rules: { shellPerCard: false, octopusPerCard: false, mermaidsScoreZero: false, waterRodeo: false, stopThreshold: 7 },
+    locked: false, coralShell: false,
   })),
 };
 

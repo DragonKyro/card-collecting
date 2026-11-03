@@ -25,6 +25,7 @@ import { applyAction } from '@/games/sea-salt-paper/reducer';
 import { observe } from '@/games/sea-salt-paper/nn/observation';
 import { NUM_SLOTS, decodeSlot, legalMask } from '@/games/sea-salt-paper/nn/actions';
 import { OBS_DIM, encodeObservation } from '@/games/sea-salt-paper/nn/encode';
+import { fixedChoice } from '@/games/sea-salt-paper/nn/fixedChoices';
 import { agentFactory, agentSeed, type AgentFactory, type SspAgent } from './agents';
 import { newMatch, winnerSeatOf } from './sim';
 
@@ -208,6 +209,13 @@ export class SspVecEnv {
           r[i * 2 + 1] += this.opts.roundReward * (totals[1] - totals[0]);
         }
         env.state = applyAction(s, { type: 'nextRound' });
+        env.steps++;
+        continue;
+      }
+      // Extra Pepper decisions without action slots play themselves.
+      const fixed = s.event ? fixedChoice(observe(s, s.activePlayerId!)) : null;
+      if (fixed) {
+        env.state = applyAction(s, fixed);
         env.steps++;
         continue;
       }

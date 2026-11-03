@@ -107,6 +107,27 @@ export interface CardPointsOpts {
   octopusPerCard?: boolean;
   /** Tornado: mermaids contribute 0 pts (but the instant-win at 4 still fires). */
   mermaidsScoreZero?: boolean;
+  /** The Water Rodeo: two swimmers and two sharks are duos too. */
+  waterRodeo?: boolean;
+}
+
+/** Duo pairs that a set of cards (trio cards already left out) forms.
+ *  Salt pairings go first — lobster takes a crab, jellyfish a swimmer — so
+ *  no crab / swimmer that could match its base partner is spent twice. Under
+ *  the Water Rodeo every leftover shark and swimmer pairs with any other. */
+function duoPairCount(pairable: Partial<Record<SspCardFamily, number>>, waterRodeo: boolean): number {
+  const crab = pairable.crab ?? 0;
+  const shark = pairable.shark ?? 0;
+  const swimmer = pairable.swimmer ?? 0;
+  const lobsterPairs = Math.min(pairable.lobster ?? 0, crab);
+  const jellyfishPairs = Math.min(pairable.jellyfish ?? 0, swimmer);
+  const sharkSwimmer = waterRodeo
+    ? Math.floor((shark + swimmer - jellyfishPairs) / 2)
+    : Math.min(shark, swimmer - jellyfishPairs);
+  return lobsterPairs + Math.floor((crab - lobsterPairs) / 2)
+    + jellyfishPairs + sharkSwimmer
+    + Math.floor((pairable.boat ?? 0) / 2)
+    + Math.floor((pairable.fish ?? 0) / 2);
 }
 
 /** Sum of point values from the cards themselves (no color bonus). */
@@ -120,30 +141,7 @@ export function cardPoints(cards: SspCard[], opts: CardPointsOpts = {}): number 
   // in place of their 1-pt pair (added below) — but they stay boats / crabs /
   // fish in `familyCounts`, so multipliers (lighthouse, shoal, crab basket)
   // still count them.
-  // Salt: lobster pairs with crab, jellyfish pairs with swimmer. Greedy
-  // pairing: dedicated Salt pairings first so we don't double-spend a crab/
-  // swimmer that could match its base partner.
-  const pairable = countFamilies(cards, opts.trioCancelledIds);
-  const crab = pairable.crab ?? 0;
-  const boat = pairable.boat ?? 0;
-  const fish = pairable.fish ?? 0;
-  const shark = pairable.shark ?? 0;
-  const swimmer = pairable.swimmer ?? 0;
-  const jellyfish = pairable.jellyfish ?? 0;
-  const lobster = pairable.lobster ?? 0;
-
-  const lobsterPairs = Math.min(lobster, crab);
-  const crabAfterLobster = crab - lobsterPairs;
-  total += lobsterPairs;
-  total += Math.floor(crabAfterLobster / 2);
-
-  const jellyfishPairs = Math.min(jellyfish, swimmer);
-  const swimmerAfterJelly = swimmer - jellyfishPairs;
-  total += jellyfishPairs;
-  total += Math.min(shark, swimmerAfterJelly);
-
-  total += Math.floor(boat / 2);
-  total += Math.floor(fish / 2);
+  total += duoPairCount(countFamilies(cards, opts.trioCancelledIds), opts.waterRodeo === true);
 
   // Starfish trios — each is worth a flat 3 pts.
   total += 3 * (opts.trios ?? 0);
@@ -232,10 +230,8 @@ export function totalScore(
   opts: TotalScoreOpts = {},
 ): { cardPoints: number; colorBonus: number; total: number } {
   const cp = cardPoints(handAndTable, opts);
-  if (opts.mermaidsScoreZero) {
-    return { cardPoints: cp, colorBonus: 0, total: cp };
-  }
-  let claims = mermaidColorBonus(handAndTable, { forceMinMermaids: 0 });
+  // The Tornado: mermaids score nothing (the colour bonus is not theirs).
+  let claims = opts.mermaidsScoreZero ? 0 : mermaidColorBonus(handAndTable, { forceMinMermaids: 0 });
   if (opts.doubleColorBonus) claims *= 2;
   const cards = cp + claims;
   // The special color bonus is always computed (displayed) but only counts
@@ -257,10 +253,12 @@ export function allCards(hand: SspCard[], table: SspCard[]): SspCard[] {
 }
 
 /** True if the two cards form a valid duo pair (Salt-aware: jellyfish+swimmer
- *  and lobster+crab are also valid). Symmetric. */
-export function isValidDuoPair(a: SspCard, b: SspCard): boolean {
+ *  and lobster+crab are also valid; under the Water Rodeo two swimmers or two
+ *  sharks too). Symmetric. */
+export function isValidDuoPair(a: SspCard, b: SspCard, opts: { waterRodeo?: boolean } = {}): boolean {
   if (a.id === b.id) return false;
   if (a.family === b.family) {
+    if (opts.waterRodeo && (a.family === 'swimmer' || a.family === 'shark')) return true;
     return a.family === 'crab' || a.family === 'boat' || a.family === 'fish';
   }
   const pairs: ReadonlyArray<[SspCardFamily, SspCardFamily]> = [
@@ -277,13 +275,27 @@ export function isValidDuoPair(a: SspCard, b: SspCard): boolean {
 }
 
 /** True if the three cards form a valid starfish trio (any duo pair + one starfish). */
-export function isValidStarfishTrio(a: SspCard, b: SspCard, c: SspCard): boolean {
+export function isValidStarfishTrio(a: SspCard, b: SspCard, c: SspCard, opts: { waterRodeo?: boolean } = {}): boolean {
   const cards = [a, b, c];
   const star = cards.find((x) => x.family === 'starfish');
   if (!star) return false;
   const rest = cards.filter((x) => x.id !== star.id);
   if (rest.length !== 2) return false;
-  return isValidDuoPair(rest[0], rest[1]);
+  return isValidDuoPair(rest[0], rest[1], opts);
+}
+
+/** The duo pairs on a player's table, in play order. Played cards land two
+ *  at a time (a pair) or three (a starfish trio, listed in `trios`), so the
+ *  table splits back into its groups; trios are left out. */
+export function tablePairs(table: SspCard[], trios: ReadonlyArray<readonly number[]> = []): Array<[SspCard, SspCard]> {
+  const inTrio = new Set(trios.flat());
+  const out: Array<[SspCard, SspCard]> = [];
+  for (let i = 0; i < table.length;) {
+    if (inTrio.has(table[i].id)) { i += 3; continue; }
+    if (i + 1 < table.length) out.push([table[i], table[i + 1]]);
+    i += 2;
+  }
+  return out;
 }
 
 /** Used by the "can end round?" check. Mirrors total score, including color bonus. */
@@ -322,24 +334,8 @@ export function categoryBreakdown(cards: SspCard[], opts: TotalScoreOpts = {}): 
   // they still count for multipliers.
   const counts = countFamilies(cards);
 
-  // Duo pairs (Salt-aware): replicate cardPoints' greedy pairing.
-  const pairable = countFamilies(cards, opts.trioCancelledIds);
-  const crab = pairable.crab ?? 0;
-  const boat = pairable.boat ?? 0;
-  const fish = pairable.fish ?? 0;
-  const shark = pairable.shark ?? 0;
-  const swimmer = pairable.swimmer ?? 0;
-  const jellyfish = pairable.jellyfish ?? 0;
-  const lobster = pairable.lobster ?? 0;
-  let duos = 0;
-  const lobsterPairs = Math.min(lobster, crab);
-  duos += lobsterPairs;
-  duos += Math.floor((crab - lobsterPairs) / 2);
-  const jellyfishPairs = Math.min(jellyfish, swimmer);
-  duos += jellyfishPairs;
-  duos += Math.min(shark, swimmer - jellyfishPairs);
-  duos += Math.floor(boat / 2);
-  duos += Math.floor(fish / 2);
+  // Duo pairs (Salt-aware): the same greedy pairing as cardPoints.
+  const duos = duoPairCount(countFamilies(cards, opts.trioCancelledIds), opts.waterRodeo === true);
 
   // Trios — 3 pts each.
   const trios = 3 * (opts.trios ?? 0);
@@ -389,8 +385,8 @@ export function categoryBreakdown(cards: SspCard[], opts: TotalScoreOpts = {}): 
     mermaidClaim = mc;
   }
 
-  // Special LAST CHANCE color bonus.
-  const colorBonus = opts.mermaidsScoreZero ? 0 : specialColorBonus(cards);
+  // Special LAST CHANCE color bonus (not a mermaid score — the Tornado leaves it).
+  const colorBonus = specialColorBonus(cards);
 
   return { duos, sets, multipliers, trios, mermaidClaim, colorBonus };
 }

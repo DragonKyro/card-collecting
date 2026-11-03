@@ -1,24 +1,22 @@
-// Extra Pepper event cards.
+// Extra Pepper event cards (rules: the Extra Pepper rule sheet).
 //
-// Mechanic: a separate event deck (not shuffled into the main deck). At the
-// start of each round, reveal the top event. Its rule applies to ALL players
-// for the round it's revealed. At round end, the event is awarded:
-//   - sign '+' events go to the round leader (highest matchScore after the
-//     round commits). The holder keeps it (and its rule applies only to them)
-//     until they're no longer leading, at which point the event is discarded.
-//   - sign '-' events go to the laggard (lowest matchScore). Same persistence
-//     rule.
+//   Setup        the 12 event cards are shuffled face down into an event deck.
+//   Round start  the top card is revealed; its rule applies to everyone this
+//                round.
+//   Round end    after the round's points are added up, the card goes to the
+//                player with the most points ('+') or the fewest ('-'). On a
+//                tie for that place nobody takes it: it is discarded.
+//   Holding      a held card's rule applies only to its holder, in every later
+//                round, for as long as they keep that place — the sole leader
+//                for a '+' card, the sole laggard for a '-' one. Otherwise it
+//                is discarded at the end of a round.
+//   One card     a player holds at most one event card. Winning a second, they
+//                choose which of the two to keep.
 //
-// A player can hold at most one event card. If awarded a second, the older
-// one is discarded.
+// Which sign a card carries follows what it does to its holder: handicaps
+// ('+') go to the leader, boosts ('-') to the player in last place.
 //
-// Per the rulebook signing convention (encoded here for the AI):
-//   events that make scoring EASIER  →  '-' (laggard)
-//   events that make scoring HARDER  →  '+' (leader)
-//
-// All 12 official events are modeled. Coral Reef is recognized but its
-// face-down-shell mechanic is a placeholder no-op in v1 (no UI for stashing
-// shells); the shell still counts normally.
+// The reducer applies each rule through `eventAppliesTo`.
 
 import type { SspEventCard, SspEventId, SspPlayer, SspState } from './types';
 import { shuffle, type RngState } from '@/core/rng';
@@ -28,73 +26,73 @@ export const EVENT_BY_ID: Record<SspEventId, SspEventCard> = {
     id: 'hermitCrab',
     name: 'The Hermit Crab',
     sign: '-',
-    rule: 'When you play a Crab pair, take ONE card from EACH discard pile (2 cards total).',
+    rule: 'When a pair of crabs is played, the player takes one card from each discard pile.',
   },
   sunfish: {
     id: 'sunfish',
     name: 'The Sunfish',
     sign: '-',
-    rule: 'When you play a Fish pair, add the first TWO cards from the deck to your hand.',
+    rule: 'When a pair of fish is played, the player adds the first two cards from the deck to their hand.',
   },
   waterRodeo: {
     id: 'waterRodeo',
     name: 'The Water Rodeo',
     sign: '-',
-    rule: 'New pairs: swimmer+swimmer lets you look at an opponent\'s hand and swap one card with theirs; shark+shark steals a pair from an opponent\'s tableau (ability not triggered). The usual shark+swimmer and swimmer+jellyfish combos still work. (Interactive effects not modeled in v1 — the new pair shapes don\'t register; held effect is dormant.)',
+    rule: 'New duos, 1 point each. Two swimmers: look at an opponent\'s hand, then you may swap one of your cards with one of theirs. Two sharks: steal a pair played in front of an opponent and place it in front of you (its effect does not trigger). Shark + swimmer and swimmer + jellyfish still work as usual.',
   },
   danceOfShells: {
     id: 'danceOfShells',
     name: 'The Dance of the Shells',
     sign: '-',
-    rule: 'Each Shell card scores 2 points (instead of the collector set).',
+    rule: 'Each shell card scores 2 points.',
   },
   kraken: {
     id: 'kraken',
     name: 'The Kraken',
-    sign: '-',
-    rule: 'Each Octopus card scores 1 point (instead of the collector set).',
+    sign: '+',
+    rule: 'Each octopus card scores 1 point.',
   },
   tornado: {
     id: 'tornado',
     name: 'The Tornado',
     sign: '+',
-    rule: 'Mermaid cards score 0 points (the instant win at 4 mermaids still applies).',
+    rule: 'Mermaid cards do not score points, but a player still wins immediately with all 4 mermaids.',
   },
   danceOfMermaids: {
     id: 'danceOfMermaids',
     name: 'The Dance of the Mermaids',
     sign: '-',
-    rule: '3 mermaids (instead of 4) trigger the instant win.',
+    rule: 'With 3 mermaids (instead of 4), the player immediately wins the game.',
   },
   treasureChest: {
     id: 'treasureChest',
     name: 'The Treasure Chest',
     sign: '+',
-    rule: 'You must reach 10 points (instead of 7) to call STOP or LAST CHANCE.',
+    rule: 'A player must reach 10 points (instead of 7) to end the round.',
   },
   diodonFish: {
     id: 'diodonFish',
     name: 'The Diodon Fish',
     sign: '+',
-    rule: 'You may not call STOP. You must call LAST CHANCE to end the round.',
+    rule: 'A player cannot end the round by saying STOP; they have to say LAST CHANCE.',
   },
   angelfish: {
     id: 'angelfish',
     name: 'The Angelfish',
     sign: '-',
-    rule: 'At the end of your turn, if both visible discard tops share a color, take one of them into your hand.',
+    rule: 'At the end of a player\'s turn, if the two visible discard cards are the same color, the player chooses one of them to add to their hand.',
   },
   dolphins: {
     id: 'dolphins',
     name: 'The Dolphins',
     sign: '-',
-    rule: 'When you discard a collector card (shell, octopus, penguin, sailor, seahorse), the top card of the deck is added to your hand.',
+    rule: 'When a player discards a collection card (shell, octopus, penguin, sailor or seahorse), the top card of the deck is added to their hand.',
   },
   coralReef: {
     id: 'coralReef',
     name: 'The Coral Reef',
     sign: '-',
-    rule: 'You may place a Shell face-down in front of you. It is immune to Shark steals — but worth 0 points. (Face-down stash not modeled in v1; shell still counts normally.)',
+    rule: 'A player may place a shell face down in front of them. If they do, they are immune to all attacks — but that shell is worth no points.',
   },
 };
 

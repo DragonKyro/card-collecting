@@ -7,8 +7,10 @@
 // ../knowledge.ts:
 //
 //   visible   own hand, every table, pile tops and sizes, hand sizes, match
-//             scores, events, the viewer's own pending draw / lobster reveal,
-//             and — mid-crab — the one pile the viewer chose to dig through.
+//             scores, events, who has a Coral Reef shell down, the viewer's
+//             own pending draw / lobster reveal, mid-crab the one pile the
+//             viewer chose to dig through, and mid-Water-Rodeo the hand the
+//             viewer is looking at.
 //   recalled  each pile's buried cards from memory, flagged uncertain after
 //             an opponent's unseen crab dig.
 //   inferred  opponent cards the viewer saw them take off a pile top or
@@ -23,9 +25,9 @@
 import type { GamePhase, PlayerId } from '@/core/types';
 import type { SspCard, SspCardFamily, SspEventId, SspState, SspSubPhase } from '../types';
 import { FAMILY_ORDER } from '../cards';
-import { canEndRound, scoringOptsFor, stopThresholdFor } from '../reducer';
+import { canEndRound, canPlaceCoralShell, scoringOptsFor, stopThresholdFor } from '../reducer';
 import { eventAppliesTo } from '../events';
-import { knowledgeOf, type PileMemory } from '../knowledge';
+import { knowledgeOf, roundLog, type PileMemory } from '../knowledge';
 
 export const FAMILY_COUNT = FAMILY_ORDER.length;
 export const FAMILY_INDEX: Record<SspCardFamily, number> = Object.fromEntries(
@@ -37,6 +39,7 @@ export interface SspPlayerRules {
   shellPerCard: boolean;
   octopusPerCard: boolean;
   mermaidsScoreZero: boolean;
+  waterRodeo: boolean;
   stopThreshold: number;
 }
 
@@ -53,6 +56,8 @@ export interface SspObservedPlayer {
   rules: SspPlayerRules;
   /** Jellyfish lock: this player's next turn is only the top card of the deck, played for them. */
   locked: boolean;
+  /** The Coral Reef: a shell face down in front of them — immune to attacks. */
+  coralShell: boolean;
 }
 
 export type SspPileView = PileMemory;
@@ -85,6 +90,15 @@ export interface SspObservation {
   /** End-of-turn options for the viewer (false unless it's their call). */
   canStop: boolean;
   canLastChance: boolean;
+  /** Mid-crab: the piles the viewer may still dig through — any non-empty
+   *  pile for a crab, each not yet used one for the Hermit Crab. */
+  crabPiles: Array<0 | 1>;
+  /** The viewer may place a shell face down now (The Coral Reef). */
+  canPlaceCoral: boolean;
+  /** Round end: the viewer won a second event card and keeps one of these. */
+  eventChoice: { newEventId: SspEventId; oldEventId: SspEventId } | null;
+  /** Water Rodeo: the hand the viewer is looking at, by seat offset. */
+  rodeoLook: { offset: number; hand: SspCard[] } | null;
 }
 
 export interface ObserveOptions {
@@ -105,7 +119,10 @@ export function observe(state: SspState, viewerId: PlayerId, opts: ObserveOption
 
   const viewer = state.players[viewerIdx];
   const viewerActive = state.activePlayerId === viewerId;
-  const crabLookPile = viewerActive && state.subPhase === 'awaitingCrabPick' ? opts.crabLookPile ?? null : null;
+  const crabPiles = viewerActive && state.subPhase === 'awaitingCrabPick'
+    ? (state.crabPilesLeft ?? [0, 1]).filter((i) => state.discards[i].length > 0)
+    : [];
+  const crabLookPile = opts.crabLookPile != null && crabPiles.includes(opts.crabLookPile) ? opts.crabLookPile : null;
   const mine = knowledgeOf(state, viewerId, { lookingAt: crabLookPile });
 
   // What the opponents know about the viewer's hand: the cards ALL of them know.
@@ -132,11 +149,24 @@ export function observe(state: SspState, viewerId: PlayerId, opts: ObserveOption
         shellPerCard: opts.shellPerCard,
         octopusPerCard: opts.octopusPerCard,
         mermaidsScoreZero: opts.mermaidsScoreZero,
+        waterRodeo: opts.waterRodeo,
         stopThreshold: stopThresholdFor(state, p),
       },
       locked: (state.lockedPlayerIds ?? []).includes(p.id),
+      coralShell: !!p.coralShell,
     });
   }
+
+  // The look itself is in the log (the target's hand as it was then — it
+  // can't have changed before the swap decision).
+  let rodeoLook: SspObservation['rodeoLook'] = null;
+  if (viewerActive && state.subPhase === 'awaitingRodeoSwap' && state.pendingRodeo) {
+    const look = roundLog(state).filter((e) => e.kind === 'rodeoLook' && e.playerId === viewerId).pop();
+    if (look?.kind === 'rodeoLook') {
+      rodeoLook = { offset: offsetOf(look.targetPlayerId) ?? 0, hand: (look.hand ?? []).map(copyCard) };
+    }
+  }
+  const choice = state.pendingEventChoice;
 
   const canEnd = viewerActive && canEndRound(state);
   return {
@@ -162,6 +192,12 @@ export function observe(state: SspState, viewerId: PlayerId, opts: ObserveOption
     currentEvent: state.event?.current ?? null,
     canStop: canEnd && !eventAppliesTo(state, viewer, 'diodonFish'),
     canLastChance: canEnd,
+    crabPiles,
+    canPlaceCoral: canPlaceCoralShell(state, viewer),
+    eventChoice: choice && choice.playerId === viewerId && state.subPhase === 'awaitingEventChoice'
+      ? { newEventId: choice.newEventId, oldEventId: choice.oldEventId }
+      : null,
+    rodeoLook,
   };
 }
 

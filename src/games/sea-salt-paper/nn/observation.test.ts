@@ -139,6 +139,50 @@ describe('what a seat learns about opponents and piles', () => {
     expect(seen.piles[0].unknownRemovals).toBe(0);
   });
 
+  /** 3 players under the Water Rodeo; p0 has looked at p1's hand. */
+  function p0LookedAtP1(): SspState {
+    let s = createSspState({ targetScore: 40, expansions: { extraPepper: true } }, 5, seatsFor(3));
+    s.event!.current = 'waterRodeo';
+    s.players[0].hand = [
+      { id: 9001, family: 'swimmer', color: 'yellow' }, { id: 9002, family: 'swimmer', color: 'teal' },
+      { id: 9003, family: 'boat', color: 'pink' },
+    ];
+    s.players[1].hand = [{ id: 9101, family: 'shell', color: 'yellow' }, { id: 9102, family: 'crab', color: 'teal' }];
+    s.subPhase = 'awaitingPlayOrEnd';
+    s = applyAction(s, { type: 'playPair', cardIds: [9001, 9002] });
+    return applyAction(s, { type: 'rodeoLook', targetPlayerId: 'p1' });
+  }
+
+  it('Water Rodeo: the looker sees the whole hand; the looked-at player knows it', () => {
+    const s = p0LookedAtP1();
+    expect(observe(s, 'p0').players[1].knownCards.map((c) => c.id)).toEqual([9101, 9102]);
+    expect(observe(s, 'p0').rodeoLook?.hand.map((c) => c.id)).toEqual([9101, 9102]);
+    expect(observe(s, 'p2').players[2].knownCards).toEqual([]); // p2's view of p1
+    expect(observe(s, 'p1').rodeoLook).toBeNull();
+  });
+
+  it('Water Rodeo: a swap is known to the two players in it, and blurs the others\' memory', () => {
+    let s = p0LookedAtP1();
+    // p2 had seen p0 take a card off a pile top earlier this round.
+    s.log.push({ seq: 0, round: s.round, kind: 'drawDiscard', playerId: 'p0', pile: 0, family: 'boat', card: { id: 9003, family: 'boat', color: 'pink' } });
+    expect(observe(s, 'p2').players[1].knownCards.map((c) => c.id)).toEqual([9003]); // p2's view of p0
+    s = applyAction(s, { type: 'rodeoSwap', swap: [9003, 9101] });
+    expect(observe(s, 'p0').players[1].knownCards.map((c) => c.id)).toEqual([9003, 9102]);
+    expect(observe(s, 'p1').players[2].knownCards.map((c) => c.id)).toContain(9101); // p1's view of p0
+    expect(observe(s, 'p2').players[1].knownCards).toEqual([]);
+  });
+
+  it('a Coral Reef shell goes face down: others forget which shell it was', () => {
+    let s = createSspState({ targetScore: 40, expansions: { extraPepper: true } }, 5, seatsFor(2));
+    s.event!.current = 'coralReef';
+    s.discards[0].push({ id: 9001, family: 'shell', color: 'yellow' });
+    s = applyAction(s, { type: 'drawFromDiscard', pile: 0 });
+    expect(observe(s, 'p1').players[1].knownCards.map((c) => c.id)).toEqual([9001]);
+    s = applyAction(s, { type: 'placeCoralShell', cardId: 9001 });
+    expect(observe(s, 'p1').players[1].knownCards).toEqual([]);
+    expect(observe(s, 'p1').players[1].coralShell).toBe(true);
+  });
+
   it('digging through the pile yourself shows what an earlier dig took', () => {
     let s = applyAction(p1Crabbing(), { type: 'crabPick', pile: 0, cardId: 9102 });
     // p1 passes; p0 gets a crab pair and digs through pile 0.

@@ -808,6 +808,59 @@
   flex: 1 1 200px;
 }
 
+/* Extra Pepper: held event cards, Coral Reef shells, round-end outcomes. */
+.ssp-held-event {
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: help;
+  color: #fbf6ea;
+}
+.ssp-held-event.plus { background: #8a3a3a; }
+.ssp-held-event.minus { background: #2f6b4a; }
+
+.ssp .ssp-prompt {
+  color: rgba(255,255,255,0.85);
+  font-size: 13px;
+  align-self: center;
+}
+
+.ssp .ssp-coral {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.ssp .ssp-coral .card { opacity: 0.6; }
+.ssp .ssp-coral-tag {
+  font-size: 10px;
+  color: rgba(255,255,255,0.8);
+}
+
+.ssp .round-summary .ssp-event-outcome {
+  margin: 4px 0 8px;
+  padding-left: 18px;
+  font-size: 13px;
+}
+.ssp .round-summary .ssp-event-choice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: stretch;
+  margin: 6px 0 10px;
+}
+.ssp .round-summary .ssp-event-choice p { flex: 1 1 100%; margin: 0; font-weight: 600; }
+.ssp .round-summary .ssp-event-choice button {
+  flex: 1 1 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+}
+.ssp .round-summary .ssp-event-choice .ssp-event-rule { font-size: 11px; opacity: 0.8; font-weight: 400; }
+
 /* Card tooltip on hover */
 .ssp .card .card-tooltip {
   position: absolute;

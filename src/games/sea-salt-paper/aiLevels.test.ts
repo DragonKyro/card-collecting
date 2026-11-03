@@ -57,7 +57,7 @@ describe('AI difficulty levels', () => {
       installAiPolicy(level, policyFile(name));
       for (const players of [2, 3, 4]) {
         const start = createSspState(
-          { targetScore: 40, expansions: { extraSalt: true, extraPepper: players === 4 }, aiLevel: level },
+          { targetScore: 40, expansions: { extraSalt: true, extraPepper: true }, aiLevel: level },
           100 + players,
           seatsFor(players),
         );
