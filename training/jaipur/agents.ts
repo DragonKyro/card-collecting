@@ -2,10 +2,6 @@
 //
 //   random               uniform over legal action slots, through the same
 //                        observe → mask → decode path a trained policy uses.
-//   heuristic            the game's hand-written AI (src/games/jaipur/ai.ts) —
-//                        what "vs AI" plays until trained levels ship.
-//   heuristic:k=v,...    the same with some weights changed (HeuristicParams),
-//                        e.g. heuristic:holdDiscount=0.85,exposure=0.4
 //   nn:<policy.json>     a trained policy file, playing its top-scoring slot.
 //   nn-sample:<file>     the same, sampling from its distribution (how it played
 //                        while training — the sparring mode for past checkpoints).
@@ -17,7 +13,6 @@ import { createRng, rngNext } from '@/core/rng';
 import { sampleLegal } from '@/ai/masked';
 import type { Mlp } from '@/ai/mlp';
 import type { JaipurAction, JaipurState } from '@/games/jaipur/types';
-import { DEFAULT_HEURISTIC, chooseJaipurAction, type HeuristicParams } from '@/games/jaipur/ai';
 import { actWithPolicy } from '@/games/jaipur/nn/agent';
 import { greedyPolicy, loadJaipurPolicy, sampledPolicy, type JaipurPolicyFile } from '@/games/jaipur/nn/policy';
 
@@ -29,23 +24,10 @@ export interface JaipurAgent {
 /** Builds a fresh agent for one seat of one match; `seed` drives any randomness. */
 export type AgentFactory = (seed: number) => JaipurAgent;
 
-export const AGENT_SPECS = ['random', 'heuristic', 'heuristic:k=v,...', 'nn:<policy.json>', 'nn-sample:<policy.json>'] as const;
+export const AGENT_SPECS = ['random', 'nn:<policy.json>', 'nn-sample:<policy.json>'] as const;
 
 const NN = 'nn:';
 const NN_SAMPLE = 'nn-sample:';
-const HEURISTIC = 'heuristic:';
-
-function heuristicParams(spec: string): HeuristicParams {
-  const params: HeuristicParams = { ...DEFAULT_HEURISTIC };
-  for (const kv of spec.split(',')) {
-    const [k, v] = kv.split('=');
-    if (!(k in params) || !Number.isFinite(Number(v))) {
-      throw new Error(`bad heuristic weight "${kv}" (known: ${Object.keys(params).join(', ')})`);
-    }
-    params[k as keyof HeuristicParams] = Number(v);
-  }
-  return params;
-}
 
 /** Policy files are parsed once per process (matches reuse the network). */
 const networks = new Map<string, Mlp>();
@@ -73,10 +55,6 @@ export function agentFactory(spec: string): AgentFactory {
       return { name, act: (state, playerId) => actWithPolicy(state, playerId, policy) };
     };
   }
-  if (spec.startsWith(HEURISTIC)) {
-    const params = heuristicParams(spec.slice(HEURISTIC.length));
-    return () => ({ name: spec, act: (state, playerId) => chooseJaipurAction(state, playerId, params) });
-  }
   switch (spec) {
     case 'random':
       return (seed) => {
@@ -86,8 +64,6 @@ export function agentFactory(spec: string): AgentFactory {
           act: (state, playerId) => actWithPolicy(state, playerId, (_obs, mask) => sampleLegal(mask, rngNext(rng))),
         };
       };
-    case 'heuristic':
-      return () => ({ name: 'heuristic', act: (state, playerId) => chooseJaipurAction(state, playerId) });
     default:
       throw new Error(`unknown agent "${spec}" (known: ${AGENT_SPECS.join(', ')})`);
   }

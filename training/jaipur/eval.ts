@@ -1,7 +1,7 @@
 // CLI: seat-swapped Jaipur head-to-head eval across worker threads.
 //
-//   npm run jaipur:eval -- --a heuristic --b random --games 2000
-//   npm run jaipur:eval -- --a nn:<policy.json> --b heuristic --games 2000
+//   npm run jaipur:eval -- --a nn:<policy.json> --b random --games 2000
+//   npm run jaipur:eval -- --a nn:<policy.json> --b nn:<other.json> --games 2000
 //
 // Flags: --a, --b (agent specs, see agents.ts; required), --games (rounded up to even),
 // --seed, --workers (default: cores − 1, max 16), --seals (to win, default 2),
@@ -39,7 +39,7 @@ function parseArgs(argv: string[]): { spec: MatchupSpec; games: number; seed: nu
   const known = new Set(['a', 'b', 'games', 'seed', 'workers', 'seals', 'max-steps', 'json']);
   for (const k of flags.keys()) if (!known.has(k)) throw new Error(`unknown flag --${k}`);
   if (typeof flags.get('a') !== 'string' || typeof flags.get('b') !== 'string') {
-    throw new Error('usage: --a <agent> --b <agent> [--games N] … (agents: random, heuristic, nn:<file>, nn-sample:<file>)');
+    throw new Error('usage: --a <agent> --b <agent> [--games N] … (agents: random, nn:<file>, nn-sample:<file>)');
   }
   return {
     spec: { a: str('a', ''), b: str('b', ''), sim: { sealsToWin: num('seals', 2), maxSteps: num('max-steps', 5_000) } },

@@ -3,11 +3,10 @@
 // and frozen with `evaluate.py freeze`). Loaded on demand by module.prepare,
 // keeping the network runtime out of the game-picker bundle. The shell awaits
 // `prepareAiLevel` before a match starts, so `chooseLeveledAction` can always
-// answer synchronously; the heuristic level needs no loading at all.
+// answer synchronously.
 
 import type { PlayerId } from '@/core/types';
 import type { JaipurAction, JaipurAiLevel, JaipurState } from './types';
-import { chooseJaipurAction } from './ai';
 import { POLICY_URLS, aiLevelOf } from './levels';
 import type { SlotPolicy } from './nn/agent';
 import { actWithPolicy } from './nn/agent';
@@ -16,10 +15,9 @@ import { greedyPolicy, loadJaipurPolicy, type JaipurPolicyFile } from './nn/poli
 const policies = new Map<JaipurAiLevel, SlotPolicy>();
 const loading = new Map<JaipurAiLevel, Promise<void>>();
 
-/** Fetch and load a level's policy (no-op once loaded or for the heuristic;
- *  concurrent calls share one fetch). */
+/** Fetch and load a level's policy (no-op once loaded; concurrent calls share one fetch). */
 export function prepareAiLevel(level: JaipurAiLevel): Promise<void> {
-  if (level === 'heuristic' || policies.has(level)) return Promise.resolve();
+  if (policies.has(level)) return Promise.resolve();
   const url = POLICY_URLS[level];
   if (!url) return Promise.reject(new Error(`no ${level} AI in this build`));
   let pending = loading.get(level);
@@ -42,12 +40,13 @@ export function installAiPolicy(level: JaipurAiLevel, file: JaipurPolicyFile): v
 }
 
 export function chooseLeveledAction(state: JaipurState, playerId: PlayerId): JaipurAction | null {
-  const level = aiLevelOf(state.config);
-  if (level === 'heuristic' || state.phase !== 'playing' || state.subPhase === 'roundEnd') {
-    // The heuristic also clicks through round summaries in all-AI matches.
-    return chooseJaipurAction(state, playerId);
+  if (state.phase !== 'playing') return null;
+  if (state.subPhase === 'roundEnd') {
+    // Click through the round summary only when no human needs to read it.
+    return state.seats.every((s) => s.isAI) ? { type: 'nextRound' } : null;
   }
   if (state.activePlayerId !== playerId) return null;
+  const level = aiLevelOf(state.config);
   const policy = policies.get(level);
   if (!policy) {
     // prepare() should have loaded it; start now so a later call can answer.

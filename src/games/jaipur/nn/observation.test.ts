@@ -19,7 +19,7 @@ function sameView(a: JaipurState, b: JaipurState, viewerId: string) {
 }
 
 describe('observe() hides what a real player cannot see', () => {
-  for (const players of ['random', 'heuristic', 'mixed'] as const) {
+  for (const players of ['random', 'policy', 'mixed'] as const) {
     it(`observation, features and mask ignore hidden information (${players} play)`, () => {
       const states = sampleStates({ matches: 4, seed: 101, every: 2, players });
       const rng = createRng(4242);

@@ -58,7 +58,7 @@ describe('jaipur action space', () => {
   it('slot sequences reach exactly the legal moves, and the reducer accepts every one', () => {
     const states = [
       ...sampleStates({ matches: 3, seed: 31, every: 2 }),
-      ...sampleStates({ matches: 2, seed: 32, every: 2, players: 'heuristic' }),
+      ...sampleStates({ matches: 2, seed: 32, every: 2, players: 'policy' }),
     ];
     const kinds = new Set<string>();
     let checked = 0;

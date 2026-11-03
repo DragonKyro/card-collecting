@@ -1,5 +1,5 @@
-// Jaipur — what one seat may know (the learned agent's observation and the
-// heuristic AI are built on this; the UI's memory aid shows the same thing).
+// Jaipur — what one seat may know (the AI's observation is built on this;
+// the UI's memory aid shows the same thing).
 //
 //   public   the market, the discard pile (every sold card was shown), both
 //            herds, hand sizes, every goods pile and the goods tokens each

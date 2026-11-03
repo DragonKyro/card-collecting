@@ -4,11 +4,10 @@ import type { GameModule } from '@/core/module';
 import type { Seat, PlayerId } from '@/core/types';
 import type { JaipurState, JaipurAction, JaipurConfig } from './types';
 import { applyAction, createJaipurState } from './reducer';
-import { chooseJaipurAction } from './ai';
 import { DEFAULT_AI_LEVEL, aiLevelOf, isAiLevel } from './levels';
 import { JaipurThumbnail } from './Thumbnail';
 
-// Trained levels (encoder + network runtime) are loaded on demand by
+// The AI levels (encoder + network runtime) are loaded on demand by
 // prepare(), keeping them out of the game-picker bundle.
 type AiLevels = typeof import('./aiLevels');
 let aiLevels: AiLevels | null = null;
@@ -53,12 +52,11 @@ export const jaipurModule: GameModule<JaipurState, JaipurAction, JaipurConfig> =
   },
 
   chooseAIAction(state, playerId: PlayerId) {
-    if (aiLevelOf(state.config) === 'heuristic') return chooseJaipurAction(state, playerId);
     return aiLevels ? aiLevels.chooseLeveledAction(state, playerId) : null;
   },
 
   async prepare(config, seats) {
-    if (!seats.some((s) => s.isAI) || aiLevelOf(config) === 'heuristic') return;
+    if (!seats.some((s) => s.isAI)) return;
     aiLevels ??= await import('./aiLevels');
     await aiLevels.prepareAiLevel(aiLevelOf(config));
   },

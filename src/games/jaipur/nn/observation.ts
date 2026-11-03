@@ -1,7 +1,7 @@
 // Jaipur — what one seat is allowed to know, as agent input.
 //
-// `observe(state, viewerId)` is the ONLY place the learned-agent pipeline (and
-// the heuristic AI) reads JaipurState. The feature encoder, legal mask and
+// `observe(state, viewerId)` is the ONLY place the learned-agent pipeline
+// reads JaipurState. The feature encoder, legal mask and
 // action decoder all take a JaipurObservation, so a policy built on them
 // cannot see anything a real player in that seat couldn't. The information
 // rules live in ../knowledge.ts.

@@ -44,10 +44,10 @@ function LobbyConfig({ config, seats, onChange }: { config: JaipurConfig; seats:
   ];
   const hasAI = seats.some((s) => s.isAI);
   const level = aiLevelOf(config);
-  // Start fetching a trained level's policy while the lobby is still open
-  // (the Start button awaits it either way).
+  // Start fetching the level's policy while the lobby is still open (the
+  // Start button awaits it either way).
   useEffect(() => {
-    if (hasAI && level !== 'heuristic') void import('./aiLevels').then((m) => m.prepareAiLevel(level)).catch(() => {});
+    if (hasAI) void import('./aiLevels').then((m) => m.prepareAiLevel(level)).catch(() => {});
   }, [hasAI, level]);
   return (
     <div className="game-config">
@@ -61,7 +61,6 @@ function LobbyConfig({ config, seats, onChange }: { config: JaipurConfig; seats:
                 role="radio"
                 aria-checked={level === l.id}
                 className={level === l.id ? undefined : 'secondary'}
-                title={l.trained ? 'Trained neural network' : 'Hand-written heuristic'}
                 onClick={() => onChange({ ...config, aiLevel: l.id })}
               >
                 {l.label}

@@ -26,20 +26,22 @@ function playOut(s: JaipurState, choose: (s: JaipurState, pid: string) => Jaipur
 }
 
 describe('Jaipur AI levels', () => {
-  it('offers every shipped policy as its level, plus the heuristic, defaulting to the strongest', () => {
+  it('offers exactly the shipped policies as levels, easiest first, defaulting to the strongest', () => {
     const levels = new Set(SHIPPED.map(levelOfFile).filter(Boolean));
     expect(new Set(Object.keys(POLICY_URLS))).toEqual(levels);
-    expect(AI_LEVELS.at(-1)!.id).toBe('heuristic');
-    const strongest = (['hard', 'normal', 'easy'] as const).find((l) => levels.has(l)) ?? 'heuristic';
-    expect(DEFAULT_AI_LEVEL).toBe(strongest);
-    expect(aiLevelOf({ sealsToWin: 2, aiLevel: 'bogus' as JaipurAiLevel })).toBe(DEFAULT_AI_LEVEL);
-    expect(aiLevelOf({ sealsToWin: 2, aiLevel: 'heuristic' })).toBe('heuristic');
+    expect(AI_LEVELS.map((l) => l.id)).toEqual((['easy', 'normal', 'hard'] as const).filter((l) => levels.has(l)));
+    expect(DEFAULT_AI_LEVEL).toBe(AI_LEVELS.at(-1)!.id);
+    // An unknown level — including the removed 'heuristic' — falls back to the default.
+    expect(aiLevelOf({ sealsToWin: 2, aiLevel: 'heuristic' as JaipurAiLevel })).toBe(DEFAULT_AI_LEVEL);
   });
 
-  it('the heuristic level plays whole matches with no loading', async () => {
+  it('clicks through the round summary in all-AI matches and waits for humans', async () => {
     const { chooseLeveledAction } = await import('./aiLevels');
-    const s = playOut(createJaipurState({ sealsToWin: 2, aiLevel: 'heuristic' }, 3, seatsFor()), chooseLeveledAction);
-    expect(s.phase).toBe('gameOver');
+    const s = createJaipurState({ sealsToWin: 2 }, 3, seatsFor());
+    s.subPhase = 'roundEnd';
+    expect(chooseLeveledAction(s, s.players[0].id)).toEqual({ type: 'nextRound' });
+    s.seats = s.seats.map((seat, i) => (i === 1 ? { ...seat, isAI: false } : seat));
+    expect(chooseLeveledAction(s, s.players[0].id)).toBeNull();
   });
 
   it('every shipped policy loads with this encoder / action space and plays legally', async () => {
