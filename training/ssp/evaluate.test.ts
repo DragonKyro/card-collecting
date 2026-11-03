@@ -17,6 +17,25 @@ describe('eval harness', () => {
     }
   });
 
+  it('at 3-4 players, plays every seed with A in each seat', () => {
+    const jobs = makeJobs(7, 100, 3);
+    expect(jobs).toHaveLength(9);
+    for (const seed of [100, 101, 102]) {
+      expect(jobs.filter((j) => j.seed === seed).map((j) => j.aSeat).sort()).toEqual([0, 1, 2]);
+    }
+  });
+
+  it('a deterministic agent against a table of itself wins exactly its share', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'ssp-eval-')), 'greedy.json');
+    writeFileSync(path, JSON.stringify(randomPolicyFile(11)));
+    const spec: MatchupSpec = { a: `nn:${path}`, b: `nn:${path}`, players: 3, sim: { extraSalt: true, targetScore: 40 } };
+    const s = summarize(spec, runJobs(spec, makeJobs(12, 1, 3)));
+    expect(s.truncated).toBe(0);
+    expect(s.aScore).toBeCloseTo(1 / 3, 10);
+    expect(s.evenScore).toBeCloseTo(1 / 3, 10);
+    expect(s.pairs).toEqual({ aSwept: 0, split: 4, bSwept: 0 });
+  });
+
   it('a deterministic agent against itself splits every seed pair', () => {
     const path = join(mkdtempSync(join(tmpdir(), 'ssp-eval-')), 'greedy.json');
     writeFileSync(path, JSON.stringify(randomPolicyFile(11)));

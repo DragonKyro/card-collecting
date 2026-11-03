@@ -1,23 +1,30 @@
 // Sea Salt & Paper AI difficulty levels. All three are trained policies
 // (./policies, produced by training/ssp/train.py) and load the same way:
 //
-//   easy    easy-update100.json      update 100 of training/runs/ssp/main
-//   normal  normal-update1000.json   update 1000
-//   hard    hard-update10000.json    update 10000
+//   easy    easy-update100.json            update 100 of training/runs/ssp/main
+//   normal  normal-update1000.json         update 1000
+//   hard    hard-multi-update14000.json    update 14000 of training/runs/ssp/multi
 //
-// Head to head (2000 seat-swapped matches): normal beats easy 61%, hard beats
-// easy 72% and normal 65%. All three beat random play ~100%. (The run began
-// with 10 updates imitating a since-removed heuristic; updates 100 and 1000
-// predate white counting for mermaid claims, 10000 was trained with it.)
+// Easy and Normal were trained on 2-player Extra Salt matches only. Hard is
+// main's update 10000 (hard-update10000.json, kept here as the training
+// benchmark but no longer shipped) trained 4,000 more updates on 2, 3 and
+// 4-player matches. Head to head (2000 seat-swapped matches): normal beats
+// easy 61%, hard beats easy 76%, normal 65% and the old 2-player hard 53.5%;
+// all three beat random play ~100%. At a table of old-hard copies the new
+// hard wins 44.5% of 3-player matches (even: 33.3%) and 37.4% of 4-player
+// ones (even: 25%). (The main run began with 10 updates imitating a
+// since-removed heuristic; updates 100 and 1000 predate white counting for
+// mermaid claims.)
 //
 // Each file is ~1.3 MB. Vite emits it as a hashed asset (never inside a JS
 // chunk) and it's fetched once per page, on first use. The shell awaits
 // `prepareAiLevel` (via GameModule.prepare) before a match starts, so
 // `chooseLeveledAction` can always answer synchronously.
 //
-// The policies were trained on 2-player Extra Salt matches. They play every
-// supported setup legally (2–4 players, any expansions), just untuned
-// outside that one.
+// None were trained with Extra Pepper (or the base game alone); they play
+// every supported setup legally (2–4 players, any expansions), just untuned
+// outside the ones above. Pepper decisions without action slots are answered
+// by nn/fixedChoices.ts.
 
 import type { PlayerId } from '@/core/types';
 import type { SspAction, SspAiLevel, SspConfig, SspState } from './types';
@@ -26,7 +33,7 @@ import { actWithPolicy } from './nn/agent';
 import { greedyPolicy, loadSspPolicy, type SspPolicyFile } from './nn/policy';
 import easyUrl from './policies/easy-update100.json?url';
 import normalUrl from './policies/normal-update1000.json?url';
-import hardUrl from './policies/hard-update10000.json?url';
+import hardUrl from './policies/hard-multi-update14000.json?url';
 
 export const AI_LEVELS: ReadonlyArray<{ id: SspAiLevel; label: string }> = [
   { id: 'easy', label: 'Easy' },

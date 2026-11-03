@@ -1,14 +1,16 @@
-// Head-to-head evaluation of two agents. Every seed is played twice with the
-// seats swapped, so both agents see the same opening deck from both chairs —
-// that cancels first-player advantage and a good part of the deal luck.
+// Head-to-head evaluation of two agents. Every seed is played once with A in
+// each seat (B fills the others), so A sees the same opening deck from every
+// chair — that cancels first-player advantage and a good part of the deal
+// luck. At 2 players that is the classic seat swap; at 3–4 it is A against a
+// table of B, where an even match is a 1 / players win share.
 
 import { agentFactory, agentLabel, agentSeed, type SspAgent } from './agents';
 import { playMatch, type MatchResult, type SimOptions } from './sim';
 
 export interface EvalJob {
   seed: number;
-  /** Seat agent A sits in; B takes the other. */
-  aSeat: 0 | 1;
+  /** Seat agent A sits in; B takes the others. */
+  aSeat: number;
 }
 
 export interface JobResult {
@@ -19,14 +21,18 @@ export interface JobResult {
 export interface MatchupSpec {
   a: string;
   b: string;
+  /** Seats per match (default 2): A in one, B in the rest. */
+  players?: number;
   sim: SimOptions;
 }
 
-/** `games` rounded up to an even number of seat-swapped matches. */
-export function makeJobs(games: number, seed: number): EvalJob[] {
+const playersOf = (spec: MatchupSpec) => spec.players ?? 2;
+
+/** `games` rounded up to whole seeds, each played with A in every seat. */
+export function makeJobs(games: number, seed: number, players = 2): EvalJob[] {
   const jobs: EvalJob[] = [];
-  for (let i = 0; i < Math.ceil(games / 2); i++) {
-    jobs.push({ seed: seed + i, aSeat: 0 }, { seed: seed + i, aSeat: 1 });
+  for (let i = 0; i < Math.ceil(games / players); i++) {
+    for (let aSeat = 0; aSeat < players; aSeat++) jobs.push({ seed: seed + i, aSeat });
   }
   return jobs;
 }
@@ -35,9 +41,8 @@ export function runJobs(spec: MatchupSpec, jobs: EvalJob[]): JobResult[] {
   const makeA = agentFactory(spec.a);
   const makeB = agentFactory(spec.b);
   return jobs.map((job) => {
-    const agents: SspAgent[] = job.aSeat === 0
-      ? [makeA(agentSeed(job.seed, 0)), makeB(agentSeed(job.seed, 1))]
-      : [makeB(agentSeed(job.seed, 0)), makeA(agentSeed(job.seed, 1))];
+    const agents: SspAgent[] = Array.from({ length: playersOf(spec) }, (_, k) =>
+      (k === job.aSeat ? makeA : makeB)(agentSeed(job.seed, k)));
     return { job, result: playMatch(agents, job.seed, spec.sim) };
   });
 }
@@ -61,15 +66,18 @@ export interface SideSummary {
 
 export interface EvalSummary {
   matches: number;
+  players: number;
+  /** A's score when it is exactly as strong as B: 1 / players. */
+  evenScore: number;
   a: SideSummary;
   b: SideSummary;
-  /** A's points per match: win = 1, draw (truncated) = ½. */
+  /** A's points per match: win = 1, draw (truncated) = 1 / players. */
   aScore: number;
   aScoreCi95: [number, number];
   /** Share of decided matches won by whoever sat in seat 0 (who starts round 1). */
   seat0WinRate: number;
   seat0WinRateCi95: [number, number];
-  /** Per seed: A won both seatings / they split / B won both. */
+  /** Per seed: A won every seating / some / none. */
   pairs: { aSwept: number; split: number; bSwept: number };
   avgRounds: number;
   avgSteps: number;
@@ -85,35 +93,41 @@ export function wilson(p: number, n: number, z = 1.96): [number, number] {
   return [Math.max(0, centre - half), Math.min(1, centre + half)];
 }
 
-/** A's points for one match: 1 win, ½ draw / truncation, 0 loss or A's own error. */
+/** A's points for one match: 1 win, 1 / players draw / truncation, 0 loss or
+ *  A's own error (a B seat's error is A's win). */
 function aPoints({ job, result }: JobResult): number {
   if (result.outcome === 'error') return result.error!.seat === job.aSeat ? 0 : 1;
-  if (result.outcome === 'truncated' || result.winnerSeat === null) return 0.5;
+  if (result.outcome === 'truncated' || result.winnerSeat === null) return 1 / result.scores.length;
   return result.winnerSeat === job.aSeat ? 1 : 0;
 }
 
 export function summarize(spec: MatchupSpec, results: JobResult[]): EvalSummary {
+  const players = playersOf(spec);
+  /** A's stats from its seat; B's from all of its seats (per-seat averages). */
   const side = (name: string, isA: boolean): SideSummary => {
-    let wins = 0, draws = 0, losses = 0, errors = 0;
+    let wins = 0, draws = 0, losses = 0, errors = 0, seatsPlayed = 0;
     let score = 0, roundsWon = 0, stops = 0, lcs = 0, lcWon = 0, mermaid = 0, decisions = 0, ms = 0;
     for (const r of results) {
-      const seat = isA ? r.job.aSeat : 1 - r.job.aSeat;
+      const seats = isA ? [r.job.aSeat] : r.result.scores.map((_, k) => k).filter((k) => k !== r.job.aSeat);
       const pts = isA ? aPoints(r) : 1 - aPoints(r);
       if (pts === 1) wins++;
       else if (pts === 0) losses++;
       else draws++;
-      if (r.result.outcome === 'error' && r.result.error!.seat === seat) errors++;
-      const st = r.result.seats[seat];
-      score += r.result.scores[seat];
-      roundsWon += st.roundsWon;
-      stops += st.stops;
-      lcs += st.lastChances;
-      lcWon += st.lastChancesWon;
-      if (st.mermaidWin) mermaid++;
-      decisions += st.decisions;
-      ms += st.thinkMs;
+      for (const seat of seats) {
+        seatsPlayed++;
+        if (r.result.outcome === 'error' && r.result.error!.seat === seat) errors++;
+        const st = r.result.seats[seat];
+        score += r.result.scores[seat];
+        roundsWon += st.roundsWon;
+        stops += st.stops;
+        lcs += st.lastChances;
+        lcWon += st.lastChancesWon;
+        if (st.mermaidWin) mermaid++;
+        decisions += st.decisions;
+        ms += st.thinkMs;
+      }
     }
-    const n = Math.max(1, results.length);
+    const n = Math.max(1, seatsPlayed);
     return {
       name, wins, draws, losses, errors,
       avgScore: score / n,
@@ -135,13 +149,15 @@ export function summarize(spec: MatchupSpec, results: JobResult[]): EvalSummary 
   for (const r of results) bySeed.set(r.job.seed, (bySeed.get(r.job.seed) ?? 0) + aPoints(r));
   const pairs = { aSwept: 0, split: 0, bSwept: 0 };
   for (const v of bySeed.values()) {
-    if (v === 2) pairs.aSwept++;
+    if (v === players) pairs.aSwept++;
     else if (v === 0) pairs.bSwept++;
     else pairs.split++;
   }
 
   return {
     matches: n,
+    players,
+    evenScore: 1 / players,
     a: side(agentLabel(spec.a), true),
     b: side(agentLabel(spec.b), false),
     aScore,
@@ -169,11 +185,11 @@ export function formatReport(spec: MatchupSpec, s: EvalSummary, meta: { seconds:
   const f = (v: number, d = 2) => v.toFixed(d);
   const lines = [
     `Sea Salt & Paper: ${s.a.name} (A) vs ${s.b.name} (B)`,
-    `  2 players · ${expansions} · target ${sim.targetScore} · ${s.matches} matches (${s.matches / 2} seeds × both seatings)`,
+    `  ${s.players} players${s.players > 2 ? ` (A + ${s.players - 1}× B)` : ''} · ${expansions} · target ${sim.targetScore} · ${s.matches} matches (${s.matches / s.players} seeds × every seating)`,
     `  ${meta.workers} worker${meta.workers === 1 ? '' : 's'} · ${f(meta.seconds, 1)}s · ${f(s.matches / Math.max(meta.seconds, 1e-9), 0)} matches/s`,
     '',
-    `  A score ${pct(s.aScore)}  (${ci(s.aScoreCi95)})   W ${s.a.wins} / D ${s.a.draws} / L ${s.a.losses}`,
-    `  seed pairs: A won both ${s.pairs.aSwept} · split ${s.pairs.split} · B won both ${s.pairs.bSwept}`,
+    `  A score ${pct(s.aScore)}  (${ci(s.aScoreCi95)})   W ${s.a.wins} / D ${s.a.draws} / L ${s.a.losses}${s.players > 2 ? `   (even: ${pct(s.evenScore)})` : ''}`,
+    `  seeds: A won every seating ${s.pairs.aSwept} · some ${s.pairs.split} · none ${s.pairs.bSwept}`,
     '',
     row('', 'A', 'B'),
     row('avg final score', f(s.a.avgScore, 1), f(s.b.avgScore, 1)),

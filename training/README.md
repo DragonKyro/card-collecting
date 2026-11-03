@@ -41,6 +41,23 @@ from every match: `--workers` (default cores − 4, max 12) node processes ×
 - Reward is ±1 for the match, plus `--round-reward` (0.02) × the round point
   margin.
 
+**More players, and starting from a checkpoint.** `--players 2,3,4` deals
+the workers out evenly over those table sizes, each with the same self-play /
+past-checkpoint split (past opponents fill every other seat). Rewards stay
+zero-sum: +1 to the winner and −1/(N−1) to each other seat, and the round
+shaping is the margin over the other seats' mean (both are ±1 / the plain
+margin at 2 players). Each checkpoint is then also evaluated at every larger
+table size against N−1 copies of each benchmark, with this checkpoint in each
+seat in turn; an even match there is 1/N (`evaluate.py`'s `players=N`,
+`ssp:eval --players N`). `--init CKPT` starts a new run from another run's
+checkpoint — weights, optimizer and update count — and exports it as the
+run's first policy, so the past pool has it from the start:
+
+```sh
+python training/ssp/train.py --run multi --players 2,3,4 \
+    --init training/runs/ssp/main/ckpt/update_010000.pt --updates 14000 --eval-bench hard-update10000
+```
+
 Everything lands in `training/runs/ssp/<run>/` (git-ignored). Runs are
 grouped by game — `training/runs/<game>/<run>/` — so other games' agents get
 their own folder next to `ssp/`:
@@ -113,14 +130,20 @@ python training/ssp/evaluate.py benchmarks
 python training/ssp/evaluate.py freeze training/runs/ssp/main@10000 --name hard-update10000 --games 2000 --note "..."
 ```
 
-| Level | Benchmark | Source (`runs/ssp/main`) | vs random | vs easy | vs normal |
+| Level | Benchmark | Source | vs random | vs easy | vs normal |
 |---|---|---|---|---|---|
-| easy | `bench:easy-update100` | update 100 | 100.0% | — | — |
-| normal | `bench:normal-update1000` | update 1000 | 99.9% | 61.4% | — |
-| hard | `bench:hard-update10000` | update 10000 | 100.0% | 71.6% | 64.8% |
+| easy | `bench:easy-update100` | `runs/ssp/main` update 100 | 100.0% | — | — |
+| normal | `bench:normal-update1000` | `runs/ssp/main` update 1000 | 99.9% | 61.4% | — |
+| hard | `bench:hard-multi-update14000` | `runs/ssp/multi` update 14000 | 100.0% | 76.1% | 64.7% |
+| (old hard) | `bench:hard-update10000` | `runs/ssp/main` update 10000 | 100.0% | 71.6% | 64.8% |
 
-2000 seat-swapped matches each. `bench:normal-update1000` doubles as the "1k"
-reference that the overnight run was measured against.
+2000 seat-swapped 2-player matches each; `bench:hard-multi-update14000`
+beats `bench:hard-update10000` 53.5% there. `bench:normal-update1000` doubles
+as the "1k" reference that the overnight run was measured against. The old
+hard is no longer shipped (`aiLevels.ts` imports the multi one) but stays as
+the benchmark the multi-player run was measured against: at tables of its
+copies, on fresh deals, the new hard wins 51.0% of 2p matches (4000), 44.5%
+of 3p (3000; even 33.3%) and 37.4% of 4p (3000; even 25%).
 
 `freeze` writes into the game's policy folder, but a new file only becomes a
 difficulty once `src/games/sea-salt-paper/aiLevels.ts` points a level at it.

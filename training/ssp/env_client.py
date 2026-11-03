@@ -42,7 +42,7 @@ class Batch:
     seat: np.ndarray  # (n,) int8 -- seat whose decision row i is
     obs: np.ndarray  # (n, obs_dim) float32
     mask: np.ndarray  # (n, num_slots) bool -- True = legal
-    reward: np.ndarray  # (n, 2) float32 -- per-seat reward since the previous batch
+    reward: np.ndarray  # (n, players) float32 -- per-seat reward since the previous batch
     done: np.ndarray  # (n,) bool -- an episode ended; obs is already the next episode's first decision
     episodes: list  # summaries of the episodes that ended
 
@@ -95,7 +95,7 @@ class SspEnv:
             seat=np.asarray(r["seat"], dtype=np.int8),
             obs=np.frombuffer(base64.b64decode(r["obs"]), dtype="<f4").reshape(n, self.obs_dim),
             mask=np.frombuffer(base64.b64decode(r["mask"]), dtype=np.uint8).reshape(n, self.num_slots).astype(bool),
-            reward=np.asarray(r["reward"], dtype=np.float32).reshape(n, 2),
+            reward=np.asarray(r["reward"], dtype=np.float32).reshape(n, -1),
             done=np.asarray(r["done"], dtype=bool),
             episodes=r["episodes"],
         )
@@ -104,6 +104,7 @@ class SspEnv:
         self,
         num_envs: int = 16,
         seed: int = 1,
+        players: int = 2,
         extra_salt: bool = True,
         extra_pepper: bool = False,
         target_score: int = 40,
@@ -112,11 +113,12 @@ class SspEnv:
         round_reward: float = 0.0,
         max_steps: int = 10_000,
     ) -> Batch:
-        """opponent: 'self' (both seats are the learner), 'random',
-        'nn:<policy.json>' or 'nn-sample:<policy.json>'."""
+        """opponent: 'self' (every seat is the learner), 'random',
+        'nn:<policy.json>' or 'nn-sample:<policy.json>' (plays every other seat)."""
         options = {
             "numEnvs": num_envs,
             "seed": seed,
+            "players": players,
             "extraSalt": extra_salt,
             "extraPepper": extra_pepper,
             "targetScore": target_score,
@@ -169,11 +171,11 @@ def _smoke(args: argparse.Namespace) -> None:
     with SspEnv() as env:
         print(f"obs_dim={env.obs_dim} num_slots={env.num_slots} "
               f"encoder v{env.encoder_version} action space v{env.action_space_version}")
-        batch = env.reset(num_envs=args.envs, seed=args.seed, extra_salt=not args.base,
+        batch = env.reset(num_envs=args.envs, seed=args.seed, players=args.players, extra_salt=not args.base,
                           opponent=args.opponent)
         episodes: list = []
         decisions = 0
-        reward_total = np.zeros(2)
+        reward_total = np.zeros(args.players)
         t0 = time.perf_counter()
         while len(episodes) < args.episodes:
             assert np.isfinite(batch.obs).all(), "non-finite features"
@@ -201,6 +203,7 @@ if __name__ == "__main__":
     p.add_argument("--envs", type=int, default=32)
     p.add_argument("--episodes", type=int, default=200)
     p.add_argument("--opponent", default="random")
+    p.add_argument("--players", type=int, default=2)
     p.add_argument("--seed", type=int, default=1)
     p.add_argument("--base", action="store_true", help="base game only (default: Extra Salt on)")
     _smoke(p.parse_args())
