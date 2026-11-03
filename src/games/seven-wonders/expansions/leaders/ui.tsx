@@ -7,10 +7,12 @@
 import { useState } from 'react';
 import type { PlayerId, Seat } from '@/core/types';
 import type {
-  SwAction, SwCard, SwConfig, SwResource, SwState,
+  SwAction, SwCard, SwResource, SwState,
 } from '../../types';
 import { ALL_RESOURCES } from '../../types';
 import type { SwOverlayProps } from '../types';
+import { CardFace } from '../../Card';
+import { CoinIcon, ResourceIcon } from '../../art';
 
 export function LeadersOverlay({ state, localPlayerId, dispatch }: SwOverlayProps) {
   if (state.subPhase === 'leaderDraft') {
@@ -183,13 +185,13 @@ function SolomonPickPanel({ state, localPlayerId, dispatch }: SwOverlayProps) {
       {isMine && state.discard.length > 0 && (
         <div className="sw-hand">
           {state.discard.map((c) => (
-            <button
-              key={c.id} className="sw-card"
+            <CardFace
+              key={c.id}
+              card={c}
+              size="md"
+              title={cardEffectText(c)}
               onClick={() => dispatch({ type: 'solomonPick', playerId: localPlayerId!, cardId: c.id })}
-            >
-              <div className="sw-card-name">{c.name}</div>
-              <div className="sw-card-effect" style={{ fontSize: 10 }}>{cardEffectText(c)}</div>
-            </button>
+            />
           ))}
         </div>
       )}
@@ -216,7 +218,7 @@ export function BilkisButton({ state, me, dispatch }: { state: SwState; me: { id
         style={{ fontSize: 11 }}
         onClick={() => setOpen(true)}
       >
-        Use Bilkis (1🪙 → +1 resource)
+        Use Bilkis (<CoinIcon n={1} size={14} /> → +1 resource)
       </button>
     );
   }
@@ -232,7 +234,7 @@ export function BilkisButton({ state, me, dispatch }: { state: SwState; me: { id
             setOpen(false);
           }}
         >
-          {r}
+          <ResourceIcon r={r as SwResource} size={16} /> {r}
         </button>
       ))}
       <button
@@ -243,17 +245,6 @@ export function BilkisButton({ state, me, dispatch }: { state: SwState; me: { id
         cancel
       </button>
     </div>
-  );
-}
-
-// ===== Lobby section =====
-
-export function LeadersLobbySection({ config: _config, onChange: _onChange }: { config: SwConfig; onChange: (c: SwConfig) => void }) {
-  // No lobby-side config for Leaders (just the on/off in the main panel).
-  return (
-    <p style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
-      Leaders enabled. 36 leaders shuffled and pass-drafted at match start.
-    </p>
   );
 }
 
@@ -269,16 +260,14 @@ function LeaderCard({
   actionLabel: string;
 }) {
   return (
-    <div
-      className={`sw-card ${selected ? 'selected' : ''} ${disabled ? 'disabled' : ''}`}
-      onClick={() => { if (!disabled) onPick(); }}
-      title={actionLabel}
-    >
-      <div className="sw-card-color-bar" style={{ background: '#d8c598' }} />
-      <div className="sw-card-name">{card.name}</div>
-      <div className="sw-card-cost">{card.cost.coins ?? 0} 🪙</div>
-      <div className="sw-card-effect">{leaderEffectText(card)}</div>
-    </div>
+    <CardFace
+      card={card}
+      selected={selected}
+      disabled={disabled}
+      onClick={onPick}
+      text={leaderEffectText(card)}
+      title={`${card.name} — ${actionLabel}`}
+    />
   );
 }
 

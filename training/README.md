@@ -218,6 +218,83 @@ turn; a seat sees that the other has picked, never what. A multi-part answer
 SSP crab pick. The game-side pieces live in `src/games/sushi-go/nn/`: see
 CLAUDE.md.
 
+## Jaipur (`jaipur/`)
+
+The same pipeline for Jaipur (2 players, first to 2 seals by default). The
+hand-written heuristic (`src/games/jaipur/ai.ts`) is the baseline every
+checkpoint is scored against, next to random and the checkpoint 500 updates
+earlier. Reward is ±1 for the match, plus `--round-reward` (0.005) × the
+round's rupee margin and `--seal-reward` (0.1) to the round's winner / loser.
+Workers: `--self-play` (half) train both seats against themselves,
+`--vs-heuristic` (0.17 → 2 of 12) spar with the heuristic — a fixed,
+competent opponent from update 1 — and the rest play past checkpoints.
+
+The main run is launched by `training\runs\jaipur\main\train.cmd` (10k
+updates, `--resume`, output appended to `train.log`; run it again to carry on).
+At the defaults (12 workers × 32 envs × 64 decisions) it does ~17.5k
+decisions/s on this machine, ~1.4 s per update, ~4 h for 10k updates.
+Frozen policies named `easy-…` / `normal-…` / `hard-…` in
+`src/games/jaipur/policies/` become the game's AI levels automatically.
+`python -m pytest training/jaipur -q` checks TS ↔ PyTorch export parity,
+zero-sum self-play rewards, train → checkpoint → resume → evaluate, and freeze.
+
+```sh
+npm run jaipur:build                                   # → training/jaipur/dist (train.py also builds it)
+python training/jaipur/env_client.py                   # random-agent smoke test of the bridge
+python training/jaipur/train.py --run main --updates 10000
+python training/jaipur/train.py --run main --resume
+python training/jaipur/evaluate.py match training/runs/jaipur/main heuristic --games 2000
+python training/jaipur/evaluate.py progress training/runs/jaipur/main --vs heuristic --every 1000
+npm run jaipur:eval -- --a heuristic --b "heuristic:holdDiscount=0.75" --games 2000   # tune the heuristic
+```
+
+Agents: `random`, `heuristic`, `heuristic:k=v,…` (any of the `HeuristicParams`
+weights, e.g. `heuristic:holdDiscount=0.8,exposure=0.4`), `nn:<file>`,
+`nn-sample:<file>`; in `evaluate.py` also `bench:<name>` once
+`src/games/jaipur/policies/` holds frozen levels (`evaluate.py freeze`), a run
+dir or `RUN@N`. Runs land in `training/runs/jaipur/<run>/` with the same files
+as the other games. The eval report adds how each side plays: rounds won,
+rupees per round, camel-token rate, sales per round and cards per sale, bonus
+tokens, trades, single takes and camel takes per round.
+
+For reference, the tuned heuristic beats random 100% and its first-guess
+weights 75.4% (2000 seat-swapped matches); it averages ~2.5 rounds and ~120
+actions per match, ~0.2 ms per decision. The env bridge runs ~4k random
+decisions/s per process at 32 envs.
+
+`runs/jaipur/main` (encoder v2, 256×2 MLP, 10k updates, 245M decisions,
+4 h 45 min) went from 28% vs the heuristic at update 100 to 80% at 1000 and
+~84% by 1500, then plateaued at 84–89% (vs the checkpoint 500 updates
+earlier ≈ 50% from ~update 2000). The game's AI levels are frozen
+checkpoints of it, in `src/games/jaipur/policies/`:
+
+| Level | Benchmark | Source update | vs random | vs heuristic | vs easy | vs normal |
+|---|---|---:|---:|---:|---:|---:|
+| easy | `bench:easy-update100` | 100 | 100.0% | 29.1% | — | — |
+| normal | `bench:normal-update500` | 500 | 100.0% | 64.9% | 83.0% | — |
+| hard | `bench:hard-update10000` | 10000 | 100.0% | 87.5% | 89.8% | 68.5% |
+
+2000 seat-swapped matches each. Update 10000 ties the best-scoring
+checkpoint, u8400, 49.0%. Hard wins 68.5% against normal while averaging fewer
+rupees per round: it plays to win rounds, not to run up the score.
+
+| File | Role |
+|---|---|
+| `jaipur/train.py` | PPO trainer (derived from `sgp/train.py`; shares `ssp/model.py`), plus heuristic sparring workers |
+| `jaipur/test_training.py` | pytest: export parity, zero-sum rewards, train → resume → evaluate, freeze |
+| `jaipur/evaluate.py` | eval API + CLI (`match`, `baselines`, `progress`, `freeze`, `benchmarks`) |
+| `jaipur/env_client.py` | Python `JaipurEnv` client, plus a random-agent smoke test |
+| `jaipur/agents.ts` | `random`, `heuristic`, `heuristic:k=v,…`, `nn:`, `nn-sample:` |
+| `jaipur/sim.ts` | `playMatch`: one headless match, per-seat play stats |
+| `jaipur/vec-env.ts` / `jaipur/env-server.ts` | the vectorized env and its stdio bridge (same protocol as SSP's) |
+| `jaipur/evaluate.ts` / `jaipur/eval.ts` | seat-swapped jobs, summary, report / CLI over worker threads |
+
+An exchange is several decisions — each good taken, `trade:done`, each card
+given — like a Sushi Go pick with chopsticks: the env asks the same seat again
+with its draft, and the parts before the last change no game state. The mask
+only admits parts that can still end in a legal trade. The game-side pieces
+live in `src/games/jaipur/nn/` and `knowledge.ts`: see CLAUDE.md.
+
 ## Pieces
 
 | File | Role |

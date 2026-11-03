@@ -1,0 +1,393 @@
+/* Jaipur — pink-city bazaar: a maroon board, a gold-bordered market rug. */
+
+.jp-lobby-h {
+  margin: 0 0 6px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--fg-muted);
+}
+
+.jp-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 258px;
+  gap: 14px;
+  align-items: start;
+}
+
+@media (max-width: 920px) {
+  .jp-layout { grid-template-columns: minmax(0, 1fr); }
+}
+
+.jp-board {
+  position: relative;
+  container-type: inline-size;
+  padding: 12px;
+  border-radius: 14px;
+  color: #f8ecd8;
+  background:
+    radial-gradient(ellipse at 50% 45%, rgba(232, 141, 132, 0.18), transparent 60%),
+    linear-gradient(180deg, #3b1a22 0%, #2a1218 100%);
+  border: 1px solid #5a2a33;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+
+.jp-board .muted, .jp-side .muted { color: #c7aa98; }
+
+.jp-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+  font-size: 13px;
+  color: #e8cdb8;
+  margin-bottom: 10px;
+}
+.jp-status-round {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-weight: 700;
+  font-size: 15px;
+  color: #f3cf63;
+}
+.jp-status-goal { margin-left: auto; color: #c7aa98; }
+
+/* ---------- players ---------- */
+
+.jp-player {
+  --seat: #888;
+  border: 1px solid rgba(231, 184, 74, 0.22);
+  border-radius: 12px;
+  padding: 8px 10px 10px;
+  background: rgba(0, 0, 0, 0.18);
+  transition: border-color 200ms, box-shadow 200ms;
+}
+.jp-player.active {
+  border-color: var(--seat);
+  box-shadow: 0 0 0 1px var(--seat), 0 0 18px -4px var(--seat);
+}
+.jp-player-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 6px;
+  font-size: 14px;
+}
+.jp-player-name { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; }
+.jp-player-name .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--seat); }
+.jp-tag {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #e8cdb8;
+}
+.jp-tag-turn { background: var(--seat); color: #1a0d10; }
+.jp-player-score { margin-left: auto; font-size: 14px; }
+.jp-player-score strong { color: #f3cf63; font-size: 16px; }
+
+.jp-seals { display: inline-flex; gap: 2px; vertical-align: middle; }
+.jp-seals svg.earned { filter: drop-shadow(0 0 3px rgba(243, 207, 99, 0.7)); }
+
+/* The viewer's hand gets a row to itself (seven full-size cards are wider
+ * than what's left beside a herd and a token pile); herd and tokens share
+ * the row below. The opponent's small hand, herd and tokens share one row
+ * while they fit, and wrap when the board is narrow. */
+.jp-player-bottom .jp-player-body {
+  display: grid;
+  gap: 8px 18px;
+  align-items: start;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas: "hand hand" "herd tokens";
+}
+.jp-player-bottom .jp-hand-zone { grid-area: hand; min-width: 0; }
+.jp-player-bottom .jp-herd-zone { grid-area: herd; }
+.jp-player-bottom .jp-tokens-zone { grid-area: tokens; min-width: 0; }
+.jp-player-top .jp-player-body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  align-items: flex-start;
+}
+.jp-player-top .jp-hand-zone { flex: 1 1 200px; min-width: 0; }
+.jp-zone-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: #c7aa98;
+  margin-bottom: 4px;
+}
+/* A hand never overflows its zone: the gap between cards (--n of them, set
+ * inline) shrinks, down to a deep overlap, until they fit; each card's
+ * corner pip stays visible. */
+.jp-hand {
+  --n: 1;
+  --card-w: 84px;
+  --gap: 6px;
+  --min-gap: -62px;
+  display: flex;
+  min-height: 122px;
+  align-items: flex-end;
+  padding-top: 12px;
+}
+.jp-hand-small { --card-w: 50px; --gap: -16px; --min-gap: -36px; min-height: 72px; padding-top: 0; }
+.jp-hand .jp-card + .jp-card {
+  margin-left: clamp(var(--min-gap), calc((100% - var(--n) * var(--card-w)) / max(var(--n) - 1, 1)), var(--gap));
+}
+
+.jp-herd { display: flex; align-items: flex-end; min-height: 60px; padding-top: 12px; }
+.jp-herd .jp-card + .jp-card { margin-left: -26px; }
+.jp-player-top .jp-herd { padding-top: 0; }
+
+.jp-tokens { display: flex; flex-wrap: wrap; gap: 2px; min-height: 26px; }
+.jp-player-top .jp-tokens { max-width: 250px; }
+.jp-empty { font-size: 12px; color: #a98d7c; font-style: italic; align-self: center; }
+
+
+/* ---------- cards ---------- */
+
+.jp-card {
+  position: relative;
+  flex: none;
+  border-radius: 8px;
+  transition: transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.45);
+}
+.jp-card svg { display: block; width: 100%; height: 100%; }
+.jp-card-normal { width: 84px; height: 118px; }
+.jp-card-small { width: 50px; height: 70px; }
+.jp-card-tiny { width: 40px; height: 56px; }
+
+.jp-card.selectable { cursor: pointer; }
+.jp-card.selectable:hover { transform: translateY(-4px); }
+.jp-card.selectable:focus-visible { outline: 2px solid #f3cf63; outline-offset: 2px; }
+.jp-card.selected {
+  transform: translateY(-12px);
+  box-shadow: 0 0 0 3px #ffd75e, 0 10px 20px rgba(0, 0, 0, 0.55);
+}
+.jp-herd .jp-card.selected { transform: translateY(-10px); }
+.jp-card.disabled { opacity: 0.4; filter: grayscale(0.5); cursor: not-allowed; }
+.jp-card.fresh { animation: jp-fresh 1.6s ease-out 0.35s; }
+
+@keyframes jp-fresh {
+  0% { box-shadow: 0 0 0 0 rgba(255, 215, 94, 0.9), 0 2px 5px rgba(0, 0, 0, 0.45); }
+  100% { box-shadow: 0 0 0 10px rgba(255, 215, 94, 0), 0 2px 5px rgba(0, 0, 0, 0.45); }
+}
+
+.jp-slot-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed rgba(231, 184, 74, 0.35);
+  color: #c7aa98;
+  font-size: 11px;
+  box-shadow: none;
+  text-align: center;
+}
+
+/* ---------- market rug ---------- */
+
+.jp-rug {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 22px;
+  margin: 12px 0;
+  padding: 16px 14px 10px;
+  border-radius: 14px;
+  background:
+    repeating-linear-gradient(45deg, rgba(231, 184, 74, 0.06) 0 6px, transparent 6px 12px),
+    #7d1d2c;
+  border: 3px double #e7b84a;
+  box-shadow: inset 0 0 30px rgba(0, 0, 0, 0.45);
+}
+.jp-market {
+  display: flex;
+  gap: 10px;
+  min-height: 130px;
+  align-items: flex-end;
+  padding-top: 12px;
+}
+.jp-pile { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+
+/* A narrow board: the market takes a line of its own (its cards overlapping
+ * as needed, --n of them set inline), deck and sold pile below it. */
+@container (max-width: 720px) {
+  .jp-rug { flex-wrap: wrap; gap: 10px 28px; }
+  .jp-market { order: -1; flex: 1 1 100%; justify-content: center; gap: 0; }
+  .jp-market .jp-card + .jp-card {
+    margin-left: clamp(-50px, calc((100% - var(--n) * 84px) / max(var(--n) - 1, 1)), 10px);
+  }
+}
+.jp-deck, .jp-discard { position: relative; width: 84px; height: 118px; }
+.jp-pile-label { font-size: 11px; color: #f0d6c0; }
+
+/* ---------- actions ---------- */
+
+.jp-actions { margin-top: 10px; }
+.jp-intent { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.jp-go {
+  background: linear-gradient(180deg, #f3cf63, #d9a43a);
+  color: #3a1c0c;
+  border: 1px solid #8a5d12;
+  min-width: 132px;
+}
+.jp-go .muted { color: #6b4413; font-weight: 600; }
+.jp-intent-hint { font-size: 13px; color: #e8cdb8; flex: 1 1 240px; }
+.jp-intent-ready .jp-intent-hint { color: #f6e2a6; }
+.jp-intent-error .jp-intent-hint { color: #ff9a8a; }
+.jp-clear { padding: 6px 10px; }
+.jp-quick { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.jp-quick button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  font-size: 13px;
+  background: rgba(0, 0, 0, 0.25);
+  color: #f8ecd8;
+  border-color: rgba(231, 184, 74, 0.35);
+}
+.jp-type-icon { display: inline-block; vertical-align: middle; flex: none; }
+.jp-waiting { margin: 8px 0 0; font-size: 13px; color: #c7aa98; text-align: center; }
+
+/* ---------- side: price board + log ---------- */
+
+.jp-side { display: flex; flex-direction: column; gap: 12px; }
+.jp-prices, .jp-log {
+  background: #2b1519;
+  border: 1px solid #5a2a33;
+  border-radius: 12px;
+  padding: 10px 10px 12px;
+  color: #f8ecd8;
+}
+.jp-prices h4, .jp-log h4 {
+  margin: 0 0 8px;
+  font-family: Georgia, 'Times New Roman', serif;
+  color: #f3cf63;
+  font-size: 14px;
+}
+.jp-price-row { display: flex; align-items: center; gap: 6px; margin: 5px 0; min-height: 26px; }
+.jp-price-row.soldout { opacity: 0.5; }
+.jp-price-tokens { display: flex; gap: 1px; flex-wrap: nowrap; }
+.jp-price-tokens .jp-token-small { width: 22px; height: 22px; }
+.jp-soldout { font-size: 11px; font-style: italic; color: #c7aa98; }
+
+.jp-token { flex: none; width: 34px; height: 34px; }
+.jp-token-small { width: 25px; height: 25px; }
+.jp-token svg { display: block; width: 100%; height: 100%; }
+.jp-token { filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.5)); }
+
+.jp-bonus-piles { display: flex; gap: 10px; margin-top: 12px; align-items: flex-end; flex-wrap: wrap; }
+.jp-bonus-pile { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.jp-bonus-stack { position: relative; width: 25px; min-height: 25px; }
+.jp-bonus-count { font-size: 10px; font-weight: 700; color: #e8cdb8; }
+
+.jp-log ol { list-style: none; margin: 0; padding: 0; max-height: 330px; overflow-y: auto; font-size: 12px; }
+.jp-log li { padding: 3px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.05); line-height: 1.35; }
+.jp-log li.jp-log-roundEnd, .jp-log li.jp-log-matchEnd { color: #f3cf63; font-weight: 600; }
+
+/* ---------- round summary / game over ---------- */
+
+.jp-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 36px 12px;
+  border-radius: 14px;
+  background: rgba(20, 8, 10, 0.74);
+  /* Late, so the round's last move finishes flying first (an AI's flies slowly). */
+  animation: jp-overlay-in 420ms ease-out 1000ms both;
+}
+@keyframes jp-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.jp-overlay-card {
+  width: 100%;
+  max-width: 660px;
+  padding: 18px 22px;
+  border-radius: 14px;
+  background: #2b1519;
+  border: 2px solid #e7b84a;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+  animation: jp-card-in 480ms cubic-bezier(0.2, 0.9, 0.3, 1.1) 1050ms both;
+}
+@keyframes jp-card-in {
+  from { opacity: 0; transform: translateY(16px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+.jp-overlay-card h3 {
+  margin: 4px 0 14px;
+  font-family: Georgia, 'Times New Roman', serif;
+  color: #f3cf63;
+  font-size: 20px;
+}
+.jp-overlay-eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; color: #c7aa98; }
+.jp-decided { display: block; font-size: 12px; font-family: var(--font); color: #e8cdb8; font-weight: 400; margin-top: 4px; }
+
+.jp-score-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+@media (max-width: 560px) { .jp-score-cols { grid-template-columns: 1fr; } }
+.jp-score-col {
+  position: relative;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid rgba(231, 184, 74, 0.2);
+}
+.jp-score-col.won { border-color: #e7b84a; box-shadow: 0 0 20px -6px #e7b84a; }
+.jp-score-name { font-weight: 800; margin-bottom: 6px; font-size: 15px; }
+.jp-score-line { display: flex; justify-content: space-between; font-size: 13px; margin-top: 6px; }
+.jp-score-tokens { display: flex; flex-wrap: wrap; gap: 2px; margin-top: 3px; min-height: 4px; }
+.jp-score-total {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 10px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(231, 184, 74, 0.3);
+  font-size: 15px;
+}
+.jp-score-total strong { color: #f3cf63; font-size: 18px; }
+.jp-camel-win { color: #ffd75e; }
+.jp-seal-pop {
+  position: absolute;
+  top: -30px;
+  right: 6px;
+  animation: jp-seal-pop 900ms cubic-bezier(0.2, 1.5, 0.4, 1) 1500ms both;
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.5));
+}
+@keyframes jp-seal-pop {
+  from { opacity: 0; transform: scale(0.1) rotate(-60deg); }
+  to { opacity: 1; transform: none; }
+}
+
+.jp-final-seals { display: flex; gap: 28px; margin-bottom: 14px; flex-wrap: wrap; }
+.jp-final-seal { display: flex; flex-direction: column; gap: 4px; font-weight: 700; }
+.jp-history { width: 100%; font-size: 13px; margin-top: 4px; }
+
+/* ---------- rules ---------- */
+
+.jp-rules-row { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0; }
+.jp-rules-card { width: 58px; height: 81px; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.4)); }
+.jp-rules-token { width: 30px; height: 30px; }
+.jp-rules-steps li { margin: 4px 0; }
+.jp-rules-note { font-size: 13px; color: var(--fg-muted); }
+.jp-rules-callout {
+  padding: 8px 12px;
+  border-left: 3px solid #c8506a;
+  background: var(--bg-hover);
+  border-radius: 6px;
+}
+.jp-rules-bonus { display: flex; gap: 18px; flex-wrap: wrap; margin: 8px 0; }
+.jp-rules-bonus-col { display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 13px; }
+.jp-rules-type { display: inline-flex; align-items: center; gap: 6px; }
+.jp-rules-table { width: 100%; }
+
+@media (prefers-reduced-motion: reduce) {
+  .jp-card.fresh, .jp-overlay, .jp-overlay-card, .jp-seal-pop { animation: none; }
+}

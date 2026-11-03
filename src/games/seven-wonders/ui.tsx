@@ -1,11 +1,11 @@
 // 7 Wonders UI — LobbyConfig + GameView.
 
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import type { GameUiBundle } from '@/core/module';
 import type { PlayerId, Seat } from '@/core/types';
 import type {
   SwState, SwAction, SwConfig, SwExpansionId,
-  SwCard, SwPlayer, SwPendingPick, SwResource,
+  SwCard, SwCardColor, SwPlayer, SwPendingPick, SwResource, SwScience, SwWonderStage,
 } from './types';
 import { WONDERS, wonderById, wondersByName } from './wonders';
 import {
@@ -14,6 +14,13 @@ import {
 } from './resources';
 import { getActiveExpansions, getAllExpansions } from './expansions/registry';
 import { BilkisButton } from './expansions/leaders/ui';
+import {
+  AGE_HEX, AgeIcon, ArrowIcon, ChainIcon, CoinIcon, ColorChip, DebtIcon, DiplomacyIcon, MilitaryToken,
+  ResourceIcon, ScienceIcon, ShieldIcon, VpIcon, WonderStageIcon,
+} from './art';
+import {
+  CardFace, CostIcons, EffectIcons, TableauColumns, WonderBoard, WonderMini, type CardStatus,
+} from './Card';
 import { RulesBook, RulesHero, RulesGrid, RulesTile } from '@/ui/RulesBook';
 import './seven-wonders.css';
 
@@ -93,6 +100,7 @@ function LobbyConfig({ config, seats, onChange }: { config: SwConfig; seats: Sea
                     <option key={g.b.id} value={g.b.id}>{g.name} (B)</option>,
                   ])}
                 </select>
+                {current && <WonderMini wonder={wonderById(current)} built={0} />}
               </div>
             );
           })}
@@ -234,6 +242,8 @@ function Rules() {
 // GameView
 // ===================================================================
 
+const ROMAN = ['', 'I', 'II', 'III'] as const;
+
 function GameView({
   state,
   localPlayerId,
@@ -252,7 +262,6 @@ function GameView({
   }, [state.age, state.ageRound, state.subPhase]);
 
   const me = state.players.find((p) => p.id === localPlayerId) ?? null;
-  const opponents = state.players.filter((p) => p.id !== localPlayerId);
   const mySeatName = state.seats.find((s) => s.id === localPlayerId)?.name ?? 'You';
 
   if (state.phase === 'gameOver') {
@@ -264,9 +273,9 @@ function GameView({
       <div className="sw">
         <div className="sw-board">
           <MilitaryBanner state={state} />
-          <div style={{ marginTop: 12, textAlign: 'center' }}>
+          <div style={{ textAlign: 'center' }}>
             <button onClick={() => dispatch({ type: 'continue' })}>
-              Continue to Age {Math.min(state.age + 1, 3)} →
+              {state.age < 3 ? `Continue to Age ${ROMAN[state.age + 1]} →` : 'Final scoring →'}
             </button>
           </div>
         </div>
@@ -274,219 +283,171 @@ function GameView({
     );
   }
 
-  // Expansion-owned subphase: defer rendering to its overlay.
-  const expansionOverlay = (() => {
-    for (const ext of getActiveExpansions(state.config)) {
-      if (ext.ownsSubPhase?.(state.subPhase) && ext.GameOverlay) {
-        const Overlay = ext.GameOverlay;
-        return (
-          <div className="sw">
-            <div className="sw-board">
-              <div className="sw-status">
-                <span>Age {state.age}</span>
-                <span>{state.subPhase}</span>
-              </div>
-              <div className="sw-opponents">
-                {opponents.map((p) => (
-                  <OpponentStrip key={p.id} player={p} state={state} />
-                ))}
-              </div>
-              {me && (
-                <>
-                  <WonderArea player={me} />
-                  <SelfTableau player={me} />
-                </>
-              )}
-              <Overlay state={state} localPlayerId={localPlayerId} dispatch={dispatch} />
-            </div>
-          </div>
-        );
-      }
-    }
-    return null;
-  })();
-  if (expansionOverlay) return expansionOverlay;
-
-  const submitted = me?.pendingPick != null;
   const submittedCount = state.players.filter((p) => p.pendingPick !== null).length;
+  const header = (
+    <>
+      <StatusBar state={state} submittedCount={submittedCount} />
+      <Opponents state={state} localPlayerId={localPlayerId} />
+      {me && (
+        <div className="sw-self">
+          <WonderBoard wonder={wonderById(me.wonderId)} built={me.wonderStagesBuilt} highlightNext />
+          <SelfCity player={me} />
+        </div>
+      )}
+    </>
+  );
+
+  // Expansion-owned subphase: defer the bottom panel to its overlay.
+  for (const ext of getActiveExpansions(state.config)) {
+    if (ext.ownsSubPhase?.(state.subPhase) && ext.GameOverlay) {
+      const Overlay = ext.GameOverlay;
+      return (
+        <div className="sw">
+          <div className="sw-board">
+            {header}
+            {/* Overlays may be lazy (their art ships with this chunk, not the module). */}
+            <Suspense fallback={null}>
+              <Overlay state={state} localPlayerId={localPlayerId} dispatch={dispatch} />
+            </Suspense>
+          </div>
+        </div>
+      );
+    }
+  }
 
   return (
     <div className="sw">
       <div className="sw-board">
-        <div className="sw-status">
-          <span>Age {state.age} · Pick {state.ageRound} / 6</span>
-          <span>Pass: {state.passDirection === 'cw' ? '→ CW' : '← CCW'}</span>
-          <span>Submitted: {submittedCount} / {state.players.length}</span>
-        </div>
-
-        <div className="sw-opponents">
-          {opponents.map((p) => (
-            <OpponentStrip key={p.id} player={p} state={state} />
-          ))}
-        </div>
-
+        {header}
         {me ? (
-          <>
-            <WonderArea player={me} />
-            <SelfTableau player={me} />
-            <HandPanel
-              state={state}
-              me={me}
-              mySeatName={mySeatName}
-              selectedCardId={selectedCardId}
-              setSelectedCardId={setSelectedCardId}
-              mode={mode}
-              setMode={setMode}
-              submitted={submitted}
-              dispatch={dispatch}
-            />
-          </>
+          <HandPanel
+            state={state}
+            me={me}
+            mySeatName={mySeatName}
+            selectedCardId={selectedCardId}
+            setSelectedCardId={setSelectedCardId}
+            mode={mode}
+            setMode={setMode}
+            submitted={me.pendingPick != null}
+            dispatch={dispatch}
+          />
         ) : (
-          <p style={{ color: 'rgba(255,255,255,0.7)' }}>Spectator view — no hand shown.</p>
+          <p className="sw-empty">Spectator view — no hand shown.</p>
         )}
       </div>
     </div>
   );
 }
 
-function OpponentStrip({ player, state }: { player: SwPlayer; state: SwState }) {
-  const seat = state.seats.find((s) => s.id === player.id);
-  const w = wonderById(player.wonderId);
-  const submitted = player.pendingPick != null;
-  const leaders = player.leaderTableau ?? [];
+function StatusBar({ state, submittedCount }: { state: SwState; submittedCount: number }) {
+  const picking = state.subPhase === 'picking';
   return (
-    <div className={`sw-player-strip ${submitted ? 'active' : ''}`}>
-      <header>
-        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ width: 10, height: 10, background: seat?.color ?? '#888', borderRadius: 2 }} />
-          {seat?.name ?? player.id}
-          {seat?.isAI && <span style={{ fontSize: 10, opacity: 0.6, marginLeft: 4 }}>(AI)</span>}
-          {submitted && <span style={{ fontSize: 10, color: '#f4d268', marginLeft: 4 }}>✓</span>}
+    <div className="sw-status">
+      <span className="sw-pill sw-pill-age" style={{ ['--sw-age' as string]: AGE_HEX[state.age] }}>
+        <AgeIcon age={state.age} size={22} />
+        Age {ROMAN[state.age]}{picking && <> · pick {state.ageRound} of 6</>}
+      </span>
+      {picking && (
+        <span className="sw-pill" title="Hands pass this way after every pick">
+          <span className="sw-pass">{state.passDirection === 'cw' ? '↻' : '↺'}</span>
+          Pass {state.passDirection === 'cw' ? 'clockwise' : 'counter-clockwise'}
         </span>
-        <span style={{ fontSize: 11, opacity: 0.85 }}>
-          🪙 {player.coins} · ⚔ {shieldsFor(player)}
-        </span>
-      </header>
-      <div style={{ fontSize: 11, opacity: 0.75 }}>
-        {w.name} ({w.side}) · Stage {player.wonderStagesBuilt}/{w.stages.length}
-        {leaders.length > 0 && <span> · 👤 {leaders.length}</span>}
-      </div>
-      <div className="sw-tableau">
-        {player.tableau.map((c) => (
-          <div
-            key={c.id}
-            className={`sw-tableau-card ${c.color}`}
-            title={`${c.name} — ${cardEffectsText(c)}`}
-          />
-        ))}
-        {leaders.map((c) => (
-          <div
-            key={c.id}
-            className={`sw-tableau-card leader`}
-            style={{ background: '#d8c598', color: '#3a2e15' }}
-            title={`Leader: ${c.name}`}
-          />
-        ))}
-      </div>
+      )}
+      {picking && <span className="sw-pill">Picked {submittedCount} / {state.players.length}</span>}
+      <span className="sw-pill" title="Discarded cards">Discard pile · {state.discard.length}</span>
     </div>
   );
 }
 
-function SelfTableau({ player }: { player: SwPlayer }) {
-  const byColor = {
-    brown: player.tableau.filter((c) => c.color === 'brown'),
-    gray: player.tableau.filter((c) => c.color === 'gray'),
-    blue: player.tableau.filter((c) => c.color === 'blue'),
-    yellow: player.tableau.filter((c) => c.color === 'yellow'),
-    red: player.tableau.filter((c) => c.color === 'red'),
-    green: player.tableau.filter((c) => c.color === 'green'),
-    purple: player.tableau.filter((c) => c.color === 'purple'),
-  };
-  const leaders = player.leaderTableau ?? [];
-  const totalCards = player.tableau.length + leaders.length;
+/** Opponents in table order, from the west neighbour round to the east one. */
+function Opponents({ state, localPlayerId }: { state: SwState; localPlayerId: PlayerId | null }) {
+  const n = state.players.length;
+  const idx = state.players.findIndex((p) => p.id === localPlayerId);
+  const order: Array<{ player: SwPlayer; side: 'west' | 'east' | null }> = idx < 0
+    ? state.players.map((player) => ({ player, side: null }))
+    : Array.from({ length: n - 1 }, (_, k) => ({
+      player: state.players[(idx - (k + 1) + n) % n],
+      side: k === 0 ? 'west' as const : k === n - 2 ? 'east' as const : null,
+    }));
   return (
-    <div className="sw-hand-area">
-      <h3>
-        <span>Your tableau · {totalCards} card{totalCards === 1 ? '' : 's'}</span>
-        <span style={{ fontSize: 12, opacity: 0.75 }}>
-          🪙 {player.coins} · ⚔ {shieldsFor(player)}
+    <div className="sw-opponents">
+      {order.map(({ player, side }) => <OpponentStrip key={player.id} player={player} side={side} state={state} />)}
+    </div>
+  );
+}
+
+function OpponentStrip({ player, side, state }: { player: SwPlayer; side: 'west' | 'east' | null; state: SwState }) {
+  const seat = state.seats.find((s) => s.id === player.id);
+  const submitted = player.pendingPick != null;
+  const cards = [...player.tableau, ...(player.leaderTableau ?? [])];
+  return (
+    <div className={`sw-opp ${side ? `sw-opp-${side}` : ''} ${submitted ? 'done' : ''}`}>
+      <header>
+        <span className="sw-dot" style={{ background: seat?.color ?? '#888' }} />
+        <strong>{seat?.name ?? player.id}</strong>
+        {seat?.isAI && <span className="sw-tag">AI</span>}
+        {side === 'west' && <span className="sw-tag sw-tag-side"><ArrowIcon dir="west" size={10} light /> West neighbour</span>}
+        {side === 'east' && <span className="sw-tag sw-tag-side">East neighbour <ArrowIcon dir="east" size={10} light /></span>}
+        {state.subPhase === 'picking' && <span className={`sw-opp-state ${submitted ? 'on' : ''}`}>{submitted ? '✓ picked' : 'choosing…'}</span>}
+      </header>
+      <div className="sw-opp-row">
+        <WonderMini wonder={wonderById(player.wonderId)} built={player.wonderStagesBuilt} />
+        <CityStats player={player} />
+      </div>
+      {cards.length > 0 ? <TableauColumns cards={cards} size="sm" /> : <p className="sw-empty">No buildings yet.</p>}
+    </div>
+  );
+}
+
+function scienceCounts(player: SwPlayer): Record<SwScience, number> {
+  const out: Record<SwScience, number> = { compass: 0, gear: 0, tablet: 0 };
+  for (const c of [...player.tableau, ...(player.leaderTableau ?? [])]) {
+    for (const e of c.effects) if (e.kind === 'science') out[e.symbol]++;
+  }
+  return out;
+}
+
+function CityStats({ player }: { player: SwPlayer }) {
+  const sci = scienceCounts(player);
+  return (
+    <div className="sw-stats">
+      <span className="sw-stat" title="Coins"><CoinIcon size={18} />{player.coins}</span>
+      <span className="sw-stat" title="Shields"><ShieldIcon size={18} />{shieldsFor(player)}</span>
+      {(Object.keys(sci) as SwScience[]).filter((s) => sci[s] > 0).map((s) => (
+        <span key={s} className="sw-stat"><ScienceIcon s={s} size={18} />{sci[s]}</span>
+      ))}
+      {player.debtTokens ? <span className="sw-stat"><DebtIcon size={18} />{player.debtTokens}</span> : null}
+      {player.diplomacyTokens ? <span className="sw-stat"><DiplomacyIcon size={18} />{player.diplomacyTokens}</span> : null}
+      {player.militaryTokens.length > 0 && (
+        <span className="sw-stat sw-tokens" title="Military tokens">
+          {player.militaryTokens.map((t, i) => <MilitaryToken key={i} value={t} size={17} />)}
         </span>
-      </h3>
-      {totalCards === 0 ? (
-        <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.75)' }}>You haven't built anything yet.</p>
-      ) : (
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-          {(Object.keys(byColor) as (keyof typeof byColor)[]).map((color) => {
-            const arr = byColor[color];
-            if (arr.length === 0) return null;
-            return (
-              <div key={color}>
-                <div style={{ fontSize: 11, opacity: 0.7, textTransform: 'capitalize' }}>{color}</div>
-                <div className="sw-tableau">
-                  {arr.map((c) => (
-                    <div
-                      key={c.id}
-                      className={`sw-tableau-card ${c.color}`}
-                      title={`${c.name} — ${cardEffectsText(c)}`}
-                    />
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-          {leaders.length > 0 && (
-            <div>
-              <div style={{ fontSize: 11, opacity: 0.7 }}>Leaders</div>
-              <div className="sw-tableau">
-                {leaders.map((c) => (
-                  <div
-                    key={c.id}
-                    className="sw-tableau-card leader"
-                    style={{ background: '#d8c598', color: '#3a2e15' }}
-                    title={c.name}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
       )}
     </div>
   );
 }
 
-function WonderArea({ player }: { player: SwPlayer }) {
-  const w = wonderById(player.wonderId);
+function SelfCity({ player }: { player: SwPlayer }) {
+  const cards = [...player.tableau, ...(player.leaderTableau ?? [])];
   return (
-    <div className="sw-wonder">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-        <strong>{w.name} (side {w.side})</strong>
-        <span style={{ fontSize: 12, opacity: 0.85 }}>
-          Initial: {w.initialProduction.map((opts) => opts.join('/')).join(' · ')}
-        </span>
-      </div>
-      <div className="sw-wonder-stages">
-        {w.stages.map((stage, i) => {
-          const built = i < player.wonderStagesBuilt;
-          const next = i === player.wonderStagesBuilt;
-          return (
-            <div
-              key={i}
-              className={`sw-wonder-stage ${built ? 'built' : ''} ${next ? 'next' : ''}`}
-              title={stage.text}
-            >
-              <div style={{ fontSize: 10, opacity: 0.8 }}>Stage {i + 1}</div>
-              <div style={{ fontSize: 11, marginTop: 2 }}>
-                Cost: {stage.cost.resources?.join(' + ') || 'free'}
-                {stage.cost.coins ? ` + ${stage.cost.coins}🪙` : ''}
-              </div>
-              <div style={{ fontSize: 11, marginTop: 4, fontStyle: 'italic' }}>{stage.text}</div>
-            </div>
-          );
-        })}
-      </div>
+    <div className="sw-panel sw-self-city">
+      <h3>
+        <span>Your city · {cards.length} card{cards.length === 1 ? '' : 's'}</span>
+        <CityStats player={player} />
+      </h3>
+      {cards.length === 0
+        ? <p className="sw-empty">You haven't built anything yet. Built cards tuck in here by colour.</p>
+        : <TableauColumns cards={cards} size="md" />}
     </div>
   );
+}
+
+function cardStatus(state: SwState, me: SwPlayer, card: SwCard): CardStatus {
+  if (me.tableau.some((t) => t.name === card.name)) return { kind: 'owned' };
+  const plan = computeBuildPlan(state, me, card);
+  if (plan.chainFree) return { kind: 'chain' };
+  if (!plan.canBuild) return { kind: 'blocked', reason: plan.reason ?? "Can't build" };
+  return plan.totalCoins > 0 ? { kind: 'pay', coins: plan.totalCoins } : { kind: 'free' };
 }
 
 function HandPanel({
@@ -507,6 +468,7 @@ function HandPanel({
   const wonder = wonderById(me.wonderId);
   const stageIdx = me.wonderStagesBuilt;
   const canBuildAnotherStage = stageIdx < wonder.stages.length;
+  const pending = me.pendingPick;
 
   // For the build mode: compute payment plan automatically (cheapest).
   const buildPlan = useMemo(() => {
@@ -518,6 +480,8 @@ function HandPanel({
     if (!card || mode !== 'wonder' || !canBuildAnotherStage) return null;
     return computeWonderPlan(state, me, stageIdx);
   }, [state, me, card, mode, stageIdx, canBuildAnotherStage]);
+
+  const statuses = useMemo(() => new Map(me.hand.map((c) => [c.id, cardStatus(state, me, c)])), [state, me]);
 
   function submit() {
     if (!card || submitted) return;
@@ -544,13 +508,17 @@ function HandPanel({
   }
 
   const hasBilkis = (me.leaderTableau ?? []).some((c) => c.name === 'Bilkis');
+  const dup = card ? me.tableau.some((t) => t.name === card.name) : false;
+  const pendingLabel = pending
+    ? pending.kind === 'build' ? 'build' : pending.kind === 'wonder' ? `bury under stage ${pending.stageIndex + 1}` : 'sell for 3 coins'
+    : '';
 
   return (
-    <div className="sw-hand-area">
+    <div className="sw-panel sw-hand-area">
       <h3>
         <span>{mySeatName}'s hand · {me.hand.length} card{me.hand.length === 1 ? '' : 's'}</span>
-        <span style={{ fontSize: 12, opacity: 0.75 }}>
-          {submitted ? 'Submitted. Waiting for others…' : 'Click a card to inspect.'}
+        <span className="sw-hint">
+          {submitted ? `Locked in: ${pendingLabel}. Waiting for the others…` : 'Pick a card, then build it, bury it under your wonder or sell it.'}
         </span>
       </h3>
 
@@ -558,88 +526,70 @@ function HandPanel({
         <div style={{ marginBottom: 8 }}>
           <BilkisButton state={state} me={me} dispatch={dispatch} />
           {me.transientResources && me.transientResources.length > 0 && (
-            <span style={{ fontSize: 11, marginLeft: 8, opacity: 0.7 }}>
-              Bilkis resource: {me.transientResources.join(', ')}
+            <span style={{ fontSize: 11, marginLeft: 8, opacity: 0.8 }}>
+              Bilkis resource: {me.transientResources.map((r, i) => <ResourceIcon key={i} r={r} size={14} />)}
             </span>
           )}
         </div>
       )}
 
       <div className="sw-hand">
-        {me.hand.map((c) => {
-          const sel = c.id === selectedCardId;
-          const dup = me.tableau.some((t) => t.name === c.name);
-          return (
-            <div
-              key={c.id}
-              className={`sw-card ${sel ? 'selected' : ''} ${submitted ? 'disabled' : ''}`}
-              onClick={() => {
-                if (submitted) return;
-                setSelectedCardId(c.id);
-                setMode(dup ? 'discard' : 'build');
-              }}
-            >
-              <div className={`sw-card-color-bar`} style={{ background: cardColorHex(c.color) }} />
-              <div className="sw-card-name">{c.name}</div>
-              <div className="sw-card-cost">
-                {c.cost.resources && c.cost.resources.length > 0
-                  ? c.cost.resources.map((r, i) => <span key={i} className={`sw-resource-pill ${r}`}>{r}</span>)
-                  : (c.cost.coins ? `${c.cost.coins} 🪙` : 'free')}
-                {dup && <div style={{ color: '#c83e3a', marginTop: 4 }}>(duplicate)</div>}
-              </div>
-              <div className="sw-card-effect">{cardEffectsText(c)}</div>
-            </div>
-          );
-        })}
-        {me.hand.length === 0 && <p style={{ fontSize: 12 }}>No cards in hand.</p>}
+        {me.hand.map((c) => (
+          <CardFace
+            key={c.id}
+            card={c}
+            selected={c.id === selectedCardId || pending?.cardId === c.id}
+            disabled={submitted && pending?.cardId !== c.id}
+            status={statuses.get(c.id)}
+            onClick={submitted ? undefined : () => {
+              setSelectedCardId(c.id);
+              const st = statuses.get(c.id);
+              setMode(st?.kind === 'owned' || st?.kind === 'blocked' ? 'discard' : 'build');
+            }}
+          />
+        ))}
+        {me.hand.length === 0 && <p className="sw-empty">No cards in hand.</p>}
       </div>
 
       {!submitted && card && (
         <div className="sw-pay-dialog">
-          <h4>{card.name}</h4>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+          <div className="sw-choices">
             <button
-              className={mode === 'build' ? '' : 'secondary'}
+              className={`sw-choice ${mode === 'build' ? 'on' : ''}`}
               onClick={() => setMode('build')}
-              disabled={me.tableau.some((t) => t.name === card.name)}
-              title={me.tableau.some((t) => t.name === card.name) ? 'You already have one in your tableau.' : ''}
+              disabled={dup}
+              title={dup ? 'You already have one in your city.' : ''}
             >
-              Build
+              <span className="sw-choice-icon"><EffectIcons effects={card.effects} name={card.name} size={16} /></span>
+              Build {card.name}
             </button>
             <button
-              className={mode === 'wonder' ? '' : 'secondary'}
+              className={`sw-choice ${mode === 'wonder' ? 'on' : ''}`}
               onClick={() => setMode('wonder')}
               disabled={!canBuildAnotherStage}
+              title={canBuildAnotherStage ? '' : 'Your wonder is complete.'}
             >
-              Bury under wonder (stage {stageIdx + 1})
+              <span className="sw-choice-icon"><WonderStageIcon size={18} /></span>
+              {canBuildAnotherStage ? `Bury under stage ${stageIdx + 1}` : 'Wonder complete'}
             </button>
-            <button
-              className={mode === 'discard' ? '' : 'secondary'}
-              onClick={() => setMode('discard')}
-            >
-              Discard for 3 🪙
+            <button className={`sw-choice ${mode === 'discard' ? 'on' : ''}`} onClick={() => setMode('discard')}>
+              <span className="sw-choice-icon"><CoinIcon n={3} size={18} /></span>
+              Sell for 3 coins
             </button>
           </div>
 
-          {mode === 'build' && (
-            <BuildSummary card={card} plan={buildPlan} />
-          )}
-          {mode === 'wonder' && canBuildAnotherStage && (
-            <WonderSummary
-              stage={wonder.stages[stageIdx]}
-              plan={wonderPlan}
-            />
-          )}
-          {mode === 'discard' && (
-            <p style={{ margin: '6px 0' }}>You'll discard <strong>{card.name}</strong> and gain 3 coins.</p>
-          )}
+          <div className="sw-plan">
+            {mode === 'build' && <BuildSummary card={card} plan={buildPlan} />}
+            {mode === 'wonder' && canBuildAnotherStage && <WonderSummary stage={wonder.stages[stageIdx]} plan={wonderPlan} />}
+            {mode === 'discard' && <p className="sw-plan-row">Discard <strong>{card.name}</strong> face down and take <CoinIcon n={3} size={16} /> from the bank.</p>}
+          </div>
 
           <div className="sw-actions">
             <button onClick={submit} disabled={!canSubmit(card, me, mode, buildPlan, wonderPlan)}>
-              Submit
+              Confirm
             </button>
             <button className="secondary" onClick={() => { setSelectedCardId(null); setMode(null); }}>
-              Clear
+              Cancel
             </button>
           </div>
         </div>
@@ -667,83 +617,112 @@ function canSubmit(
   return false;
 }
 
-function BuildSummary({ card, plan }: { card: SwCard; plan: ReturnType<typeof computeBuildPlan> | null }) {
-  if (!plan) return <p>—</p>;
-  if (plan.chainFree) {
-    return <p>Free build — chain link from a previous card you own.</p>;
-  }
-  if (!plan.canBuild) {
-    return <p style={{ color: '#ff9a9a' }}>Cannot build: {plan.reason}</p>;
-  }
+function Purchases({ plan }: { plan: PlanResult }) {
   return (
-    <div>
-      {card.cost.coins ? <div>Coin cost: {card.cost.coins} 🪙</div> : null}
+    <>
       {plan.fromWest.length > 0 && (
-        <div>
-          From west: {plan.fromWest.map((r, i) => <span key={i} className={`sw-resource-pill ${r}`}>{r}</span>)}
-          {' '}({plan.coinsToWest} 🪙)
+        <div className="sw-plan-row">
+          <ArrowIcon dir="west" size={14} light /> Buy from west:
+          {plan.fromWest.map((r, i) => <ResourceIcon key={i} r={r} size={16} />)}
+          <CoinIcon n={plan.coinsToWest} size={16} />
         </div>
       )}
       {plan.fromEast.length > 0 && (
-        <div>
-          From east: {plan.fromEast.map((r, i) => <span key={i} className={`sw-resource-pill ${r}`}>{r}</span>)}
-          {' '}({plan.coinsToEast} 🪙)
+        <div className="sw-plan-row">
+          Buy from east:
+          {plan.fromEast.map((r, i) => <ResourceIcon key={i} r={r} size={16} />)}
+          <CoinIcon n={plan.coinsToEast} size={16} /> <ArrowIcon dir="east" size={14} light />
         </div>
       )}
-      <div style={{ marginTop: 4 }}>Total: <strong>{plan.totalCoins} 🪙</strong></div>
+    </>
+  );
+}
+
+function BuildSummary({ card, plan }: { card: SwCard; plan: PlanResult | null }) {
+  if (!plan) return <p>—</p>;
+  if (plan.chainFree) {
+    return <p className="sw-plan-row"><ChainIcon size={16} /> Free build — you own {card.chainFrom?.join(' or ') ?? 'its chain card'}.</p>;
+  }
+  if (!plan.canBuild) {
+    return <p className="sw-plan-bad">Can't build: {plan.reason}</p>;
+  }
+  return (
+    <div>
+      <div className="sw-plan-row">Cost: <CostIcons cost={card.cost} size={16} free /></div>
+      <Purchases plan={plan} />
+      <div className="sw-plan-row">Total to pay: <CoinIcon n={plan.totalCoins} size={18} /></div>
     </div>
   );
 }
 
-function WonderSummary({ stage, plan }: { stage: { cost: { resources?: SwResource[]; coins?: number }; text: string }; plan: ReturnType<typeof computeWonderPlan> | null }) {
+function WonderSummary({ stage, plan }: { stage: SwWonderStage; plan: PlanResult | null }) {
   if (!plan) return <p>—</p>;
-  if (!plan.canBuild) {
-    return <p style={{ color: '#ff9a9a' }}>Cannot build: {plan.reason}</p>;
-  }
   return (
     <div>
-      <div>{stage.text}</div>
-      {stage.cost.coins ? <div>Coin cost: {stage.cost.coins} 🪙</div> : null}
-      {plan.fromWest.length > 0 && (
-        <div>From west: {plan.fromWest.map((r, i) => <span key={i} className={`sw-resource-pill ${r}`}>{r}</span>)} ({plan.coinsToWest} 🪙)</div>
-      )}
-      {plan.fromEast.length > 0 && (
-        <div>From east: {plan.fromEast.map((r, i) => <span key={i} className={`sw-resource-pill ${r}`}>{r}</span>)} ({plan.coinsToEast} 🪙)</div>
-      )}
-      <div style={{ marginTop: 4 }}>Total: <strong>{plan.totalCoins} 🪙</strong></div>
+      <div className="sw-plan-row">
+        Stage: <CostIcons cost={stage.cost} size={16} /> <span className="sw-fx-arrow">→</span>
+        {stage.effects.length > 0 ? <EffectIcons effects={stage.effects} size={18} /> : null}
+        <span className="sw-plan-note">{stage.text}</span>
+      </div>
+      {plan.canBuild
+        ? (
+          <>
+            <Purchases plan={plan} />
+            <div className="sw-plan-row">Total to pay: <CoinIcon n={plan.totalCoins} size={18} /></div>
+          </>
+        )
+        : <p className="sw-plan-bad">Can't build: {plan.reason}</p>}
     </div>
   );
+}
+
+function ResultCell({ result, age }: { result: 'win' | 'loss' | 'draw'; age: 1 | 2 | 3 }) {
+  if (result === 'win') return <MilitaryToken value={age === 1 ? 1 : age === 2 ? 3 : 5} size={22} />;
+  if (result === 'loss') return <MilitaryToken value={-1} size={22} />;
+  return <span className="sw-muted">draw</span>;
 }
 
 function MilitaryBanner({ state }: { state: SwState }) {
   const summary = state.lastMilitaryResolution;
   if (!summary) return <p>Resolving military…</p>;
   return (
-    <div className="sw-military-banner">
-      <h3 style={{ margin: '0 0 8px' }}>Age {summary.age} — Military resolution</h3>
-      <table className="sw-final-table">
+    <div className="sw-panel sw-military-banner">
+      <h3><span className="sw-h-icon"><ShieldIcon size={22} /> Age {ROMAN[summary.age]} — military conflicts</span></h3>
+      <p className="sw-hint">Every city compares shields with both neighbours: the stronger side takes a victory token, the weaker one a defeat token.</p>
+      <table className="sw-table">
         <thead>
-          <tr><th>Player</th><th>vs West</th><th>vs East</th><th>Tokens this age</th></tr>
+          <tr><th>City</th><th><ShieldIcon size={16} /></th><th>vs west</th><th>vs east</th><th>This age</th></tr>
         </thead>
         <tbody>
-          {summary.perPlayer.map((row) => (
-            <tr key={row.playerId}>
-              <td>{state.seats.find((s) => s.id === row.playerId)?.name ?? row.playerId}</td>
-              <td>{row.vsWest}</td>
-              <td>{row.vsEast}</td>
-              <td>{row.tokenGained >= 0 ? `+${row.tokenGained}` : row.tokenGained}</td>
-            </tr>
-          ))}
+          {summary.perPlayer.map((row) => {
+            const p = state.players.find((x) => x.id === row.playerId);
+            const seat = state.seats.find((s) => s.id === row.playerId);
+            return (
+              <tr key={row.playerId}>
+                <td><span className="sw-dot" style={{ background: seat?.color ?? '#888' }} /> {seat?.name ?? row.playerId}</td>
+                <td>{p ? shieldsFor(p) : '—'}</td>
+                <td><ResultCell result={row.vsWest} age={summary.age} /></td>
+                <td><ResultCell result={row.vsEast} age={summary.age} /></td>
+                <td className={row.tokenGained > 0 ? 'sw-good' : row.tokenGained < 0 ? 'sw-bad' : ''}>
+                  {row.tokenGained > 0 ? `+${row.tokenGained}` : row.tokenGained}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
   );
 }
 
+const EXTRA_ICON: Record<string, SwCardColor> = { leaders: 'leader', cities: 'black', babel: 'orange', armada: 'navy' };
+
 function GameOver({ state }: { state: SwState }) {
   const breakdown = state.finalScoringBreakdown ?? [];
   const sorted = [...breakdown].sort((a, b) => b.total - a.total);
   const winnerId = sorted[0]?.playerId ?? null;
+  const winnerSeat = state.seats.find((s) => s.id === winnerId);
+  const winner = state.players.find((p) => p.id === winnerId);
   // Collect extras columns from active expansions.
   const extraCategories = Array.from(new Set(
     getActiveExpansions(state.config).flatMap((e) => e.scoreCategories ?? [])
@@ -751,96 +730,77 @@ function GameOver({ state }: { state: SwState }) {
   return (
     <div className="sw">
       <div className="sw-board">
-        <h2 style={{ margin: 0 }}>
-          {winnerId
-            ? `${state.seats.find((s) => s.id === winnerId)?.name ?? winnerId} wins!`
-            : 'Match complete'}
-        </h2>
-        <table className="sw-final-table">
-          <thead>
-            <tr>
-              <th>Player</th>
-              <th>Military</th>
-              <th>Treasury</th>
-              <th>Wonder</th>
-              <th>Civilian</th>
-              <th>Commercial</th>
-              <th>Guild</th>
-              <th>Science</th>
-              {extraCategories.map((c) => (
-                <th key={c} style={{ textTransform: 'capitalize' }}>{c}</th>
-              ))}
-              <th>Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.map((row) => (
-              <tr key={row.playerId}>
-                <td>{state.seats.find((s) => s.id === row.playerId)?.name ?? row.playerId}</td>
-                <td>{row.military}</td>
-                <td>{row.treasury}</td>
-                <td>{row.wonder}</td>
-                <td>{row.civilian}</td>
-                <td>{row.commercial}</td>
-                <td>{row.guild}</td>
-                <td>{row.science}</td>
+        <div className="sw-panel sw-gameover">
+          <div className="sw-gameover-title">
+            <VpIcon size={46} />
+            <div>
+              <h2>{winnerSeat ? `${winnerSeat.name} wins!` : 'Match complete'}</h2>
+              {sorted[0] && <p className="sw-hint">{sorted[0].total} victory points{winner && <> · {wonderById(winner.wonderId).name}</>}</p>}
+            </div>
+          </div>
+          <table className="sw-table sw-final-table">
+            <thead>
+              <tr>
+                <th>City</th>
+                <th title="Military"><ShieldIcon size={18} /></th>
+                <th title="Treasury (1 VP per 3 coins)"><CoinIcon size={18} /></th>
+                <th title="Wonder"><WonderStageIcon size={18} /></th>
+                <th title="Civilian"><ColorChip color="blue" size={18} /></th>
+                <th title="Commercial"><ColorChip color="yellow" size={18} /></th>
+                <th title="Guilds"><ColorChip color="purple" size={18} /></th>
+                <th title="Science"><ScienceIcon s="gear" size={18} /></th>
                 {extraCategories.map((c) => (
-                  <td key={c}>{row.extras?.[c] ?? 0}</td>
+                  <th key={c} title={c}>{EXTRA_ICON[c] ? <ColorChip color={EXTRA_ICON[c]} size={18} /> : <span style={{ textTransform: 'capitalize' }}>{c}</span>}</th>
                 ))}
-                <td><strong>{row.total}</strong></td>
+                <th title="Total"><VpIcon size={20} /></th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {sorted.map((row) => {
+                const seat = state.seats.find((s) => s.id === row.playerId);
+                return (
+                  <tr key={row.playerId} className={row.playerId === winnerId ? 'sw-winner' : ''}>
+                    <td><span className="sw-dot" style={{ background: seat?.color ?? '#888' }} /> {seat?.name ?? row.playerId}</td>
+                    <td>{row.military}</td>
+                    <td>{row.treasury}</td>
+                    <td>{row.wonder}</td>
+                    <td>{row.civilian}</td>
+                    <td>{row.commercial}</td>
+                    <td>{row.guild}</td>
+                    <td>{row.science}</td>
+                    {extraCategories.map((c) => (
+                      <td key={c}>{row.extras?.[c] ?? 0}</td>
+                    ))}
+                    <td><strong>{row.total}</strong></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div className="sw-opponents">
+          {sorted.map((row) => {
+            const p = state.players.find((x) => x.id === row.playerId);
+            const seat = state.seats.find((s) => s.id === row.playerId);
+            if (!p) return null;
+            return (
+              <div key={row.playerId} className="sw-opp">
+                <header><span className="sw-dot" style={{ background: seat?.color ?? '#888' }} /><strong>{seat?.name ?? p.id}</strong></header>
+                <div className="sw-opp-row">
+                  <WonderMini wonder={wonderById(p.wonderId)} built={p.wonderStagesBuilt} />
+                  <CityStats player={p} />
+                </div>
+                <TableauColumns cards={[...p.tableau, ...(p.leaderTableau ?? [])]} size="sm" />
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
 }
 
 // ---------- helpers ----------
-
-function cardEffectsText(c: SwCard): string {
-  const parts: string[] = [];
-  for (const eff of c.effects) {
-    if (eff.kind === 'vp') parts.push(`+${eff.vp} VP`);
-    else if (eff.kind === 'coins') parts.push(`+${eff.amount} 🪙`);
-    else if (eff.kind === 'shields') parts.push(`+${eff.shields} ⚔`);
-    else if (eff.kind === 'science') parts.push(`science: ${eff.symbol}`);
-    else if (eff.kind === 'produce') {
-      parts.push(eff.production.map((opts) => opts.join('/')).join(' · '));
-    }
-    else if (eff.kind === 'tradeDiscountRaw') parts.push(`raw discount (${eff.sides.join('/')})`);
-    else if (eff.kind === 'tradeDiscountManufactured') parts.push(`manufactured discount (${eff.sides.join('/')})`);
-    else if (eff.kind === 'endVp') {
-      const what =
-        eff.countWhat.kind === 'cardColor' ? `${eff.countWhat.color} cards`
-        : eff.countWhat.kind === 'wonderStages' ? 'wonder stages'
-        : 'defeat tokens';
-      const scope = eff.from;
-      const bits: string[] = [];
-      if (eff.coinsPerOnPlay) bits.push(`+${eff.coinsPerOnPlay} 🪙 / ${what} (${scope}) on play`);
-      if (eff.vpPer) bits.push(`+${eff.vpPer} VP / ${what} (${scope}) at end`);
-      parts.push(bits.join(' · '));
-    }
-  }
-  return parts.join(' · ') || '—';
-}
-
-function cardColorHex(c: SwCard['color']): string {
-  switch (c) {
-    case 'brown': return '#8b5e2a';
-    case 'gray': return '#969aa8';
-    case 'blue': return '#3d6da0';
-    case 'yellow': return '#e7b13e';
-    case 'red': return '#b73c3c';
-    case 'green': return '#5fa552';
-    case 'purple': return '#8d6cc0';
-    case 'leader': return '#d8c598';
-    case 'black': return '#2b2b2b';
-    case 'orange': return '#d97a2e';
-    case 'navy': return '#1f3a68';
-  }
-}
 
 interface PlanResult {
   canBuild: boolean;

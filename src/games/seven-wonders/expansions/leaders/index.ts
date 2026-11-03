@@ -1,12 +1,17 @@
 // Leaders expansion — module assembly.
 
+import { lazy } from 'react';
 import type { SwExpansion } from '../types';
 import { setupLeaders, beforeAgeStart, applyAction, nextAIPicker } from './reducer';
 import { chooseAIAction } from './ai';
 import { modifyCostLeaders } from './costs';
 import { onEventLeaders } from './triggers';
 import { scoreExtrasLeaders } from './scoring';
-import { LeadersOverlay, LeadersLobbySection } from './ui';
+import { LeadersLobbySection } from './lobby';
+
+// The overlay draws cards with the game's art, which ships in the lazily
+// loaded game-view chunk — so load it lazily too (GameView wraps it in Suspense).
+const LeadersOverlay = lazy(() => import('./ui').then((m) => ({ default: m.LeadersOverlay })));
 
 const OWNED_SUBPHASES = new Set(['leaderDraft', 'leaderPlay', 'solomonAwaitPick']);
 

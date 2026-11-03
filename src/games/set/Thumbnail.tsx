@@ -50,13 +50,6 @@ export function SetThumbnail() {
       >
         SET
       </text>
-      <text
-        x="140" y="120"
-        fontFamily="system-ui, sans-serif" fontSize="10"
-        fill="#9aa0a6" textAnchor="middle"
-      >
-        all the same, or all different
-      </text>
     </svg>
   );
 }
