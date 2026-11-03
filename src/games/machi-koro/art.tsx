@@ -89,6 +89,13 @@ function scene(art: MkArtId): JSX.Element {
     case 'movingCompany': return <MovingCompany />;
     case 'observatory': return <Observatory />;
     case 'publisher': return <Publisher />;
+    case 'pizzaJoint': return <PizzaJoint />;
+    case 'mackerelBoat': return <MackerelBoat />;
+    case 'tunaBoat': return <TunaBoat />;
+    case 'taxOffice': return <TaxOffice />;
+    case 'generalStore': return <GeneralStore />;
+    case 'demolitionCompany': return <DemolitionCompany />;
+    case 'harbor': return <Harbor />;
   }
 }
 
@@ -1741,6 +1748,206 @@ function FoodWarehouse() {
 }
 
 // ---------------------------------------------------------------------------
+// MK1 expansions (Harbor, Millionaire's Row)
+
+function Fish({ x, y, s = 1, color = '#6b8fb3', flip = false }: XY & { s?: number; color?: string; flip?: boolean }) {
+  return (
+    <g transform={`translate(${x} ${y}) scale(${flip ? -s : s} ${s})`}>
+      <path d="M-7 0 Q-2 -4.5 4 -1.5 L8 -4 L7 0 L8 4 L4 1.5 Q-2 4.5 -7 0 Z" fill={color} {...THIN} />
+      <circle cx={-4.2} cy={-0.6} r={0.8} fill={INK} />
+    </g>
+  );
+}
+
+/** Rows of little wave crests across the water at y. */
+function Waves({ y, color = WHITE }: { y: number; color?: string }) {
+  let d = '';
+  for (let x = 2; x < 120; x += 13) d += ` M${x} ${y} q3 -2 6 0 t6 0`;
+  return <path d={d} {...line(color, 0.9)} opacity={0.7} />;
+}
+
+/** Barrel, base centre at (x, y). */
+function Barrel({ x, y }: XY) {
+  return (
+    <g>
+      <Shape d={`M${x - 5} ${y} Q${x - 6.5} ${y - 6} ${x - 5} ${y - 12} H${x + 5} Q${x + 6.5} ${y - 6} ${x + 5} ${y} Z`} fill="#a86a3a" thin />
+      <path d={`M${x - 5.8} ${y - 3.5} H${x + 5.8} M${x - 5.8} ${y - 8.5} H${x + 5.8}`} {...line('#5a3a1e', 0.9)} />
+    </g>
+  );
+}
+
+function PizzaJoint() {
+  return (
+    <g>
+      <Sky color="#fdf0e0"><Cloud x={16} y={12} /><Cloud x={104} y={14} s={0.8} /></Sky>
+      <Ground y={64} fill={PAVE} />
+      <Box x={18} y={34} w={84} h={32} fill="#fbe7c6" />
+      <Box x={15} y={30} w={90} h={5} fill="#2f8f4e" />
+      <Awning x={18} y={35} w={84} colors={['#d8483b', WHITE]} n={12} />
+      <Box x={23} y={48} w={30} h={15} fill={GLASS} thin />
+      <path d="M25 63 Q38 53 51 63 Z" fill="#f08a24" opacity={0.7} />
+      <path d="M38 48 V63" {...line(INK, 0.8)} />
+      <Door x={62} y={45} w={15} h={21} fill="#2f8f4e" />
+      <Box x={84} y={48} w={13} h={13} fill={GLASS} thin />
+      <path d="M60 30 V25" {...line(INK, 1.4)} />
+      <circle cx={60} cy={14} r={11.5} fill="#e9b25a" {...LINE} />
+      <circle cx={60} cy={14} r={9} fill="#f6d04d" {...THIN} />
+      <path d="M60 5 V23 M51 14 H69 M53.6 7.6 L66.4 20.4 M66.4 7.6 L53.6 20.4" {...line('#d9a43a', 0.7)} />
+      {[[56, 10.5], [64.5, 11], [57, 18], [63.5, 18.5]].map(([x, y]) => (
+        <circle key={`${x}`} cx={x} cy={y} r={1.9} fill="#c8402f" {...THIN} />
+      ))}
+    </g>
+  );
+}
+
+function MackerelBoat() {
+  return (
+    <g>
+      <Sky color="#d3edfb"><Cloud x={18} y={12} /><Sun x={102} y={13} r={5} /></Sky>
+      <Box x={-2} y={56} w={124} h={28} fill="#4a9fd8" />
+      <Waves y={66} />
+      <Waves y={74} />
+      <Shape d="M26 50 H94 L85 63 H35 Z" fill="#e2513f" />
+      <path d="M29 54.5 H91" {...line(WHITE, 1.6)} />
+      <Box x={44} y={36} w={22} h={14} fill={CREAM} />
+      <Box x={42} y={33} w={26} h={4} fill="#2f6fa8" />
+      <Box x={48} y={39.5} w={5} h={5} fill={GLASS} thin />
+      <Box x={57} y={39.5} w={5} h={5} fill={GLASS} thin />
+      <path d="M78 50 V20" {...line(INK, 1.4)} />
+      <path d="M78 23 L100 43" {...line(INK, 0.9)} />
+      <path d="M95 42 Q100 50 105 43" {...line('#7a5a3a', 0.9)} />
+      <Fish x={100} y={46} s={0.6} color="#5f86ad" />
+      <Fish x={14} y={46} s={0.75} color="#5f86ad" flip />
+      <path d="M8 52 q2 -3 4 0 M18 53 q2 -3 4 0" {...line(WHITE, 0.9)} />
+    </g>
+  );
+}
+
+function TunaBoat() {
+  return (
+    <g>
+      <Sky color="#cfe6f6"><Cloud x={22} y={12} /><Cloud x={98} y={10} s={0.8} /></Sky>
+      <Box x={-2} y={56} w={124} h={28} fill="#2f7fc0" />
+      <Waves y={67} />
+      <Waves y={75} />
+      <Shape d="M10 47 H110 L100 64 H22 Z" fill="#2f5f8a" />
+      <path d="M13 52 H107" {...line('#e2513f', 2)} />
+      <Box x={64} y={29} w={28} h={18} fill={WHITE} />
+      <Box x={62} y={26} w={32} h={4} fill="#e2513f" />
+      <Windows x={67} y={33} cols={3} w={5.5} h={5} gx={2.5} />
+      <path d="M78 26 V11 M73 15 H83" {...line(INK, 1.2)} />
+      <circle cx={78} cy={10} r={1.3} fill={RED} />
+      <path d="M26 47 V22 L50 34" {...line(INK, 2.6)} />
+      <path d="M26 47 V22 L50 34" {...line(STEEL, 1.2)} />
+      <path d="M44 31 V36" {...line(INK, 0.8)} />
+      <Fish x={42} y={42} s={1.55} color="#3d5a80" />
+      <path d="M33 41 l3 -2 M33 43 l3 2" {...line('#9fb6cc', 0.8)} />
+    </g>
+  );
+}
+
+function TaxOffice() {
+  return (
+    <g>
+      <Sky color="#e9eef5"><Cloud x={14} y={12} /><Cloud x={106} y={12} s={0.8} /></Sky>
+      <Ground y={64} fill={PAVE} />
+      <Box x={10} y={62} w={100} h={4} fill="#d8d2c6" thin />
+      <Box x={14} y={59} w={92} h={3.5} fill="#e4dfd5" thin />
+      <Box x={18} y={35} w={84} h={24} fill="#e7e2f3" />
+      <Gable x={14} y={16} w={92} h={16} fill="#cfc6e6" />
+      <Box x={14} y={31.5} w={92} h={4} fill="#b9addb" />
+      {[23, 37, 77, 91].map((x) => <Box key={x} x={x} y={36} w={6} h={23} fill={WHITE} thin />)}
+      <Door x={52} y={41} w={16} h={18} fill="#6b4fa0" />
+      <text x={60} y={29} textAnchor="middle" fontSize={8} fontWeight={900} fontFamily={FONT} fill="#5b3f90">TAX</text>
+      <Coin x={110} y={52} r={5} label="$" />
+      <Coin x={104} y={58} r={4} />
+      <Shape d="M4 66 Q2 56 8 54 H14 Q20 56 18 66 Z" fill="#c9a46a" thin />
+      <path d="M8 54 L11 50 L14 54" {...line(INK, 0.9)} />
+      <text x={11} y={63} textAnchor="middle" fontSize={6} fontWeight={900} fontFamily={FONT} fill="#6a4a1a">$</text>
+    </g>
+  );
+}
+
+function GeneralStore() {
+  return (
+    <g>
+      <Sky color="#fdf3df"><Cloud x={14} y={12} /><Cloud x={106} y={14} s={0.8} /></Sky>
+      <Ground y={64} fill={DIRT} />
+      <Shape d="M22 66 V24 H38 V18 H82 V24 H98 V66 Z" fill="#c98b4f" />
+      <path d="M22 31 H98 M22 38 H98" {...line('#9a6436', 0.6)} />
+      <Box x={36} y={21} w={48} h={10} fill={CREAM} thin />
+      <text x={60} y={28.6} textAnchor="middle" fontSize={6.4} fontWeight={900} fontFamily={FONT} fill="#7a4a26">GENERAL STORE</text>
+      <Shape d="M15 42 H105 L101 46 H19 Z" fill="#8a5a32" />
+      <path d="M22 46 V64 M98 46 V64" {...line(DARKWOOD, 1.8)} />
+      <Box x={29} y={49} w={17} h={12} fill={GLASS} thin />
+      <Box x={74} y={49} w={17} h={12} fill={GLASS} thin />
+      <path d="M37.5 49 V61 M82.5 49 V61" {...line(INK, 0.7)} />
+      <Door x={53} y={47} w={14} h={19} />
+      <Barrel x={10} y={66} />
+      <Barrel x={110} y={66} />
+      <Crate x={99} y={56} s={8} />
+    </g>
+  );
+}
+
+function DemolitionCompany() {
+  return (
+    <g>
+      <Sky color="#f3ead8"><Cloud x={18} y={12} /><Cloud x={64} y={8} s={0.7} /></Sky>
+      <Ground y={64} fill={DIRT} />
+      <Shape d="M84 66 V30 L91 26 L96 33 L103 27 L112 31 V66 Z" fill="#c9a07a" />
+      <Windows x={88} y={38} cols={3} rows={3} w={5} h={5} gx={2.5} gy={3} fill="#8fb6c9" />
+      <path d="M96 33 L93 40 M103 27 L105 34" {...line('#8a6448', 0.8)} />
+      {[[78, 62, 20], [86, 64, -15], [74, 64, 40]].map(([x, y, a]) => (
+        <rect key={`${x}`} x={x} y={y - 3} width={5} height={3} fill="#c9603f" {...THIN} transform={`rotate(${a} ${x} ${y})`} />
+      ))}
+      <g fill="#ebe3d6" {...THIN}>
+        <circle cx={82} cy={44} r={3.5} />
+        <circle cx={86} cy={39} r={4.2} />
+        <circle cx={80} cy={50} r={2.8} />
+      </g>
+      <path d="M22 50 L58 10" {...line(INK, 3.4)} />
+      <path d="M22 50 L58 10" {...line('#f2b632', 1.8)} />
+      <path d="M58 10 L73 34" {...line(INK, 0.9)} />
+      <circle cx={75} cy={38} r={6} fill="#4a4f5b" {...LINE} />
+      <path d="M72 35.5 q2 -2 4 -1" {...line(WHITE, 1)} opacity={0.5} />
+      <Box x={8} y={48} w={32} h={11} rx={1.5} fill="#f2b632" />
+      <Box x={26} y={40} w={13} h={9} fill="#f2b632" />
+      <Box x={29} y={42} w={7.5} h={5} fill={GLASS} thin />
+      <Box x={6} y={58} w={36} h={7} rx={3.5} fill="#4a4f5b" />
+      {[11, 18, 25, 32, 38].map((x) => <circle key={x} cx={x} cy={61.5} r={2} fill="#8b95a1" {...THIN} />)}
+    </g>
+  );
+}
+
+function Harbor() {
+  return (
+    <g>
+      <Sky color="#d3edfb"><Cloud x={46} y={12} /><Cloud x={14} y={20} s={0.7} /></Sky>
+      <Box x={-2} y={52} w={124} h={32} fill="#4a9fd8" />
+      <Waves y={66} />
+      <Waves y={75} />
+      <Box x={6} y={36} w={28} h={16} fill="#e2513f" />
+      <Gable x={4} y={27} w={32} h={9} fill="#a33a2e" />
+      <Box x={15} y={42} w={9} h={10} fill={DARKWOOD} thin />
+      <Box x={-2} y={52} w={60} h={7} fill="#b0703c" />
+      <path d="M6 59 V70 M20 59 V70 M34 59 V70 M48 59 V70" {...line(DARKWOOD, 2.2)} />
+      <Box x={42} y={48} w={4} h={4} rx={1} fill="#4a4f5b" thin />
+      <Shape d="M60 57 H82 L78 63 H64 Z" fill="#e2513f" />
+      <path d="M71 57 V43" {...line(INK, 1.1)} />
+      <Shape d="M72 44 L80 55 H72 Z" fill={WHITE} thin />
+      <Shape d="M92 54 L95 22 H103 L106 54 Z" fill={WHITE} />
+      <path d="M93.2 41 H104.8 M94 31 H104" {...line('#e2513f', 3)} />
+      <Box x={93} y={15} w={12} h={7} fill={GOLD} />
+      <path d="M96 15 V22 M102 15 V22" {...line(INK, 0.7)} />
+      <Shape d="M91.5 15 L99 9 L106.5 15 Z" fill="#e2513f" />
+      <path d="M92 18 L80 14 M92 19 L80 22 M106 18 L118 14 M106 19 L118 22" {...line('#ffd54a', 1.2)} />
+      <ellipse cx={99} cy={55} rx={11} ry={3} fill="#8b95a1" {...THIN} />
+    </g>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Symbol badges
 
 const SYMBOL_COLOR: Record<Exclude<MkSymbol, 'none'>, string> = {
@@ -1753,6 +1960,8 @@ const SYMBOL_COLOR: Record<Exclude<MkSymbol, 'none'>, string> = {
   flower: '#e0609c',
   factory: '#3d7fc4',
   major: '#7b4fb5',
+  boat: '#2b8fc9',
+  briefcase: '#8a6440',
 };
 
 export function SymbolIcon({ symbol, size = 16 }: { symbol: MkSymbol; size?: number }): JSX.Element | null {
@@ -1852,6 +2061,23 @@ function glyph(symbol: Exclude<MkSymbol, 'none'>): JSX.Element {
           <rect x={4.4} y={7.9} width={11.2} height={1.2} />
           {[5.2, 8.9, 12.6].map((x) => <rect key={x} x={x} y={9.6} width={2.2} height={4.6} />)}
           <rect x={3.8} y={14.6} width={12.4} height={1.8} />
+        </g>
+      );
+    case 'boat':
+      return (
+        <g fill={W}>
+          <path d="M3.8 12 H16.2 L14.2 15.6 H5.8 Z" />
+          <path d="M10.4 3.6 V11 H15.2 Z" />
+          <path d="M9.4 5.4 V11 H5.4 Z" />
+        </g>
+      );
+    case 'briefcase':
+      return (
+        <g>
+          <path d="M7.6 6.8 V5.4 Q7.6 4.4 8.6 4.4 H11.4 Q12.4 4.4 12.4 5.4 V6.8" {...line(W, 1.2)} />
+          <rect x={4} y={6.8} width={12} height={8.6} rx={1.4} fill={W} />
+          <path d="M4 10.6 H16" {...line(SYMBOL_COLOR.briefcase, 1)} />
+          <rect x={9} y={9.8} width={2} height={1.8} fill={SYMBOL_COLOR.briefcase} />
         </g>
       );
   }

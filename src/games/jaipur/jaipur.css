@@ -145,15 +145,6 @@
 .jp-player-top .jp-tokens { max-width: 250px; }
 .jp-empty { font-size: 12px; color: #a98d7c; font-style: italic; align-self: center; }
 
-.jp-known {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  margin-top: 4px;
-  font-size: 12px;
-}
-.jp-known-chip { display: inline-flex; align-items: center; gap: 2px; font-weight: 700; }
 
 /* ---------- cards ---------- */
 

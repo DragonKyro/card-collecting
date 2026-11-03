@@ -1,24 +1,25 @@
 // In-game rulebook (the lobby's / game's "Rules" button).
 
 import { RulesBook, RulesGrid, RulesHero, RulesTile } from '@/ui/RulesBook';
-import type { MkEdition, MkEstablishmentDef, MkLandmarkDef } from './types';
-import { EDITIONS, activationLabel, rollChance } from './cards';
+import type { MkEstablishmentDef, MkLandmarkDef } from './types';
+import { EDITIONS, EXPANSIONS, activationLabel, rollChance } from './cards';
 import { COLOR_HEX, TIMING_LABEL } from './Card';
 import { CardArt, SymbolIcon } from './art';
 
-function EstTable({ edition }: { edition: MkEdition }) {
-  const defs = [...EDITIONS[edition].establishments].sort((a, b) => a.activation[0] - b.activation[0]);
+/** `perPlayerPurples`: MK1 puts out one of each purple per player. */
+function EstTable({ defs: all, perPlayerPurples = false }: { defs: MkEstablishmentDef[]; perPlayerPurples?: boolean }) {
+  const defs = [...all].sort((a, b) => a.activation[0] - b.activation[0]);
   return (
     <table className="tight mk-rules-table">
       <thead>
         <tr><th>Roll</th><th>Establishment</th><th className="num">Cost</th><th className="num">Copies</th><th>Effect</th></tr>
       </thead>
-      <tbody>{defs.map((d) => <EstRow key={d.id} d={d} />)}</tbody>
+      <tbody>{defs.map((d) => <EstRow key={d.id} d={d} perPlayer={perPlayerPurples && d.color === 'purple'} />)}</tbody>
     </table>
   );
 }
 
-function EstRow({ d }: { d: MkEstablishmentDef }) {
+function EstRow({ d, perPlayer }: { d: MkEstablishmentDef; perPlayer: boolean }) {
   return (
     <tr>
       <td className="num"><b>{activationLabel(d.activation)}</b></td>
@@ -33,14 +34,14 @@ function EstRow({ d }: { d: MkEstablishmentDef }) {
         </span>
       </td>
       <td className="num">{d.cost}</td>
-      <td className="num">{d.copies}</td>
+      <td className="num">{perPlayer ? '1 each' : d.copies}</td>
       <td className="muted">{d.text.replace(/ \(.*\)$/, '')}</td>
     </tr>
   );
 }
 
-function LmTable({ edition }: { edition: MkEdition }) {
-  const defs = [...EDITIONS[edition].landmarkDefs].sort((a, b) => Number(!!a.promo) - Number(!!b.promo) || a.name.localeCompare(b.name));
+function LmTable({ defs: all }: { defs: MkLandmarkDef[] }) {
+  const defs = [...all].sort((a, b) => Number(!!a.promo) - Number(!!b.promo) || a.name.localeCompare(b.name));
   return (
     <table className="tight mk-rules-table">
       <thead><tr><th>Landmark</th><th>Cost</th><th>Applies to</th><th>Effect</th></tr></thead>
@@ -189,8 +190,8 @@ export function Rules() {
             </>
           ),
         },
-        { title: 'Establishments', body: <EstTable edition="mk2" /> },
-        { title: 'Landmark list', body: <LmTable edition="mk2" /> },
+        { title: 'Establishments', body: <EstTable defs={EDITIONS.mk2.establishments} /> },
+        { title: 'Landmark list', body: <LmTable defs={EDITIONS.mk2.landmarkDefs} /> },
         {
           title: 'Rulings',
           body: (
@@ -226,15 +227,65 @@ export function Rules() {
               <RulesHero title="Machi Koro (base game)" subtitle="The 2014 original — pick it in the lobby." accent="linear-gradient(135deg, #8450bd 0%, #e98a1c 100%)" />
               <ul>
                 <li>2–4 players. Everyone starts with <b>3 coins</b>, a <b>Wheat Field</b> and a <b>Bakery</b>. No opening rounds.</li>
-                <li>Every establishment is on sale at once (6 of each, 4 of each purple). You may own only <b>one of each purple</b>.</li>
+                <li>Every establishment is on sale at once (6 of each, one of each purple per player). You may own only <b>one of each purple</b>.</li>
                 <li>Everyone builds the same four landmarks, at fixed prices. Build all four to win.</li>
                 <li>You roll one die until you own the <b>Train Station</b>. There’s no free coin when you’re broke.</li>
                 <li>The Business Center can’t trade purple cards. Landmarks only ever help their owner.</li>
+                <li>The <b>Harbor</b> and <b>Millionaire’s Row</b> expansions can be added in the lobby — see the next pages.</li>
               </ul>
-              <LmTable edition="mk1" />
+              <LmTable defs={EDITIONS.mk1.landmarkDefs} />
               <h3>Establishments</h3>
-              <EstTable edition="mk1" />
-              <p className="muted">The Harbor and Millionaire’s Row expansions aren’t included.</p>
+              <EstTable defs={EDITIONS.mk1.establishments} perPlayerPurples />
+            </>
+          ),
+        },
+        {
+          title: 'Harbor',
+          body: (
+            <>
+              <RulesHero title="Harbor expansion" subtitle="Original Machi Koro only — boats, a bigger market and a 5th player." accent="linear-gradient(135deg, #2b8fc9 0%, #2f5f8a 100%)" />
+              <ul>
+                <li>2–5 players. Ten new establishments and three new landmarks for everyone.</li>
+                <li><b>City Hall</b> starts built: just before you build, if you have no coins, take 1 from the bank.</li>
+                <li><b>Harbor</b> (2): when you roll 10 or more you may add 2 — the only way to reach 13 and 14. Your Sushi Bars, Mackerel Boats and Tuna Boats pay only once you have it.</li>
+                <li><b>Airport</b> (30): build nothing on your turn and take 10 from the bank.</li>
+                <li>Win by building <b>all seven</b> landmarks (City Hall counts, so six to build).</li>
+                <li><b>Tuna Boat</b>: the player whose turn it is rolls two dice once, and every Tuna Boat that activates pays that total.</li>
+              </ul>
+              <h3>Marketplace</h3>
+              <p>
+                Instead of putting every pile out, shuffle all the establishments into one deck and deal until <b>ten different</b>{' '}
+                piles show (duplicates stack). When a pile sells out, deal until there are ten again. This is the default
+                once an expansion is in; the lobby can switch back to every pile out. There is one of each purple per player.
+              </p>
+              <LmTable defs={EXPANSIONS.harbor.landmarkDefs} />
+              <h3>Establishments</h3>
+              <EstTable defs={EXPANSIONS.harbor.establishments} perPlayerPurples />
+            </>
+          ),
+        },
+        {
+          title: 'Millionaire’s Row',
+          body: (
+            <>
+              <RulesHero title="Millionaire’s Row expansion" subtitle="Original Machi Koro only — loans, renovations and demolitions." accent="linear-gradient(135deg, #8a6440 0%, #8450bd 100%)" />
+              <ul>
+                <li>Fourteen new establishments; works with or without Harbor.</li>
+                <li>Cards that check <b>landmarks built</b> (General Store, Corn Field, French Restaurant, Members Only Club) never count a starting City Hall.</li>
+                <li><b>Renovation</b>: a closed building (🚧) doesn’t activate — the next time it would, it reopens instead. The Winery closes itself after paying; the Renovation Company closes every copy of a type you pick, yours included, and each opponent pays you 1 per copy of theirs.</li>
+                <li><b>Demolition Company</b>: you must demolish one of your built landmarks for 8 coins. Build it again later at full price.</li>
+                <li><b>Loan Office</b> costs −5: the bank pays you 5 to build it, and you pay 2 each time it activates.</li>
+                <li><b>Moving Company</b>: give a non-major establishment to any other player, then take 4.</li>
+                <li><b>Tech Startup</b>: at the end of each of your turns you may put 1 coin on it (the checkbox next to Pass). On a 10, every opponent pays you that much.</li>
+                <li><b>International Exhibit Hall</b>: on a 10 you may activate one of your blue or green establishments instead; the Hall then goes back to the market.</li>
+              </ul>
+              <EstTable defs={EXPANSIONS.millionairesRow.establishments} perPlayerPurples />
+              <h3>Rulings</h3>
+              <ul className="mk-rulings">
+                <li>A traded or given card stays closed if it was. The player giving picks a closed copy when they have one; the player taking (Business Center) gets an open one when there is one.</li>
+                <li>The Renovation Company is paid per copy of the chosen type each opponent owns.</li>
+                <li>The Exhibit Hall can’t activate a red card (you’d be paying yourself) or a closed one.</li>
+              </ul>
             </>
           ),
         },

@@ -262,6 +262,22 @@ weights 75.4% (2000 seat-swapped matches); it averages ~2.5 rounds and ~120
 actions per match, ~0.2 ms per decision. The env bridge runs ~4k random
 decisions/s per process at 32 envs.
 
+`runs/jaipur/main` (encoder v2, 256×2 MLP, 10k updates, 245M decisions,
+4 h 45 min) went from 28% vs the heuristic at update 100 to 80% at 1000 and
+~84% by 1500, then plateaued at 84–89% (vs the checkpoint 500 updates
+earlier ≈ 50% from ~update 2000). The game's AI levels are frozen
+checkpoints of it, in `src/games/jaipur/policies/`:
+
+| Level | Benchmark | Source update | vs random | vs heuristic | vs easy | vs normal |
+|---|---|---:|---:|---:|---:|---:|
+| easy | `bench:easy-update100` | 100 | 100.0% | 29.1% | — | — |
+| normal | `bench:normal-update500` | 500 | 100.0% | 64.9% | 83.0% | — |
+| hard | `bench:hard-update10000` | 10000 | 100.0% | 87.5% | 89.8% | 68.5% |
+
+2000 seat-swapped matches each. Update 10000 ties the best-scoring
+checkpoint, u8400, 49.0%. Hard wins 68.5% against normal while averaging fewer
+rupees per round: it plays to win rounds, not to run up the score.
+
 | File | Role |
 |---|---|
 | `jaipur/train.py` | PPO trainer (derived from `sgp/train.py`; shares `ssp/model.py`), plus heuristic sparring workers |

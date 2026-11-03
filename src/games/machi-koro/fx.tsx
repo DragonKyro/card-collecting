@@ -8,9 +8,12 @@
 // the live DOM (where they are now):
 //   - coins: coin sprites arc from the payer (or the bank) to the payee, the
 //     card that paid out pulses, and +N / −N labels float up;
-//   - build / exchange / gift: a ghost of the card flies from its old spot to
-//     its new one (a brand-new town stack stays hidden until it lands);
-//   - extra turns, wins, the end of the opening rounds: a toast.
+//   - payments to the bank (Loan Office) fly the other way;
+//   - build / exchange / gift / give / Exhibit Hall returned: a ghost of the
+//     card flies from its old spot to its new one (a brand-new town stack or
+//     market pile stays hidden until it lands);
+//   - extra turns, wins, the end of the opening rounds, Harbor, Tuna Boat,
+//     demolitions, renovations: a toast.
 // Coin animations wait for the dice to finish tumbling when the same batch
 // holds a roll. Web Animations API throughout (so it never fights React over
 // classes or styles); everything is skipped under prefers-reduced-motion,
@@ -144,7 +147,7 @@ interface Layouts {
   nameOf(id: PlayerId | null): string;
 }
 
-function sourceKey(e: Extract<MkLogEntry, { kind: 'coins' }>): string | null {
+function sourceKey(e: Extract<MkLogEntry, { kind: 'coins' | 'payBank' }>): string | null {
   if (e.source.type === 'est') return `city:${e.source.ownerId}:${e.source.id}`;
   if (e.source.type === 'lm') return `lm:${e.source.ownerId}:${e.source.id}`;
   return null;
@@ -197,6 +200,20 @@ function plan(entries: MkLogEntry[], L: Layouts): NewFlight[] {
         t += 180;
         break;
       }
+      case 'payBank': {
+        const from = L.now(`coins:${e.from}`);
+        const bank = L.now('bank');
+        pulse(sourceKey(e), t);
+        if (from && bank && e.amount > 0) {
+          for (let i = 0; i < Math.min(5, e.amount); i++) out.push({ kind: 'coin', from, to: bank, delay: t + i * 70 });
+        }
+        if (from) {
+          const text = e.amount < e.owed ? `−${e.amount} (owed ${e.owed})` : `−${e.amount}`;
+          out.push({ kind: 'float', at: from, text, tone: 'loss', delay: t });
+        }
+        t += 180;
+        break;
+      }
       case 'build': {
         const toKey = e.landmark ? `lm:${e.playerId}:${e.cardId}` : `city:${e.playerId}:${e.cardId}`;
         const fromKey = L.before(`market:${e.cardId}`) ? `market:${e.cardId}` : toKey;
@@ -206,6 +223,10 @@ function plan(entries: MkLogEntry[], L: Layouts): NewFlight[] {
         if (payer && bank && e.cost > 0) {
           for (let i = 0; i < Math.min(4, e.cost); i++) out.push({ kind: 'coin', from: payer, to: bank, delay: t + i * 60 });
           out.push({ kind: 'float', at: payer, text: `−${e.cost}`, tone: 'loss', delay: t });
+        } else if (payer && bank && e.cost < 0) {
+          // Loan Office: building it pays.
+          for (let i = 0; i < Math.min(4, -e.cost); i++) out.push({ kind: 'coin', from: bank, to: payer, delay: t + i * 60 });
+          out.push({ kind: 'float', at: payer, text: `+${-e.cost}`, tone: 'gain', delay: t + COIN_MS - 120 });
         }
         if (e.landmark) {
           out.push({ kind: 'toast', text: `${L.nameOf(e.playerId)} built a landmark!`, delay: t + 200 });
@@ -220,6 +241,7 @@ function plan(entries: MkLogEntry[], L: Layouts): NewFlight[] {
         t += 400;
         break;
       case 'gift':
+      case 'give':
         cardFlight(e.cardId, `city:${e.playerId}:${e.cardId}`, `city:${e.toId}:${e.cardId}`, t);
         out.push({ kind: 'toast', text: `Moving Company: ${L.nameOf(e.playerId)} gives a card to ${L.nameOf(e.toId)}`, delay: t });
         t += 400;
@@ -227,6 +249,35 @@ function plan(entries: MkLogEntry[], L: Layouts): NewFlight[] {
       case 'redistribute':
         out.push({ kind: 'toast', text: `Park: everyone now has ${e.each} coins`, delay: t });
         t += 300;
+        break;
+      case 'addToRoll':
+        pulse(`lm:${e.playerId}:${e.source.id}`, t);
+        out.push({ kind: 'toast', text: `Harbor: +${e.amount} — the roll is now ${e.total}`, delay: t });
+        t += 300;
+        break;
+      case 'bonusRoll':
+        out.push({ kind: 'toast', text: `🎣 Tuna Boat roll: ${e.dice.join(' + ')} = ${e.total}`, delay: t });
+        t += 400;
+        break;
+      case 'demolish':
+        pulse(`lm:${e.playerId}:${e.landmarkId}`, t);
+        out.push({ kind: 'toast', text: `💥 ${L.nameOf(e.playerId)} demolishes a landmark`, delay: t });
+        t += 300;
+        break;
+      case 'renovate':
+        out.push({ kind: 'toast', text: '🚧 Renovation: a whole card type closes', delay: t });
+        t += 300;
+        break;
+      case 'closed':
+      case 'reopened':
+        pulse(`city:${e.playerId}:${e.cardId}`, t);
+        break;
+      case 'exhibit':
+        if (e.cardId) {
+          pulse(`city:${e.playerId}:${e.cardId}`, t);
+          cardFlight(e.hallId, `city:${e.playerId}:${e.hallId}`, `market:${e.hallId}`, t);
+          t += 300;
+        }
         break;
       case 'extraTurn':
         out.push({ kind: 'toast', text: `${L.nameOf(e.playerId)} takes another turn!`, delay: t + 300 });

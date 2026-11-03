@@ -23,10 +23,9 @@ import type {
 import {
   BONUS_SIZES, CARD_INFO, GOODS, HAND_LIMIT, EMPTY_PILES_TO_END, bonusSizeFor, cardLabel, minSale,
 } from './cards';
-import { canCompleteTrade, countCards, emptyCounts, emptyGoodCounts, isCompleteTrade, sumGoods } from './rules';
+import { canCompleteTrade, countCards, emptyCounts, emptyGoodCounts, isCompleteTrade } from './rules';
 import { emptyPiles, tradeContext } from './reducer';
 import { goodsPoints, rupees } from './scoring';
-import { knowledgeOf } from './knowledge';
 import { BonusTokenArt, CamelTokenArt, GoodsTokenArt, SealArt, TokenSvg, TypeIcon, bonusColor } from './art';
 import { BonusTokenView, CardBack, CardView, GoodsTokenView } from './Card';
 import { JaipurFlipProvider, cardKey, useFlipAnchor } from './flip';
@@ -333,8 +332,6 @@ function GameView({ state, localPlayerId, dispatch }: {
             position="top"
             reveal={revealAll}
             active={state.activePlayerId === top.id && state.subPhase === 'turn'}
-            memoryAid={!revealAll}
-            viewerId={viewer?.id ?? null}
           />
           <MarketRug
             state={state}
@@ -349,8 +346,6 @@ function GameView({ state, localPlayerId, dispatch }: {
             position="bottom"
             reveal={!!viewer || revealAll}
             active={state.activePlayerId === bottom.id && state.subPhase === 'turn'}
-            memoryAid={false}
-            viewerId={viewer?.id ?? null}
             selection={myTurn ? sel : undefined}
             takingTypes={takingTypes}
             onHandClick={myTurn ? (c) => toggle('hand', c.id) : undefined}
@@ -418,7 +413,7 @@ function Seals({ have, need, size = 18 }: { have: number; need: number; size?: n
 // Players
 
 function PlayerRow({
-  state, player, position, reveal, active, memoryAid, viewerId, selection, takingTypes, onHandClick, onHerdClick, children,
+  state, player, position, reveal, active, selection, takingTypes, onHandClick, onHerdClick, children,
 }: {
   state: JaipurState;
   player: JaipurPlayer;
@@ -426,8 +421,6 @@ function PlayerRow({
   /** Show the hand face up and bonus values. */
   reveal: boolean;
   active: boolean;
-  memoryAid: boolean;
-  viewerId: PlayerId | null;
   selection?: Selection;
   takingTypes?: Set<string | undefined>;
   onHandClick?: (c: JaipurCard) => void;
@@ -437,7 +430,6 @@ function PlayerRow({
   const seat = seatOf(state, player.id);
   const hand = reveal ? sortedHand(player.hand) : player.hand;
   const small = position === 'top';
-  const known = memoryAid && viewerId ? knowledgeOf(state, viewerId).knownHands[state.players.indexOf(player)] : null;
   const showBonus = reveal || state.phase === 'gameOver';
   const score = rupees(player);
   return (
@@ -482,21 +474,6 @@ function PlayerRow({
             })}
             {player.hand.length === 0 && <span className="jp-empty">empty</span>}
           </div>
-          {known && (
-            <div className="jp-known" title="Goods they took from the market and haven't played since">
-              {sumGoods(known) === 0
-                ? <span className="muted">Nothing known in their hand yet.</span>
-                : (
-                  <>
-                    <span className="muted">Known:</span>
-                    {GOODS.filter((g) => known[g] > 0).map((g) => (
-                      <span key={g} className="jp-known-chip"><TypeIcon type={g} size={16} />×{known[g]}</span>
-                    ))}
-                    <span className="muted">· {player.hand.length - sumGoods(known)} unknown</span>
-                  </>
-                )}
-            </div>
-          )}
         </div>
         <div className="jp-zone jp-herd-zone">
           <div className="jp-zone-label">Herd <span className="muted">{player.herd.length}</span></div>

@@ -7,8 +7,8 @@
 // badge for who their rule applies to.
 
 import type { CSSProperties, ReactNode } from 'react';
-import type { MkEdition, MkEstablishmentDef, MkLandmarkDef } from './types';
-import { activationLabel, estDef, isEstablishment, lmDef } from './cards';
+import type { MkCondition, MkEdition, MkEstablishmentDef, MkLandmarkDef } from './types';
+import { activationLabel, estDef, isEstablishment, isLandmark, lmDef } from './cards';
 import { CardArt, SymbolIcon } from './art';
 
 export const COLOR_HEX: Record<MkEstablishmentDef['color'] | 'landmark', string> = {
@@ -27,20 +27,43 @@ export const TIMING_LABEL: Record<MkEstablishmentDef['color'], string> = {
 };
 
 /** One-line effect summary for a card face. */
-export function shortEffect(def: MkEstablishmentDef): ReactNode {
+export function shortEffect(edition: MkEdition, def: MkEstablishmentDef): ReactNode {
   const e = def.effect;
   switch (e.kind) {
     case 'bank': return <><b>+{e.amount}</b> from the bank</>;
     case 'bankPerSymbol': return <><b>+{e.amount}</b> per <SymbolIcon symbol={e.symbol} size={12} /> you own</>;
+    case 'bankPerSymbolAll': return <><b>+{e.amount}</b> per <SymbolIcon symbol={e.symbol} size={12} /> anyone owns</>;
+    case 'bankPerCard':
+      return <><b>+{e.amount}</b> per {estDef(edition, e.cardId).name}{def.closesAfter ? ', then closes' : ''}</>;
+    case 'bankRoll': return <>Roll 2 dice: <b>+</b> the total</>;
+    case 'payBank': return <>Pay <b>{e.amount}</b> to the bank</>;
     case 'takeFromRoller': return <>Take <b>{e.amount}</b> from the roller</>;
+    case 'takeAllFromRoller': return <>Take <b>all</b> their coins</>;
+    case 'demolish': return <>Demolish a landmark: <b>+{e.amount}</b></>;
+    case 'give': return <>Give a card away: <b>+{e.amount}</b></>;
     case 'takeFromEach': return <>Take <b>{e.amount}</b> from each opponent</>;
-    case 'takeHalfAbove': return <>Take <b>half</b> from each with 11+</>;
+    case 'takeHalfAbove': return <>Take <b>half</b> from each with {e.threshold + 1}+</>;
     case 'takeFromOne': return <>Take <b>{e.amount}</b> from one opponent</>;
+    case 'takePerSymbolFromEach':
+      return <>Take <b>{e.amount}</b> per {e.symbols.map((s) => <SymbolIcon key={s} symbol={s} size={12} />)} from each</>;
+    case 'invested': return <>Take your <b>investment</b> from each</>;
+    case 'redistribute': return <>Share all coins <b>evenly</b></>;
+    case 'renovate': return <>Close a card type: <b>{e.amount}</b> per copy</>;
+    case 'activateOther': return <>Activate another of your cards</>;
     case 'exchange': return <>Swap an establishment</>;
   }
 }
 
-export type CardSize = 'lg' | 'md' | 'sm';
+/** When a conditional card pays, for its face. */
+export function conditionLabel(edition: MkEdition, c: MkCondition): string {
+  switch (c.kind) {
+    case 'ownerHas': return `With a ${isLandmark(edition, c.landmark) ? lmDef(edition, c.landmark).name : c.landmark}`;
+    case 'ownerBelow': return `If you have <${c.landmarks} ★`;
+    case 'rollerAtLeast': return `If roller has ${c.landmarks}+ ★`;
+  }
+}
+
+export type CardSize = 'lg' | 'md' | 'sm' | 'xs';
 
 interface CommonProps {
   size?: CardSize;
@@ -61,17 +84,24 @@ export function CardFace({ edition, cardId, ...rest }: CommonProps & {
   price?: number;
   /** MK1 personal landmark not built yet. */
   unbuilt?: boolean;
+  /** Establishments in a town: copies closed for renovation. */
+  closed?: number;
+  /** Tech Startup in a town: coins invested on it. */
+  invested?: number;
 }) {
   return isEstablishment(edition, cardId)
-    ? <EstablishmentFace def={estDef(edition, cardId)} {...rest} />
+    ? <EstablishmentFace edition={edition} def={estDef(edition, cardId)} {...rest} />
     : <LandmarkFace def={lmDef(edition, cardId)} {...rest} />;
 }
 
-export function EstablishmentFace({ def, size = 'lg', count, className = '', style, onClick, title }: CommonProps & { def: MkEstablishmentDef }) {
+export function EstablishmentFace({
+  edition, def, size = 'lg', count, className = '', style, onClick, title, closed = 0, invested = 0,
+}: CommonProps & { edition: MkEdition; def: MkEstablishmentDef; closed?: number; invested?: number }) {
   const color = COLOR_HEX[def.color];
+  const allClosed = closed > 0 && closed >= (count ?? 1);
   return (
     <div
-      className={`mk-card mk-card-${size} mk-est ${onClick ? 'clickable' : ''} ${className}`}
+      className={`mk-card mk-card-${size} mk-est ${allClosed ? 'closed' : ''} ${onClick ? 'clickable' : ''} ${className}`}
       style={{ ['--mk-band' as string]: color, ...style }}
       onClick={onClick}
       title={title ?? `${def.name} — ${def.text}`}
@@ -80,19 +110,28 @@ export function EstablishmentFace({ def, size = 'lg', count, className = '', sty
       <div className="mk-card-band">
         <span className="mk-card-num">{activationLabel(def.activation)}</span>
       </div>
-      {size !== 'sm' && <div className="mk-card-name">{def.name}</div>}
+      {size !== 'sm' && size !== 'xs' && <div className="mk-card-name">{def.name}</div>}
       <div className="mk-card-art"><CardArt art={def.art} /></div>
       {size === 'lg' && (
         <div className="mk-card-text">
-          {shortEffect(def)}
+          {def.condition && <div className="mk-card-cond">{conditionLabel(edition, def.condition)}</div>}
+          {shortEffect(edition, def)}
           <div className="mk-card-timing">{TIMING_LABEL[def.color]}</div>
         </div>
       )}
-      <div className="mk-card-foot">
-        <CostCoin value={def.cost} />
-        {def.symbol !== 'none' && <SymbolIcon symbol={def.symbol} size={size === 'sm' ? 13 : 16} />}
-      </div>
+      {size !== 'xs' && (
+        <div className="mk-card-foot">
+          <CostCoin value={def.cost} />
+          {def.symbol !== 'none' && <SymbolIcon symbol={def.symbol} size={size === 'sm' ? 13 : 16} />}
+        </div>
+      )}
       {count !== undefined && count > 1 && <span className="mk-card-count">×{count}</span>}
+      {closed > 0 && (
+        <span className="mk-card-closed" title={`${closed} closed for renovation — reopens the next time it would activate`}>
+          🚧{closed > 1 || (count ?? 1) > 1 ? closed : ''}
+        </span>
+      )}
+      {invested > 0 && <span className="mk-card-invested" title={`${invested} invested`}>{invested}</span>}
     </div>
   );
 }
@@ -111,12 +150,12 @@ export function LandmarkFace({
       role={onClick ? 'button' : undefined}
     >
       <div className="mk-card-band">
-        <span className={`mk-lm-scope ${def.timing === 'immediate' ? 'once' : def.scope}`}>{size === 'sm' ? '★' : scope}</span>
+        <span className={`mk-lm-scope ${def.timing === 'immediate' ? 'once' : def.scope}`}>{size === 'sm' || size === 'xs' ? '★' : scope}</span>
       </div>
-      {size !== 'sm' && <div className="mk-card-name">{def.name}</div>}
+      {size !== 'sm' && size !== 'xs' && <div className="mk-card-name">{def.name}</div>}
       <div className="mk-card-art"><CardArt art={def.art} /></div>
       {size === 'lg' && <div className="mk-card-text">{def.face}</div>}
-      <div className="mk-card-foot">
+      {size !== 'xs' && <div className="mk-card-foot">
         {size === 'sm'
           ? price !== undefined && <CostCoin value={price} />
           : def.costs.length === 1
@@ -131,7 +170,7 @@ export function LandmarkFace({
             </span>
           )}
         {def.promo && size !== 'sm' && <span className="mk-promo">promo</span>}
-      </div>
+      </div>}
       {count !== undefined && count > 1 && <span className="mk-card-count">×{count}</span>}
     </div>
   );
@@ -148,7 +187,7 @@ export function DeckBack({ label, count, size = 'lg' }: { label: string; count: 
 }
 
 export function CostCoin({ value }: { value: number }) {
-  return <span className="mk-cost">{value}</span>;
+  return <span className="mk-cost">{value < 0 ? `−${-value}` : value}</span>;
 }
 
 /** A gold coin glyph. */

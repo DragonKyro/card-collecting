@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { act, fireEvent, render, screen, cleanup } from '@testing-library/react';
 import { useState } from 'react';
-import type { MkAction, MkEdition, MkState } from './types';
+import type { MkAction, MkConfig, MkEdition, MkState } from './types';
 import { bundle } from './ui';
 import { applyAction, createMatch } from './reducer';
 import { chooseAIAction } from './ai';
@@ -34,8 +34,26 @@ function humanStep(state: MkState, container: HTMLElement): void {
       expect(clickButton(/Roll 2 dice/) || clickButton(/Roll 1 die/)).toBe(true);
       break;
     case 'reroll':
+    case 'harbor':
       expect(clickButton(/^Keep/)).toBe(true);
       break;
+    case 'demolish':
+    case 'renovate': {
+      const first = container.querySelector('.mk-actions button:not([disabled])') as HTMLElement;
+      expect(first).not.toBeNull();
+      fireEvent.click(first);
+      break;
+    }
+    case 'exhibit':
+      expect(clickButton(/Keep the Hall/)).toBe(true);
+      break;
+    case 'give': {
+      const mine = container.querySelector('.mk-town.own .mk-town-card.pickable .mk-card') as HTMLElement;
+      expect(mine).not.toBeNull();
+      fireEvent.click(mine);
+      expect(clickButton(/^Give to/)).toBe(true);
+      break;
+    }
     case 'tvTarget':
       expect(clickButton(/\(\d+/)).toBe(true);
       break;
@@ -43,7 +61,7 @@ function humanStep(state: MkState, container: HTMLElement): void {
       expect(clickButton(/Don’t swap/)).toBe(true);
       break;
     case 'gift': {
-      const mine = container.querySelector('.mk-town .mk-town-card.pickable .mk-card') as HTMLElement;
+      const mine = container.querySelector('.mk-town.own .mk-town-card.pickable .mk-card') as HTMLElement;
       expect(mine).not.toBeNull();
       fireEvent.click(mine);
       break;
@@ -86,6 +104,24 @@ describe('GameView', () => {
     });
   }
 
+  it('mk1 + Harbor + Millionaire’s Row: a human can play a whole match from the UI', () => {
+    const end = playThroughUi('mk1', 3, 33, { expansions: ['harbor', 'millionairesRow'] });
+    expect(end.phase).toBe('gameOver');
+  });
+
+  it('lays your town and the actions out together, opponents in the side column', () => {
+    const state = newMatch('mk1', 3, { first: 0, expansions: ['harbor'] });
+    const { container } = render(<bundle.GameView state={state} localPlayerId="p0" dispatch={() => {}} />);
+    const bottom = container.querySelector('.mk-bottom')!;
+    expect(bottom.querySelector('.mk-town.own')?.textContent).toContain('P0');
+    expect(bottom.querySelector('.mk-turnbar')).not.toBeNull();
+    const side = [...container.querySelectorAll('.mk-side .mk-town.compact')].map((t) => t.querySelector('.mk-town-name')?.textContent);
+    expect(side).toEqual(['P1', 'P2']);
+    expect(container.querySelectorAll('.mk-market-row')).toHaveLength(1);
+    expect(container.querySelectorAll('.row-mixed .mk-slot')).toHaveLength(10);
+    cleanup();
+  });
+
   it('swaps establishments through the Business Center prompt', () => {
     const state = newMatch('mk2', 2, { first: 0 });
     setPlayer(state, 0, { coins: 2, city: { businessCenter: 1, wheatField: 1 } });
@@ -118,8 +154,8 @@ describe('GameView', () => {
 });
 
 /** One mounted view; AI seats' moves are dispatched the way the host's AI driver sends them. */
-function playThroughUi(edition: MkEdition, n: number, seed: number): MkState {
-  const initial = createMatch({ edition, promoLandmarks: true }, seed, seats(n));
+function playThroughUi(edition: MkEdition, n: number, seed: number, extra: Partial<MkConfig> = {}): MkState {
+  const initial = createMatch({ edition, promoLandmarks: true, ...extra }, seed, seats(n));
   let latest = initial;
   let dispatchRef: ((a: MkAction) => void) | null = null;
   function Host() {

@@ -44,6 +44,9 @@ export function HistoryFeed({ state, nameOf }: { state: MkState; nameOf: (id: Pl
       case 'roll':
         return <>🎲 {who(e.playerId)} {e.reroll ? 'rerolled' : 'rolled'} {e.dice.join(' + ')}{e.dice.length > 1 ? ` = ${e.total}` : ''}{e.doubles ? ' — doubles!' : ''}</>;
       case 'keepRoll': return <>{who(e.playerId)} keeps the roll.</>;
+      case 'addToRoll': return <>⚓ {who(e.playerId)} adds {e.amount} with the <CardTag edition={ed} id={e.source.id} /> = {e.total}</>;
+      case 'bonusRoll':
+        return <>🎣 {who(e.playerId)} rolls {e.dice.join(' + ')} = {e.total} · <CardTag edition={ed} id={e.source.id} /></>;
       case 'coins':
         if (e.from === null) return <>🪙 {who(e.to)} +{e.amount} · {sourceLabel(ed, e.source)}</>;
         return (
@@ -52,14 +55,38 @@ export function HistoryFeed({ state, nameOf }: { state: MkState; nameOf: (id: Pl
             {e.amount < e.owed && <span className="mk-log-short"> (owed {e.owed})</span>} · {sourceLabel(ed, e.source)}
           </>
         );
+      case 'payBank':
+        return (
+          <>
+            🪙 {who(e.from)} → bank: {e.amount}
+            {e.amount < e.owed && <span className="mk-log-short"> (owed {e.owed})</span>} · {sourceLabel(ed, e.source)}
+          </>
+        );
       case 'redistribute':
         return <>🌳 <CardTag edition={ed} id={e.source.id} />: everyone now has {e.each}{e.fromBank > 0 ? ` (the bank adds ${e.fromBank})` : ''}.</>;
+      case 'renovate': return <>🚧 {who(e.playerId)} sends every <CardTag edition={ed} id={e.cardId} /> for renovation.</>;
+      case 'closed':
+        return <span className="muted">🚧 {nameOf(e.playerId)}’s <CardTag edition={ed} id={e.cardId} />{e.copies > 1 ? ` ×${e.copies}` : ''} closes for renovation.</span>;
+      case 'reopened':
+        return <span className="muted">🚧 {nameOf(e.playerId)}’s <CardTag edition={ed} id={e.cardId} />{e.copies > 1 ? ` ×${e.copies}` : ''} reopens instead of paying.</span>;
+      case 'demolish': return <>💥 {who(e.playerId)} demolishes their <CardTag edition={ed} id={e.landmarkId} />.</>;
+      case 'give': return <>📦 {who(e.playerId)} gives <CardTag edition={ed} id={e.cardId} /> to {who(e.toId)}.</>;
+      case 'invest': return <>💼 {who(e.playerId)} invests 1 in the Tech Startup ({e.total} on it).</>;
+      case 'exhibit':
+        return e.cardId === null
+          ? <>{who(e.playerId)} keeps their <CardTag edition={ed} id={e.hallId} />.</>
+          : <>🎪 {who(e.playerId)} activates <CardTag edition={ed} id={e.cardId} /> with the <CardTag edition={ed} id={e.hallId} />, which goes back to the market.</>;
       case 'exchange':
         return <>🔁 {who(e.playerId)} swaps <CardTag edition={ed} id={e.gave} /> for {who(e.withId)}’s <CardTag edition={ed} id={e.took} />.</>;
       case 'skipExchange': return <>{who(e.playerId)} keeps their town (Business Center).</>;
       case 'gift': return <>📦 {who(e.playerId)} gives <CardTag edition={ed} id={e.cardId} /> to {who(e.toId)}.</>;
       case 'build':
-        return <>{e.landmark ? '★' : '🏗️'} {who(e.playerId)} builds <CardTag edition={ed} id={e.cardId} /> for {e.cost}.</>;
+        return (
+          <>
+            {e.landmark ? '★' : '🏗️'} {who(e.playerId)} builds <CardTag edition={ed} id={e.cardId} />
+            {e.cost < 0 ? ` and gets ${-e.cost}.` : ` for ${e.cost}.`}
+          </>
+        );
       case 'pass': return <span className="muted">{nameOf(e.playerId)} builds nothing.</span>;
       case 'extraTurn': return <>🔄 {who(e.playerId)} gets another turn · {sourceLabel(ed, e.source)}</>;
       case 'win':

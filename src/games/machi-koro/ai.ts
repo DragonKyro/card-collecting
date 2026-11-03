@@ -1,11 +1,12 @@
-// Machi Koro heuristic AI (both editions).
+// Machi Koro heuristic AI (both editions, MK1 expansions included).
 //
 // Everything rests on an expected-income model: `incomeAt` is what a player
 // gains (or pays) when a given seat rolls a given total, read straight off the
 // card definitions; `roundIncome` sums it over one full round of everyone's
-// rolls, each seat rolling the number of dice that suits it best. A card's
-// worth is the change in round income it brings, times the rounds the match
-// probably has left (`horizon`).
+// rolls, each seat rolling the number of dice that suits it best (and taking
+// the Harbor's +2 when it pays them more). A card's worth is the change in
+// round income it brings, times the rounds the match probably has left
+// (`horizon`).
 //
 //   - Roll: the dice count with the higher expected net income this turn.
 //   - Build: establishments score (gain × horizon) − cost, with the cost
@@ -13,16 +14,23 @@
 //     saves up). Landmarks score a flat progress value plus their effect, and a
 //     landmark that wins is always taken. Passing scores 0 (5 with an Airport).
 //   - Business Center: the swap with the best (gain − loss), if any helps.
-//   - Moving Company: give away the least valuable card.
+//   - Moving Company: give away the least valuable card (MK1: to whoever it
+//     helps least).
 //   - MK1 TV Station: the richest opponent. MK1 Radio Tower: reroll when the
-//     current roll is clearly below the average fresh roll.
+//     current roll is clearly below the average fresh roll. Harbor: add 2 when
+//     the higher total pays more.
+//   - Demolition Company: the cheapest landmark to rebuild. Renovation
+//     Company: the type that collects most from opponents and costs us least.
+//     Exhibit Hall: the best one-off payout, when it's worth giving the Hall up.
+//     Tech Startup: invest when the table is big enough to repay it.
 
 import type { PlayerId } from '@/core/types';
-import type { MkAction, MkLandmarkDef, MkPlayer, MkState } from './types';
+import type { MkAction, MkEstablishmentDef, MkLandmarkDef, MkPlayer, MkState } from './types';
 import { estDef, isEstablishment, lmDef, rollChance } from './cards';
 import {
-  activePlayer, buildOptions, canRollTwo, countSymbol, exchangeableCards, landmarksInForce,
-  priceOf, rulesOf, symbolBonus,
+  activePlayer, buildOptions, canInvest, canRollTwo, conditionHolds, countSymbol, demolishable,
+  exchangeableCards, exhibitOptions, giveableCards, landmarksBuilt, landmarksInForce, openCount, priceOf,
+  renovationTargets, rollBoost, rulesOf, symbolBonus,
 } from './reducer';
 
 export function chooseAIAction(state: MkState, playerId: PlayerId): MkAction | null {
@@ -33,15 +41,37 @@ export function chooseAIAction(state: MkState, playerId: PlayerId): MkAction | n
     case 'roll':
       return { type: 'roll', playerId, dice: bestDice(state, idx).dice };
     case 'reroll': {
-      const now = incomeAt(state, idx, idx, state.turn.roll!.total);
+      const now = incomeAt(state, idx, idx, boosted(state, idx, state.turn.roll!.total));
       const fresh = bestDice(state, idx);
       return fresh.ev - now > 0.3 ? { type: 'reroll', playerId, dice: fresh.dice } : { type: 'keepRoll', playerId };
     }
+    case 'harbor': {
+      const t = state.turn.roll!.total;
+      return { type: 'harbor', playerId, add: boosted(state, idx, t) !== t };
+    }
+    case 'demolish': {
+      const ids = demolishable(state, me).sort((a, b) => priceOf(state, me, a) - priceOf(state, me, b));
+      return { type: 'demolish', playerId, landmarkId: ids[0] };
+    }
+    case 'give':
+      return chooseGive(state, idx);
     case 'tvTarget': {
       const target = state.players
         .filter((p) => p !== me)
         .sort((a, b) => Math.min(b.coins, 5) - Math.min(a.coins, 5) || b.landmarks.length - a.landmarks.length)[0];
       return { type: 'tvTarget', playerId, targetId: target.id };
+    }
+    case 'renovate': {
+      const ids = renovationTargets(state);
+      const score = (id: string) => renovationValue(state, me, id);
+      ids.sort((a, b) => score(b) - score(a));
+      return { type: 'renovate', playerId, cardId: ids[0] };
+    }
+    case 'exhibit': {
+      const best = exhibitOptions(state, me)
+        .map((id) => ({ id, v: cardIncome(state, me, me, estDef(state.config.edition, id), 1) }))
+        .sort((a, b) => b.v - a.v)[0];
+      return { type: 'exhibit', playerId, cardId: best && best.v >= 4 ? best.id : null };
     }
     case 'exchange':
       return chooseExchange(state, idx);
@@ -59,47 +89,102 @@ export function chooseAIAction(state: MkState, playerId: PlayerId): MkAction | n
 
 // ---------- Income model ----------
 
+/** Coins `owner` gains from `n` of its copies of `def` activating while
+ *  `roller` takes the turn (the colour rules are the caller's business). */
+function cardIncome(state: MkState, owner: MkPlayer, roller: MkPlayer, d: MkEstablishmentDef, n: number): number {
+  if (!conditionHolds(state, d, owner, roller)) return 0;
+  const e = d.effect;
+  const bonus = symbolBonus(state, owner.id, d);
+  const opps = state.players.filter((p) => p !== owner);
+  switch (e.kind) {
+    case 'takeFromRoller': return Math.min(roller.coins + 2, n * (e.amount + bonus));
+    case 'takeAllFromRoller': return roller.coins;
+    case 'bank': return n * (e.amount + bonus);
+    case 'bankPerSymbol': {
+      const k = countSymbol(state, owner, e.symbol);
+      return k > 0 ? n * (e.amount * k + bonus) : 0;
+    }
+    case 'bankPerSymbolAll': {
+      const k = state.players.reduce((a, p) => a + countSymbol(state, p, e.symbol), 0);
+      return k > 0 ? n * (e.amount * k + bonus) : 0;
+    }
+    case 'bankPerCard': {
+      const k = owner.city[e.cardId] ?? 0;
+      return k > 0 ? n * (e.amount * k + bonus) : 0;
+    }
+    case 'bankRoll': return n * (7 + bonus);
+    case 'payBank': return -Math.min(owner.coins + 2, n * e.amount);
+    case 'demolish': {
+      // Mandatory: +coins, but the landmark has to be bought again.
+      const ids = demolishable(state, owner);
+      if (ids.length === 0) return 0;
+      const cheapest = Math.min(...ids.map((id) => priceOf(state, owner, id)));
+      return n * (e.amount - cheapest - 3);
+    }
+    case 'give': return n * (e.amount - 1.5);
+    case 'takeFromEach': return n * opps.reduce((a, o) => a + Math.min(o.coins, e.amount), 0);
+    case 'takeHalfAbove': return opps.reduce((a, o) => a + (o.coins > e.threshold ? Math.floor(o.coins / 2) : 0), 0);
+    case 'takeFromOne': return Math.max(0, ...opps.map((o) => Math.min(o.coins, e.amount)));
+    case 'takePerSymbolFromEach':
+      return opps.reduce((a, o) => a + Math.min(o.coins, e.amount * e.symbols.reduce((s, y) => s + countSymbol(state, o, y), 0)), 0);
+    case 'invested': return opps.reduce((a, o) => a + Math.min(o.coins, owner.invested), 0);
+    case 'redistribute': {
+      const total = state.players.reduce((a, p) => a + p.coins, 0);
+      return Math.ceil(total / state.players.length) - owner.coins;
+    }
+    case 'renovate': return Math.max(0, ...renovationTargets(state).map((id) => renovationValue(state, owner, id)));
+    case 'activateOther': {
+      // One-off: the Hall goes back to the market once used.
+      let best = 0;
+      for (const id of Object.keys(owner.city)) {
+        const o = estDef(state.config.edition, id);
+        if (o.color === 'blue' || o.color === 'green') best = Math.max(best, cardIncome(state, owner, owner, o, 1));
+      }
+      return 0.4 * best;
+    }
+    case 'exchange': return 1.5;
+  }
+}
+
+/** Coins a Renovation Company on `cardId` collects, less what closing our own copies costs. */
+function renovationValue(state: MkState, owner: MkPlayer, cardId: string): number {
+  let v = 0;
+  for (const p of state.players) {
+    const n = p.city[cardId] ?? 0;
+    v += p === owner ? -0.8 * n : Math.min(p.coins, n) + 0.3 * n;
+  }
+  return v;
+}
+
 /** Coins the player at `ownerIdx` gains (negative: pays) when the player at
- *  `rollerIdx` rolls `total`. Ignores doubles and the order payments land in. */
+ *  `rollerIdx` rolls `total`. Ignores doubles and the order payments land in;
+ *  a closed copy counts for nothing (it only reopens), a self-closing Winery
+ *  for half. */
 export function incomeAt(state: MkState, ownerIdx: number, rollerIdx: number, total: number): number {
   const ed = state.config.edition;
   const owner = state.players[ownerIdx];
   const roller = state.players[rollerIdx];
   const ownTurn = ownerIdx === rollerIdx;
+  const firing = (p: MkPlayer, id: string, d: MkEstablishmentDef) =>
+    d.closesAfter ? (p.city[id] ?? 0) / 2 : openCount(p, id);
   let v = 0;
-  for (const [id, copies] of Object.entries(owner.city)) {
+  for (const id of Object.keys(owner.city)) {
     const d = estDef(ed, id);
     if (!d.activation.includes(total)) continue;
-    const e = d.effect;
-    const bonus = symbolBonus(state, owner.id, d);
-    if (d.color === 'red') {
-      if (!ownTurn && e.kind === 'takeFromRoller') v += Math.min(roller.coins + 2, copies * (e.amount + bonus));
-    } else if (d.color === 'blue') {
-      if (e.kind === 'bank') v += copies * (e.amount + bonus);
-    } else if (d.color === 'green') {
-      if (!ownTurn) continue;
-      if (e.kind === 'bank') v += copies * (e.amount + bonus);
-      else if (e.kind === 'bankPerSymbol') {
-        const n = countSymbol(state, owner, e.symbol);
-        if (n > 0) v += copies * (e.amount * n + bonus);
-      }
-    } else if (ownTurn) {
-      const opps = state.players.filter((p) => p !== owner);
-      if (e.kind === 'takeFromEach') v += copies * opps.reduce((a, o) => a + Math.min(o.coins, e.amount), 0);
-      else if (e.kind === 'takeHalfAbove') {
-        v += opps.reduce((a, o) => a + (o.coins > e.threshold ? Math.floor(o.coins / 2) : 0), 0);
-      } else if (e.kind === 'takeFromOne') v += Math.max(0, ...opps.map((o) => Math.min(o.coins, e.amount)));
-      else if (e.kind === 'exchange') v += 1.5;
-    }
+    if (d.color === 'red' ? ownTurn : d.color !== 'blue' && !ownTurn) continue;
+    const n = firing(owner, id, d);
+    if (n > 0) v += cardIncome(state, owner, roller, d, n);
   }
   if (ownTurn) {
     state.players.forEach((other, i) => {
       if (i === ownerIdx) return;
-      for (const [id, copies] of Object.entries(other.city)) {
+      for (const id of Object.keys(other.city)) {
         const d = estDef(ed, id);
-        if (d.color === 'red' && d.activation.includes(total) && d.effect.kind === 'takeFromRoller') {
-          v -= copies * (d.effect.amount + symbolBonus(state, other.id, d));
-        }
+        if (d.color !== 'red' || !d.activation.includes(total) || !conditionHolds(state, d, other, owner)) continue;
+        const n = openCount(other, id);
+        if (n <= 0) continue;
+        if (d.effect.kind === 'takeFromRoller') v -= n * (d.effect.amount + symbolBonus(state, other.id, d));
+        else if (d.effect.kind === 'takeAllFromRoller') v -= owner.coins;
       }
     });
     for (const { def } of landmarksInForce(state, owner.id)) {
@@ -109,6 +194,14 @@ export function incomeAt(state: MkState, ownerIdx: number, rollerIdx: number, to
     }
   }
   return v;
+}
+
+/** The total the seat at `rollerIdx` plays after rolling `t`: the Harbor's +2
+ *  when it pays them more. */
+export function boosted(state: MkState, rollerIdx: number, t: number): number {
+  const add = rollBoost(state, state.players[rollerIdx].id, t);
+  if (add === 0) return t;
+  return incomeAt(state, rollerIdx, rollerIdx, t + add) > incomeAt(state, rollerIdx, rollerIdx, t) ? t + add : t;
 }
 
 /** Expected value of the doubles-only landmark effects for a two-dice roller. */
@@ -129,7 +222,7 @@ function doublesValue(state: MkState, idx: number): number {
  *  roll buttons' "avg" hint). */
 export function expectedRoll(state: MkState, idx: number, dice: 1 | 2): number {
   let ev = dice === 2 ? doublesValue(state, idx) : 0;
-  for (let t = dice; t <= dice * 6; t++) ev += rollChance(t, dice) * incomeAt(state, idx, idx, t);
+  for (let t = dice; t <= dice * 6; t++) ev += rollChance(t, dice) * incomeAt(state, idx, idx, boosted(state, idx, t));
   return ev;
 }
 
@@ -148,7 +241,7 @@ export function roundIncome(state: MkState, ownerIdx: number): number {
     const { dice } = bestDice(state, r);
     const lo = dice === 1 ? 1 : 2;
     const hi = dice === 1 ? 6 : 12;
-    for (let t = lo; t <= hi; t++) total += rollChance(t, dice) * incomeAt(state, ownerIdx, r, t);
+    for (let t = lo; t <= hi; t++) total += rollChance(t, dice) * incomeAt(state, ownerIdx, r, boosted(state, r, t));
     if (r === ownerIdx && dice === 2) total += doublesValue(state, r);
   });
   return total;
@@ -159,10 +252,16 @@ function withPlayer(state: MkState, idx: number, patch: Partial<MkPlayer>): MkSt
 }
 
 function withCard(state: MkState, idx: number, cardId: string, delta: number): MkState {
-  const city = { ...state.players[idx].city };
+  const p = state.players[idx];
+  const city = { ...p.city };
+  const closed = { ...p.closed };
   city[cardId] = (city[cardId] ?? 0) + delta;
   if (city[cardId] <= 0) delete city[cardId];
-  return withPlayer(state, idx, { city });
+  if ((closed[cardId] ?? 0) > (city[cardId] ?? 0)) {
+    if (city[cardId]) closed[cardId] = city[cardId];
+    else delete closed[cardId];
+  }
+  return withPlayer(state, idx, { city, closed });
 }
 
 /** Round-income change for `idx` from gaining (delta +1) / losing (−1) a copy. */
@@ -175,8 +274,9 @@ export function horizon(state: MkState): number {
   const R = rulesOf(state);
   const lead = Math.max(...state.players.map((p) => p.landmarks.length));
   const progress = lead / R.landmarksToWin;
-  const h = (R.id === 'mk2' ? 10 : 12) - 0.4 * Math.max(0, state.round) - 7 * progress;
-  return Math.max(2, Math.min(12, h));
+  const start = R.id === 'mk2' ? 10 : R.landmarksToWin > 4 ? 15 : 12;
+  const h = start - 0.4 * Math.max(0, state.round) - 7 * progress;
+  return Math.max(2, Math.min(start, h));
 }
 
 // ---------- Decisions ----------
@@ -207,7 +307,7 @@ function chooseBuild(state: MkState, idx: number): MkAction {
 
   const passValue = state.subPhase === 'build'
     && landmarksInForce(state, me.id).some((l) => l.def.effect.kind === 'skipBuildBonus') ? 5 : 0;
-  let best: { score: number; action: MkAction } = { score: passValue, action: { type: 'pass', playerId: me.id } };
+  let best: { score: number; cardId: string | null } = { score: passValue, cardId: null };
 
   for (const { cardId, cost } of options) {
     let score: number;
@@ -217,13 +317,26 @@ function chooseBuild(state: MkState, idx: number): MkAction {
     } else {
       const def = lmDef(ed, cardId);
       if (def.effect.kind === 'win' || me.landmarks.length + 1 >= R.landmarksToWin) {
-        return { type: 'build', playerId: me.id, cardId };
+        best = { score: Infinity, cardId };
+        break;
       }
       score = 22 + landmarkEffectValue(state, idx, def, cost, H) - 0.35 * cost;
     }
-    if (score > best.score) best = { score, action: { type: 'build', playerId: me.id, cardId } };
+    if (score > best.score) best = { score, cardId };
   }
-  return best.action;
+  const invest = wantsToInvest(state, idx, H, best.cardId ? priceOf(state, me, best.cardId) : 0);
+  return best.cardId
+    ? { type: 'build', playerId: me.id, cardId: best.cardId, ...(invest ? { invest } : {}) }
+    : { type: 'pass', playerId: me.id, ...(invest ? { invest } : {}) };
+}
+
+/** Tech Startup: a coin invested comes back from every opponent each time we
+ *  roll a 10 — worth it with enough opponents, two dice and time left. */
+function wantsToInvest(state: MkState, idx: number, H: number, spend: number): boolean {
+  const me = state.players[idx];
+  if (state.subPhase !== 'build' || !canInvest(state, me) || !canRollTwo(state, me.id)) return false;
+  if (me.coins - spend < 2) return false;
+  return (state.players.length - 1) * rollChance(10, 2) * H > 1.1;
 }
 
 function landmarkEffectValue(state: MkState, idx: number, def: MkLandmarkDef, cost: number, H: number): number {
@@ -250,10 +363,12 @@ function landmarkEffectValue(state: MkState, idx: number, def: MkLandmarkDef, co
       return def.scope === 'owner' && canRollTwo(state, me.id) ? (bestDice(state, idx).ev / 6) * H : 0;
     case 'skipBuildBonus': return 1;
     case 'noIncomeBonus': return 0.5;
+    case 'brokeCoin': return 0.5;
     default: break;
   }
   // Everything else changes round income — for us, and (for "everyone"
-  // landmarks) for the opponents too. Only the edge over them counts.
+  // landmarks) for the opponents too. Only the edge over them counts. A
+  // landmark can also flip "landmarks built" conditions, which this catches.
   const after = withPlayer(state, idx, { landmarks: [...me.landmarks, def.id] });
   const mine = roundIncome(after, idx) - roundIncome(state, idx);
   if (def.scope === 'owner') return mine * H;
@@ -285,4 +400,23 @@ function chooseExchange(state: MkState, idx: number): MkAction {
     }
   });
   return best.action;
+}
+
+/** MK1 Moving Company: the card we miss least, to the player it helps least. */
+function chooseGive(state: MkState, idx: number): MkAction {
+  const me = state.players[idx];
+  let best: { score: number; cardId: string; targetId: PlayerId } | null = null;
+  for (const cardId of giveableCards(state, me)) {
+    const loss = -cardWorth(state, idx, cardId, -1);
+    state.players.forEach((opp, oi) => {
+      if (oi === idx) return;
+      // A leader's gain hurts more than a laggard's.
+      const theirGain = cardWorth(state, oi, cardId, 1) * (1 + 0.3 * landmarksBuilt(state, opp));
+      const score = loss + 0.5 * theirGain;
+      if (!best || score < best.score) best = { score, cardId, targetId: opp.id };
+    });
+  }
+  const pick = best as { cardId: string; targetId: PlayerId } | null;
+  if (!pick) throw new Error('nothing to give');
+  return { type: 'give', playerId: me.id, cardId: pick.cardId, targetId: pick.targetId };
 }

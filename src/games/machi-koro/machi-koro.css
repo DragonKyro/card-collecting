@@ -1,15 +1,56 @@
 /* Machi Koro — everything is prefixed mk-. */
 
+/* Catan-style: the board (market) on the left, your town + the action panel
+   in a strip under it, history + opponents in the side column. */
 .mk-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 270px;
-  gap: 14px;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "board side"
+    "bottom side";
+  gap: 12px;
   align-items: start;
 }
-@media (max-width: 1050px) {
-  .mk-layout { grid-template-columns: 1fr; }
+.mk-board { grid-area: board; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.mk-bottom {
+  grid-area: bottom;
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  gap: 12px;
+  align-items: stretch;
+  min-width: 0;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.35);
 }
-.mk-main { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.mk-bottom.mine { border-color: #f2c230; box-shadow: 0 0 0 1px rgba(242, 194, 48, 0.35), 0 -6px 22px rgba(242, 194, 48, 0.12); }
+.mk-side {
+  grid-area: side;
+  position: sticky;
+  top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+  min-height: 0;
+}
+@media (max-width: 1050px) {
+  .mk-layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto;
+    grid-template-areas: "board" "bottom" "side";
+  }
+  .mk-side { position: static; max-height: none; }
+}
+@media (max-width: 760px) {
+  .mk-bottom { position: static; flex-direction: column; }
+}
 .mk-layout .muted { color: var(--fg-muted); }
 
 .mk-tag {
@@ -53,6 +94,7 @@
 .mk-card-lg { width: 108px; height: 152px; }
 .mk-card-md { width: 84px; height: 120px; }
 .mk-card-sm { width: 62px; height: 86px; border-radius: 7px; }
+.mk-card-xs { width: 40px; height: 52px; border-radius: 6px; border-width: 1.5px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35); }
 .mk-card.clickable { cursor: pointer; }
 .mk-card.clickable:hover { transform: translateY(-3px); box-shadow: 0 8px 16px rgba(0, 0, 0, 0.45); }
 
@@ -66,6 +108,7 @@
   flex-shrink: 0;
 }
 .mk-card-sm .mk-card-band { height: 17px; }
+.mk-card-xs .mk-card-band { height: 13px; }
 .mk-card-num {
   background: #fffaf0;
   color: var(--mk-band);
@@ -78,7 +121,9 @@
   text-align: center;
 }
 .mk-card-sm .mk-card-num { font-size: 11px; padding: 1px 6px; }
+.mk-card-xs .mk-card-num { font-size: 8.5px; padding: 0 4px; min-width: 0; }
 .mk-card-name {
+  flex-shrink: 0;
   font-size: 10.5px;
   font-weight: 800;
   text-align: center;
@@ -98,8 +143,10 @@
   background: #dff0fb;
 }
 .mk-card-sm .mk-card-art { margin: 2px 3px 0; }
+.mk-card-xs .mk-card-art { margin: 2px; border-radius: 3px; }
 .mk-card-art svg { display: block; width: 100%; height: 100%; }
 .mk-card-text {
+  flex-shrink: 0;
   font-size: 8.8px;
   line-height: 1.2;
   text-align: center;
@@ -109,6 +156,7 @@
 .mk-card-text b { font-size: 10px; }
 .mk-card-text svg { vertical-align: -2px; }
 .mk-card-timing { font-size: 7.5px; color: #8a7a66; text-transform: uppercase; letter-spacing: 0.3px; margin-top: 1px; }
+.mk-card-cond { font-size: 7.5px; font-weight: 800; color: #a5450c; margin-bottom: 1px; }
 .mk-card-foot {
   display: flex;
   justify-content: space-between;
@@ -146,6 +194,40 @@
   border: 1.5px solid #fffaf0;
 }
 .mk-card-sm .mk-card-count { top: auto; right: auto; bottom: 2px; left: 50%; transform: translateX(-50%); font-size: 9.5px; padding: 0 4px; }
+.mk-card-xs .mk-card-count { top: auto; left: auto; transform: none; right: -1px; bottom: -1px; font-size: 8.5px; padding: 0 3px; border-width: 1px; }
+.mk-card.closed .mk-card-art { filter: grayscale(0.85) brightness(0.8); }
+.mk-card-closed {
+  position: absolute;
+  left: 2px;
+  top: 18px;
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 1;
+  padding: 1px 3px;
+  border-radius: 4px;
+  background: #f2c230;
+  color: #3a2a14;
+  border: 1px solid #9a6b06;
+}
+.mk-card-xs .mk-card-closed { top: 12px; left: 1px; font-size: 8px; padding: 0 2px; }
+.mk-card-invested {
+  position: absolute;
+  right: 2px;
+  top: 18px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: #f2c230;
+  border: 1.5px solid #9a6b06;
+  color: #3a2a14;
+  font-size: 9.5px;
+  font-weight: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.mk-card-xs .mk-card-invested { top: 12px; right: 1px; min-width: 12px; height: 12px; font-size: 8px; }
 
 .mk-lm { background: #fff6e6; }
 .mk-lm .mk-card-text { font-size: 8.8px; }
@@ -162,6 +244,7 @@
 .mk-lm-scope.everyone { color: #1f63a8; }
 .mk-lm-scope.once { color: #8a3c00; }
 .mk-card-sm .mk-lm-scope { padding: 0 5px; font-size: 9px; }
+.mk-card-xs .mk-lm-scope { padding: 0 3px; font-size: 7.5px; }
 .mk-lm.unbuilt { filter: grayscale(0.85) brightness(0.8); opacity: 0.75; }
 .mk-lm.unbuilt.clickable { filter: none; opacity: 1; }
 .mk-ladder { display: inline-flex; gap: 3px; }
@@ -191,25 +274,27 @@
 .mk-die.ghost { opacity: 0.18; filter: none; }
 .mk-coin-icon { display: inline-block; vertical-align: -3px; }
 
-/* ---------- Turn bar + dice ---------- */
+/* ---------- Action panel + dice ---------- */
 
 .mk-turnbar {
+  flex: 0 0 240px;
   display: flex;
-  gap: 16px;
-  align-items: stretch;
-  justify-content: space-between;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 12px 14px;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding-left: 12px;
+  border-left: 1px dashed var(--border);
 }
-.mk-turnbar.mine { border-color: #f2c230; box-shadow: 0 0 0 1px rgba(242, 194, 48, 0.35), 0 0 22px rgba(242, 194, 48, 0.12); }
-.mk-turnbar-info { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+@media (max-width: 760px) {
+  .mk-turnbar { flex: none; padding: 10px 0 0; border-left: none; border-top: 1px dashed var(--border); }
+}
 .mk-phase { font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--fg-muted); font-weight: 700; }
-.mk-whose { display: flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 800; }
+.mk-whose { display: flex; align-items: center; gap: 8px; font-size: 17px; font-weight: 800; }
+.mk-turnbar.mine .mk-whose { color: #f2c230; }
 .mk-prompt { font-size: 13px; color: var(--fg); }
 .mk-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 2px; }
 .mk-actions button svg { vertical-align: -2px; }
+.mk-invest-toggle { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--fg-muted); flex-basis: 100%; }
 .mk-ev { font-weight: 500; font-size: 11px; opacity: 0.7; margin-left: 4px; }
 
 .mk-dice {
@@ -217,16 +302,16 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  min-width: 150px;
-  padding: 6px 10px;
+  gap: 4px;
+  min-width: 140px;
+  padding: 5px 10px;
   border-radius: 10px;
   background: radial-gradient(ellipse at center, #2f5a3a 0%, #1f3d27 100%);
   border: 2px solid #15281a;
   box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.5);
 }
 .mk-dice.stale { opacity: 0.55; }
-.mk-dice-row { display: flex; gap: 10px; min-height: 52px; align-items: center; }
+.mk-dice-row { display: flex; gap: 10px; min-height: 44px; align-items: center; }
 .mk-dice-label { font-size: 12px; color: #e9f3e9; }
 .mk-total {
   display: inline-block;
@@ -266,7 +351,8 @@
   border-radius: var(--radius);
   padding: 10px 12px 12px;
 }
-.mk-market-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.mk-market-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 6px; }
+.mk-market-tools { display: flex; align-items: center; gap: 10px; }
 .mk-market-head h3 { margin: 0; font-size: 14px; text-transform: uppercase; letter-spacing: 0.8px; color: #d9e6c8; }
 .mk-bank {
   display: flex;
@@ -297,7 +383,7 @@
   letter-spacing: 0.4px;
 }
 .mk-row-cards { display: flex; flex-wrap: wrap; gap: 10px; min-height: 152px; align-items: center; }
-.mk-market.open .mk-row-cards { gap: 8px; }
+.mk-market.open .mk-row-cards, .mk-market.marketplace .mk-row-cards { gap: 8px; }
 .mk-slot { position: relative; border-radius: 11px; transition: opacity 0.2s, filter 0.2s; animation: mk-deal-in 0.45s ease-out both; }
 .mk-slot.dim { opacity: 0.45; filter: saturate(0.6); }
 .mk-slot.buyable .mk-card { box-shadow: 0 0 0 2px #f2c230, 0 4px 12px rgba(242, 194, 48, 0.35); }
@@ -322,23 +408,30 @@
 
 /* ---------- Towns ---------- */
 
-.mk-towns { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 10px; }
+/* Your town sits in the bottom strip; the others are compact cards in the side column. */
 .mk-town {
+  min-width: 0;
+  transition: box-shadow 0.3s, border-color 0.3s;
+}
+.mk-town.own { flex: 1 1 auto; }
+.mk-town.compact {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-left: 4px solid var(--mk-seat);
   border-radius: var(--radius);
-  padding: 8px 10px 10px;
-  transition: box-shadow 0.3s, border-color 0.3s;
+  padding: 6px 8px 8px;
 }
-.mk-town.active {
+.mk-town.compact.active {
   border-color: var(--mk-seat);
   box-shadow: 0 0 0 1px var(--mk-seat), 0 0 18px color-mix(in srgb, var(--mk-seat) 35%, transparent);
 }
-.mk-town.won { box-shadow: 0 0 0 2px #f2c230, 0 0 26px rgba(242, 194, 48, 0.45); }
+.mk-town.compact.won { box-shadow: 0 0 0 2px #f2c230, 0 0 26px rgba(242, 194, 48, 0.45); }
 .mk-town-head { display: flex; align-items: center; gap: 7px; margin-bottom: 8px; }
+.mk-town.compact .mk-town-head { gap: 5px; margin-bottom: 5px; }
 .mk-town-name { font-weight: 800; font-size: 14px; }
+.mk-town.compact .mk-town-name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mk-town-stars { margin-left: auto; letter-spacing: 1px; color: #4a4f5b; font-size: 15px; }
+.mk-town.compact .mk-town-stars { font-size: 12px; letter-spacing: 0; color: var(--fg-muted); font-weight: 700; white-space: nowrap; }
 .mk-town-stars .on { color: #f2a51c; text-shadow: 0 0 6px rgba(242, 165, 28, 0.6); }
 .mk-coins {
   display: inline-flex;
@@ -353,14 +446,18 @@
   min-width: 58px;
   justify-content: center;
 }
-.mk-town-body { display: flex; gap: 10px; align-items: flex-start; }
+.mk-town.compact .mk-coins { font-size: 14px; min-width: 46px; padding: 1px 8px 1px 4px; }
+.mk-town-body { display: flex; flex-direction: column; gap: 8px; }
+.mk-town.compact .mk-town-body { gap: 5px; }
 .mk-town-landmarks {
   display: flex;
+  flex-wrap: wrap;
   gap: 5px;
-  padding-right: 10px;
-  border-right: 1px dashed var(--border);
-  flex-shrink: 0;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed var(--border);
 }
+.mk-town.compact .mk-town-landmarks { padding-bottom: 5px; }
+.mk-town.own .mk-town-landmarks, .mk-town.own .mk-town-cards { gap: 3px; }
 .mk-lm-slot {
   width: 62px; height: 86px;
   border: 2px dashed #4a4f5b;
@@ -371,7 +468,11 @@
   color: #4a4f5b;
   font-size: 20px;
 }
+.mk-town.compact .mk-lm-slot { width: 37px; height: 50px; font-size: 14px; border-radius: 6px; border-width: 1.5px; }
+.mk-town.compact .mk-card-xs { width: 37px; height: 50px; }
+.mk-town.compact .mk-town-landmarks, .mk-town.compact .mk-town-cards { gap: 2px; }
 .mk-town-cards { display: flex; flex-wrap: wrap; gap: 5px; min-height: 86px; align-items: flex-start; }
+.mk-town.compact .mk-town-cards { min-height: 0; }
 .mk-empty-town { font-size: 12px; align-self: center; }
 .mk-town-card { border-radius: 9px; }
 .mk-town-card.activated .mk-card { animation: mk-ring-in 0.3s ease-out 0.65s both; }
@@ -384,17 +485,16 @@
   to { box-shadow: 0 0 0 2px #f2c230, 0 0 12px rgba(242, 194, 48, 0.7); }
 }
 
-/* ---------- Sidebar ---------- */
+/* ---------- Side column: history ---------- */
 
-.mk-sidebar {
+.mk-log-panel {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   display: flex;
   flex-direction: column;
-  max-height: 82vh;
-  position: sticky;
-  top: 12px;
+  flex: 0 0 260px;
+  min-height: 0;
   overflow: hidden;
 }
 .mk-sidebar-head {
@@ -465,6 +565,8 @@
 /* ---------- Lobby ---------- */
 
 .mk-lobby-h { margin: 0 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--fg-muted); }
+.mk-lobby-h ~ .mk-lobby-h { margin-top: 12px; }
+.mk-lobby-check + .mk-lobby-check { margin-top: 4px; }
 .mk-edition-pick { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
 .mk-edition {
   display: flex;
@@ -477,7 +579,6 @@
 }
 .mk-edition strong { font-size: 14px; }
 .mk-edition-players { font-size: 11px; font-weight: 700; opacity: 0.8; }
-.mk-edition-blurb { font-size: 12px; line-height: 1.35; opacity: 0.9; }
 .mk-lobby-check { display: flex; gap: 8px; align-items: center; font-size: 13px; }
 .mk-lobby-check .muted { color: var(--fg-muted); }
 .mk-lobby-warn { margin-top: 10px; color: var(--warning); font-size: 13px; }

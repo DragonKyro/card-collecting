@@ -1,6 +1,18 @@
-// Air, Land & Sea — card front + face-down back.
+// Air, Land & Sea — card faces and backs.
+//
+// Full cards (hand, Reinforce preview) follow the printed layout: the strength
+// numeral on a theater-coloured tab, the name, the theater emblem, the
+// illustration, and a rules box led by the Instant / Ongoing marker. Small
+// cards (on the board) keep the header strip and the illustration; when a newer
+// card covers one, only its strip shows. Face-down cards are backs — the
+// owner's own face-down cards carry a strip naming the real card ("peek").
 
-import type { AlsCardTemplate, AlsTheaterId } from './types';
+import type { CSSProperties, KeyboardEvent } from 'react';
+import type { AlsCardTemplate } from './types';
+import { THEATER_DEFS } from './cards';
+import { CardArt, CardBackArt, TheaterEmblem, THEATER_TINT, TriggerGlyph } from './art';
+
+type CardSize = 'normal' | 'small' | 'mini';
 
 interface Props {
   card: AlsCardTemplate;
@@ -10,58 +22,130 @@ interface Props {
   onClick?: () => void;
   faceDown?: boolean;
   hideText?: boolean;   // when true (face-down + not our card) render a back
+  /** Strength the card counts for where it sits (board cards), if known. */
+  effective?: number;
 }
 
-const THEATER_COLOR: Record<AlsTheaterId, string> = {
-  air:   '#6fb1d4',
-  land:  '#c5a36b',
-  sea:   '#5e8db5',
-  intel: '#a37bd0',
-  diplo: '#d48262',
-  econ:  '#7bc592',
-};
+/** Rules text without its "Instant:" / "Ongoing:" lead — the marker says it. */
+function rulesText(card: AlsCardTemplate): string {
+  return card.abilityText.replace(/^(Instant|Ongoing):\s*/i, '');
+}
 
-export function AlsCardView({ card, size = 'normal', selectable, selected, onClick, faceDown, hideText }: Props) {
-  if (faceDown && hideText) return <FaceDownCard size={size} onClick={onClick} selectable={selectable} selected={selected} />;
-  const cls = [
-    'als-card',
-    size === 'small' ? 'small' : '',
-    selectable ? 'selectable' : '',
-    selected ? 'selected' : '',
-    faceDown ? 'face-down-revealed' : '',
-  ].filter(Boolean).join(' ');
-  const tint = THEATER_COLOR[card.theater];
+function clickProps(selectable: boolean | undefined, onClick: (() => void) | undefined) {
+  if (!selectable || !onClick) return { onClick };
+  return {
+    onClick,
+    role: 'button' as const,
+    tabIndex: 0,
+    onKeyDown: (e: KeyboardEvent) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); }
+    },
+  };
+}
+
+function classes(size: CardSize, extra: string, selectable?: boolean, selected?: boolean): string {
+  return ['als-card', `als-card-${size}`, extra, selectable ? 'selectable' : '', selected ? 'selected' : '']
+    .filter(Boolean).join(' ');
+}
+
+export function AlsCardView({ card, size = 'normal', selectable, selected, onClick, faceDown, hideText, effective }: Props) {
+  if (faceDown && hideText) {
+    return <FaceDownCard size={size} onClick={onClick} selectable={selectable} selected={selected} effective={effective} />;
+  }
+  if (faceDown) {
+    return <PeekCard card={card} size={size} selectable={selectable} selected={selected} onClick={onClick} effective={effective} />;
+  }
+  const tint = THEATER_TINT[card.theater];
+  const theaterName = THEATER_DEFS[card.theater].name;
+  const style = { '--als-tint': tint.main, '--als-tint-dark': tint.dark } as CSSProperties;
+  const boosted = effective !== undefined && effective !== card.strength;
+  const title = `${card.name} — ${theaterName} ${card.strength}${boosted ? ` (counts as ${effective} here)` : ''}\n${card.abilityText}`;
+
+  if (size === 'small') {
+    return (
+      <div className={classes('small', 'als-face', selectable, selected)} style={style} title={title} {...clickProps(selectable, onClick)}>
+        <div className="als-card-head">
+          <span className="als-card-str">{card.strength}</span>
+          <span className="als-card-name">{card.name}</span>
+          {boosted && <span className="als-card-eff">→{effective}</span>}
+          {/* An Instant is spent once placed; an Ongoing one keeps working, even covered. */}
+          {card.trigger === 'ongoing' && <TriggerGlyph trigger="ongoing" size={12} />}
+        </div>
+        <div className="als-card-art"><CardArt card={card} /></div>
+      </div>
+    );
+  }
+
   return (
-    <div className={cls} onClick={onClick} style={{ borderColor: tint }}>
-      <div className="als-card-header" style={{ background: tint }}>
-        <span className="als-card-strength">{faceDown ? '2' : card.strength}</span>
-        <span className="als-card-theater">{card.theater.slice(0, 4).toUpperCase()}</span>
+    <div className={classes('normal', 'als-face', selectable, selected)} style={style} title={title} {...clickProps(selectable, onClick)}>
+      <div className="als-card-head">
+        <span className="als-card-str">{card.strength}</span>
+        <span className="als-card-name">{card.name}</span>
       </div>
-      <div className="als-card-body">
-        <div className="als-card-name">{card.name}</div>
-        <div className="als-card-text">{faceDown ? 'Face-down (wild, strength 2, no ability).' : card.abilityText}</div>
+      <div className="als-card-art">
+        <CardArt card={card} />
+        <span className="als-card-emblem"><TheaterEmblem theater={card.theater} size={20} /></span>
       </div>
-      {faceDown && <div className="als-card-fd-overlay">FACE DOWN</div>}
+      <div className="als-card-rules">
+        <div className={`als-card-trigger ${card.trigger ?? 'none'}`}>
+          {card.trigger && <TriggerGlyph trigger={card.trigger} size={13} />}
+          {card.trigger === 'instant' ? 'Instant' : card.trigger === 'ongoing' ? 'Ongoing' : 'No ability'}
+          <span className="als-card-theater">{THEATER_DEFS[card.theater].shortName}</span>
+        </div>
+        <div className={`als-card-text ${card.expansion ? 'muted' : ''}`}>{card.trigger ? rulesText(card) : 'Pure strength — no tactical ability.'}</div>
+      </div>
     </div>
   );
 }
 
-export function FaceDownCard({ size = 'normal', selectable, selected, onClick }: {
-  size?: 'normal' | 'small';
+/** The owner's own face-down card: a back with a strip naming what it really is. */
+function PeekCard({ card, size, selectable, selected, onClick, effective }: {
+  card: AlsCardTemplate; size: 'normal' | 'small'; selectable?: boolean; selected?: boolean; onClick?: () => void; effective?: number;
+}) {
+  const counts = effective ?? 2;
+  const tint = THEATER_TINT[card.theater];
+  const style = { '--als-tint': tint.main, '--als-tint-dark': tint.dark } as CSSProperties;
+  return (
+    <div
+      className={classes(size, 'als-back als-peek', selectable, selected)}
+      style={style}
+      title={`Your face-down card: ${card.name} (${THEATER_DEFS[card.theater].name} ${card.strength}). Counts as ${counts}, no ability.`}
+      {...clickProps(selectable, onClick)}
+    >
+      <div className="als-card-head">
+        <span className="als-card-str">{counts}</span>
+        <span className="als-card-name">
+          <span className="als-peek-real">{card.strength}</span>
+          {card.name}
+        </span>
+      </div>
+      <div className="als-card-art als-card-backart"><CardBackArt /></div>
+    </div>
+  );
+}
+
+export function FaceDownCard({ size = 'normal', selectable, selected, onClick, effective }: {
+  size?: CardSize;
   selectable?: boolean;
   selected?: boolean;
   onClick?: () => void;
+  /** Strength it counts for on the board (public: 2, or 4 under Escalation / Cover Fire). */
+  effective?: number;
 }) {
-  const cls = [
-    'als-card',
-    'als-card-back',
-    size === 'small' ? 'small' : '',
-    selectable ? 'selectable' : '',
-    selected ? 'selected' : '',
-  ].filter(Boolean).join(' ');
+  if (size === 'mini' || size === 'normal') {
+    return (
+      <div className={classes(size, 'als-back', selectable, selected)} title="Face-down card" {...clickProps(selectable, onClick)}>
+        <CardBackArt />
+      </div>
+    );
+  }
   return (
-    <div className={cls} onClick={onClick}>
-      <div className="als-card-back-marker">★</div>
+    <div className={classes(size, 'als-back', selectable, selected)} title={`Face-down card — counts as ${effective ?? 2}`} {...clickProps(selectable, onClick)}>
+      <div className="als-card-head">
+        <span className="als-card-str">{effective ?? 2}</span>
+        <span className="als-card-name">Face-down</span>
+      </div>
+      <div className="als-card-art als-card-backart"><CardBackArt /></div>
     </div>
   );
 }

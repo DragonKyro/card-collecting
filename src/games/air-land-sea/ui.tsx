@@ -14,6 +14,7 @@ import {
   BASE_THEATER_IDS, SLS_THEATER_IDS, THEATER_DEFS, DEFAULT_TARGET_VP, ALL_THEATER_IDS, CARD_TEMPLATES,
 } from './cards';
 import { ownerHasOngoing, vpForWithdraw, adjacentTheaters } from './scoring';
+import { ControlFlag, MedalIcon, TheaterBanner, TheaterEmblem } from './art';
 import './als.css';
 
 // ============================================================================
@@ -129,6 +130,7 @@ function LobbyConfig({ config, seats, onChange }: { config: AlsConfig; seats: Se
               className={`als-theater-pill ${selected ? 'selected' : ''}`}
               onClick={() => toggleTheater(t)}
             >
+              <TheaterEmblem theater={t} size={16} />
               {def.name}
               {def.expansion ? <small> (SLS)</small> : null}
             </button>
@@ -494,23 +496,59 @@ function GameView({
 function Header({ state, me, opp, mySeatName }: { state: AlsState; me: AlsState['players'][0] | null; opp: AlsState['players'][0] | null; mySeatName: string }) {
   const firstName = state.seats.find((s) => s.id === state.players[state.firstPlayerSeatIdx].id)?.name ?? '?';
   const activeName = state.seats.find((s) => s.id === state.activePlayerId)?.name ?? '?';
+  // Spectators: seat 0 on the left, seat 1 on the right.
+  const left = me ?? state.players[0];
+  const right = opp ?? state.players[1];
+  const seatOf = (p: AlsState['players'][0]) => state.seats.find((s) => s.id === p.id);
+  const first = state.players[state.firstPlayerSeatIdx].id;
   return (
     <div className="als-header">
-      <div className="als-header-side">
-        <strong>{mySeatName}</strong>
-        <span>VP: {me?.vp ?? 0}</span>
-        {me?.airDropArmed ? <span className="als-tag">Air Drop armed</span> : null}
-      </div>
+      <CommanderPanel
+        name={me ? mySeatName : (seatOf(left)?.name ?? 'Seat 1')}
+        color={seatOf(left)?.color}
+        vp={left.vp}
+        target={state.config.targetVp}
+        active={state.activePlayerId === left.id}
+        first={first === left.id}
+        tag={left.airDropArmed ? 'Air Drop armed' : null}
+      />
       <div className="als-header-middle">
-        <div>Battle {state.battleNumber} · Target {state.config.targetVp} VP</div>
-        <div className="als-header-sub">
-          {firstName} is 1st player &nbsp;·&nbsp; {activeName}'s turn
-        </div>
+        <div className="als-header-battle">Battle {state.battleNumber}</div>
+        <div className="als-header-sub">First to {state.config.targetVp} VP &nbsp;·&nbsp; {firstName} is 1st player</div>
+        <div className="als-header-sub">{activeName}'s turn</div>
       </div>
-      <div className="als-header-side right">
-        <strong>{state.seats.find((s) => s.id === opp?.id)?.name ?? 'Opponent'}</strong>
-        <span>VP: {opp?.vp ?? 0}</span>
+      <CommanderPanel
+        name={seatOf(right)?.name ?? 'Opponent'}
+        color={seatOf(right)?.color}
+        vp={right.vp}
+        target={state.config.targetVp}
+        active={state.activePlayerId === right.id}
+        first={first === right.id}
+        tag={right.airDropArmed ? 'Air Drop armed' : null}
+        alignRight
+      />
+    </div>
+  );
+}
+
+function CommanderPanel({ name, color, vp, target, active, first, tag, alignRight }: {
+  name: string; color?: string; vp: number; target: number; active: boolean; first: boolean; tag: string | null; alignRight?: boolean;
+}) {
+  const pct = Math.max(0, Math.min(100, (vp / Math.max(1, target)) * 100));
+  return (
+    <div className={`als-header-side ${alignRight ? 'right' : ''} ${active ? 'active' : ''}`}>
+      <div className="als-commander">
+        <span className="als-seat-dot" style={{ background: color ?? '#888' }} />
+        <strong>{name}</strong>
+        {first && <span className="als-first-tag" title="1st player — wins tied theaters">1st</span>}
       </div>
+      <div className="als-vp" title={`${vp} of ${target} VP`}>
+        <MedalIcon size={18} />
+        <span className="als-vp-num">{vp}</span>
+        <span className="als-vp-unit">VP</span>
+        <span className="als-vp-bar"><span style={{ width: `${pct}%` }} /></span>
+      </div>
+      {tag ? <span className="als-tag">{tag}</span> : null}
     </div>
   );
 }
@@ -562,10 +600,10 @@ function HandArea({
   return (
     <div className="als-hand-area">
       <div className="als-opp-hand">
-        <span className="als-opp-hand-label">{opp.hand.length} card{opp.hand.length === 1 ? '' : 's'} in opponent's hand</span>
         <div className="als-opp-hand-row">
-          {opp.hand.map((_, i) => <FaceDownCard key={i} size="small" />)}
+          {opp.hand.map((_, i) => <FaceDownCard key={i} size="mini" />)}
         </div>
+        <span className="als-opp-hand-label">{opp.hand.length} card{opp.hand.length === 1 ? '' : 's'} in opponent's hand</span>
       </div>
 
       {hint && <div className="als-hint">{hint}</div>}
@@ -641,7 +679,7 @@ function ReinforcePreview({ state, dispatch, myId }: { state: AlsState; dispatch
   return (
     <div className="als-reinforce-preview">
       <span>Top of deck (reveal):</span>
-      <AlsCardView card={card} size="small" />
+      <AlsCardView card={card} />
       <span className="als-cheat-note">If placed, it goes face-down (strength 2, no ability).</span>
     </div>
   );
@@ -650,39 +688,49 @@ function ReinforcePreview({ state, dispatch, myId }: { state: AlsState; dispatch
 function BattleEndPanel({ state, localSeatIdx, dispatch }: { state: AlsState; localSeatIdx: 0 | 1 | -1; dispatch: (a: AlsAction) => void }) {
   const result = state.lastBattleResult;
   if (!result) return null;
-  const winnerName = result.winnerSeatIdx !== null
-    ? (state.seats.find((s) => s.id === state.players[result.winnerSeatIdx!].id)?.name ?? '?')
-    : 'Nobody';
+  const seatName = (i: 0 | 1) => state.seats.find((s) => s.id === state.players[i].id)?.name ?? `Seat ${i + 1}`;
+  const seatColor = (i: 0 | 1) => state.seats.find((s) => s.id === state.players[i].id)?.color ?? '#888';
+  const winnerName = result.winnerSeatIdx !== null ? seatName(result.winnerSeatIdx) : 'Nobody';
   const isMyTurn = localSeatIdx !== -1 && state.activePlayerId === state.players[localSeatIdx].id;
+  const how = result.endedBy === 'withdraw'
+    ? `${result.withdrawerSeatIdx !== null ? seatName(result.withdrawerSeatIdx) : 'A commander'} withdrew`
+    : 'Fought to the last card';
   return (
     <div className="als-battle-end">
-      <h2>Battle {result.battleNumber} complete</h2>
-      <p>
-        Ended by <strong>{result.endedBy === 'withdraw' ? 'withdraw' : 'full play'}</strong>.
-        Winner: <strong>{winnerName}</strong> (+{result.vpAwardedToWinner} VP).
-      </p>
-      <table>
+      <div className="als-panel-eyebrow">Battle {result.battleNumber} complete</div>
+      <h2><MedalIcon size={30} /> {winnerName} wins the battle</h2>
+      <p className="als-panel-sub">{how} · +{result.vpAwardedToWinner} VP to {winnerName}</p>
+      <table className="als-result-table">
         <thead>
-          <tr><th>Theater</th><th>Side 1 str</th><th>Side 2 str</th><th>Control</th></tr>
+          <tr>
+            <th>Theater</th>
+            <th className="num"><span className="als-seat-dot" style={{ background: seatColor(0) }} /> {seatName(0)}</th>
+            <th className="num"><span className="als-seat-dot" style={{ background: seatColor(1) }} /> {seatName(1)}</th>
+            <th>Held by</th>
+          </tr>
         </thead>
         <tbody>
           {state.config.theaters.map((tid, t) => {
-            const ctrlName = state.seats.find((s) => s.id === state.players[result.theaterControl[t]].id)?.name ?? '—';
+            const holder = result.theaterControl[t];
             return (
               <tr key={t}>
-                <td>{tid}</td>
-                <td>{result.theaterStrengths[t][0]}</td>
-                <td>{result.theaterStrengths[t][1]}</td>
-                <td>{ctrlName}</td>
+                <td><span className="als-result-theater"><TheaterEmblem theater={tid} size={20} /> {THEATER_DEFS[tid].name}</span></td>
+                <td className={`num ${holder === 0 ? 'won' : ''}`}>{result.theaterStrengths[t][0]}</td>
+                <td className={`num ${holder === 1 ? 'won' : ''}`}>{result.theaterStrengths[t][1]}</td>
+                <td><span className="als-result-holder"><ControlFlag size={14} /> {seatName(holder)}</span></td>
               </tr>
             );
           })}
         </tbody>
       </table>
-      <p>
-        Match VP: {state.seats[0]?.name ?? '?'} {state.players[0].vp} · {state.seats[1]?.name ?? '?'} {state.players[1].vp}
-        &nbsp;(first to {state.config.targetVp})
-      </p>
+      <div className="als-result-score">
+        {([0, 1] as const).map((i) => (
+          <span key={i} className="als-result-vp">
+            <span className="als-seat-dot" style={{ background: seatColor(i) }} /> {seatName(i)} <MedalIcon size={16} /> <strong>{state.players[i].vp}</strong>
+          </span>
+        ))}
+        <span className="als-panel-sub">first to {state.config.targetVp}</span>
+      </div>
       {isMyTurn && (
         <button className="primary" onClick={() => dispatch({ type: 'continueBattle' })}>
           Next battle →
@@ -694,11 +742,17 @@ function BattleEndPanel({ state, localSeatIdx, dispatch }: { state: AlsState; lo
 
 function GameOver({ state }: { state: AlsState }) {
   const winnerSeatIdx: 0 | 1 = state.players[0].vp >= state.players[1].vp ? 0 : 1;
-  const winnerName = state.seats.find((s) => s.id === state.players[winnerSeatIdx].id)?.name ?? '?';
+  const seatName = (i: 0 | 1) => state.seats.find((s) => s.id === state.players[i].id)?.name ?? '?';
   return (
     <div className="als-gameover">
-      <h1>{winnerName} wins the war!</h1>
-      <p>Final VP — {state.seats[0]?.name ?? '?'} {state.players[0].vp} · {state.seats[1]?.name ?? '?'} {state.players[1].vp}</p>
+      <div className="als-gameover-banners">
+        {state.config.theaters.map((tid) => <div key={tid}><TheaterBanner theater={tid} /></div>)}
+      </div>
+      <MedalIcon size={72} />
+      <h1>{seatName(winnerSeatIdx)} wins the war!</h1>
+      <p className="als-panel-sub">
+        Final VP — {seatName(0)} <strong>{state.players[0].vp}</strong> · {seatName(1)} <strong>{state.players[1].vp}</strong>
+      </p>
     </div>
   );
 }

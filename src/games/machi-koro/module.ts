@@ -1,12 +1,12 @@
-// Machi Koro module — Machi Koro 2 by default, the original base game as an
-// edition option.
+// Machi Koro module — Machi Koro 2 by default, the original base game (with its
+// Harbor and Millionaire's Row expansions) as an edition option.
 
 import type { GameModule } from '@/core/module';
 import type { Seat, PlayerId } from '@/core/types';
 import type { MkAction, MkConfig, MkState } from './types';
 import { applyAction, createMatch } from './reducer';
 import { chooseAIAction } from './ai';
-import { EDITIONS } from './cards';
+import { ALL_EXPANSIONS, EDITIONS, rulesFor } from './cards';
 import { MachiKoroThumbnail } from './Thumbnail';
 
 export const machiKoroModule: GameModule<MkState, MkAction, MkConfig> = {
@@ -18,13 +18,14 @@ export const machiKoroModule: GameModule<MkState, MkAction, MkConfig> = {
   hiddenInfo: false,
 
   defaultConfig(_seats: Seat[]): MkConfig {
-    return { edition: 'mk2', promoLandmarks: false };
+    return { edition: 'mk2', promoLandmarks: false, expansions: [] };
   },
 
   validateConfig(config, seats) {
     const errors: string[] = [];
-    const R = EDITIONS[config.edition];
-    if (!R) return ['Unknown edition.'];
+    if (!EDITIONS[config.edition]) return ['Unknown edition.'];
+    if (config.expansions?.some((x) => !ALL_EXPANSIONS.includes(x))) return ['Unknown expansion.'];
+    const R = rulesFor(config);
     if (seats && (seats.length < R.minPlayers || seats.length > R.maxPlayers)) {
       errors.push(`${R.name} plays ${R.minPlayers}–${R.maxPlayers} players.`);
     }

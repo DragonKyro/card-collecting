@@ -2,7 +2,7 @@
 
 import { rngInt } from '@/core/rng';
 import type { Seat } from '@/core/types';
-import type { MkAction, MkEdition, MkMove, MkPlayer, MkState } from './types';
+import type { MkAction, MkEdition, MkExpansion, MkMove, MkPlayer, MkRowId, MkState, MkSupply } from './types';
 import { applyAction, createMatch, freshTurn } from './reducer';
 
 export function seats(n: number, ai = false): Seat[] {
@@ -12,8 +12,14 @@ export function seats(n: number, ai = false): Seat[] {
 }
 
 /** A fresh match with `first` as the first player, past any opening rounds. */
-export function newMatch(edition: MkEdition, n: number, opts: { seed?: number; first?: number; promo?: boolean; keepSetup?: boolean } = {}): MkState {
-  const state = createMatch({ edition, promoLandmarks: opts.promo ?? false }, opts.seed ?? 1, seats(n));
+export function newMatch(edition: MkEdition, n: number, opts: {
+  seed?: number; first?: number; promo?: boolean; keepSetup?: boolean; expansions?: MkExpansion[]; supply?: MkSupply;
+} = {}): MkState {
+  const state = createMatch(
+    { edition, promoLandmarks: opts.promo ?? false, expansions: opts.expansions, supply: opts.supply },
+    opts.seed ?? 1,
+    seats(n),
+  );
   if (opts.first !== undefined) {
     state.firstIdx = opts.first;
     state.currentIdx = opts.first;
@@ -66,7 +72,7 @@ export function act(state: MkState, action: MkMove): MkState {
 }
 
 /** Put a card into the market (front of the right row) so it can be bought. */
-export function stock(state: MkState, row: 'low' | 'high' | 'landmark', cardId: string, count = 1): void {
+export function stock(state: MkState, row: MkRowId, cardId: string, count = 1): void {
   const slots = state.market[row].slots;
   const at = slots.findIndex((s) => s.cardId === cardId);
   if (at >= 0) slots[at].count = Math.max(slots[at].count, count);
