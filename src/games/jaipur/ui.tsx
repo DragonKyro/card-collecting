@@ -18,7 +18,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { GameUiBundle } from '@/core/module';
 import type { PlayerId, Seat } from '@/core/types';
 import type {
-  JaipurAction, JaipurBonusSize, JaipurCard, JaipurConfig, JaipurGood, JaipurLogEntry, JaipurPlayer, JaipurState,
+  JaipurAction, JaipurBonusSize, JaipurCard, JaipurCardType, JaipurConfig, JaipurGood, JaipurLogEntry, JaipurPlayer,
+  JaipurState,
 } from './types';
 import {
   BONUS_SIZES, CARD_INFO, GOODS, HAND_LIMIT, EMPTY_PILES_TO_END, bonusSizeFor, cardLabel, minSale,
@@ -678,14 +679,85 @@ function GameLog({ state, viewerId, revealAll }: { state: JaipurState; viewerId:
     <div className="jp-log">
       <h4>Log</h4>
       <ol>
-        {entries.map((e) => (
-          <li key={e.seq} className={`jp-log-${e.kind}`}>
-            <span className="muted">R{e.round}</span> {describe(state, e, viewerId, revealAll)}
-          </li>
-        ))}
+        {entries.map((e) => <LogLine key={e.seq} state={state} e={e} viewerId={viewerId} revealAll={revealAll} />)}
         {entries.length === 0 && <li className="muted">No moves yet.</li>}
       </ol>
     </div>
+  );
+}
+
+/** One card type in a log line: its icon, and ×n when there are several. */
+function LogCards({ type, n }: { type: JaipurCardType; n: number }) {
+  return (
+    <span className="jp-log-cards">
+      <TypeIcon type={type} size={16} />
+      {n > 1 && <span className="jp-log-n">×{n}</span>}
+    </span>
+  );
+}
+
+/** Several cards, grouped by type in the order they first appear. */
+function LogCardList({ types }: { types: readonly JaipurCardType[] }) {
+  const counts = new Map<JaipurCardType, number>();
+  for (const t of types) counts.set(t, (counts.get(t) ?? 0) + 1);
+  return <>{[...counts].map(([t, n]) => <LogCards key={t} type={t} n={n} />)}</>;
+}
+
+/** What the deck turned up to refill the market: small and faded, after ⟳. */
+function LogRefill({ types }: { types: readonly JaipurCardType[] }) {
+  if (!types.length) return null;
+  return (
+    <span className="jp-log-refill">
+      ⟳<LogCardList types={types} />
+    </span>
+  );
+}
+
+/** A log entry as symbols — `+` took, `⇄` traded (gave ⇄ took), `₹` sold
+ *  (→ the tokens' total, then any bonus token) — with the sentence from
+ *  `describe` as its tooltip and for screen readers. */
+function LogLine({ state, e, viewerId, revealAll }: {
+  state: JaipurState; e: JaipurLogEntry; viewerId: PlayerId | null; revealAll: boolean;
+}) {
+  const text = describe(state, e, viewerId, revealAll);
+  if (!('playerId' in e)) {
+    return <li className={`jp-log-${e.kind}`}><span className="muted">R{e.round}</span> {text}</li>;
+  }
+  let body: ReactNode;
+  switch (e.kind) {
+    case 'takeOne':
+      body = <><span className="jp-log-verb">+</span><LogCards type={e.good} n={1} /><LogRefill types={e.refill ? [e.refill] : []} /></>;
+      break;
+    case 'takeCamels':
+      body = <><span className="jp-log-verb">+</span><LogCards type="camel" n={e.count} /><LogRefill types={e.refills} /></>;
+      break;
+    case 'exchange':
+      body = <><LogCardList types={e.gave} /><span className="jp-log-verb">⇄</span><LogCardList types={e.took} /></>;
+      break;
+    case 'sell': {
+      const mine = revealAll || e.playerId === viewerId;
+      body = (
+        <>
+          <span className="jp-log-verb">₹</span>
+          <LogCards type={e.good} n={e.count} />
+          <span className="jp-log-rupees">→ {e.tokens.reduce((a, b) => a + b, 0)}</span>
+          {e.bonus && (
+            <TokenSvg className="jp-log-bonus">
+              <BonusTokenArt size={e.bonus.size} value={mine ? e.bonus.value : undefined} />
+            </TokenSvg>
+          )}
+        </>
+      );
+      break;
+    }
+  }
+  return (
+    <li className={`jp-log-${e.kind}`} title={text}>
+      <span className="muted">R{e.round}</span>
+      <span className="jp-log-who" aria-hidden="true" style={{ color: seatOf(state, e.playerId)?.color }}>{nameOf(state, e.playerId)}</span>
+      <span className="jp-sr-only">{text}</span>
+      <span className="jp-log-move" aria-hidden="true">{body}</span>
+    </li>
   );
 }
 
