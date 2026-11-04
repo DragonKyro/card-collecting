@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { SspAction, SspState } from '../types';
 import { applyAction } from '../reducer';
+import { isValidDuoPair } from '../scoring';
 import { observe } from './observation';
 import {
   ACTION_SPACE_VERSION, NUM_SLOTS, SLOT_NAMES, decodeSlot, legalMask, slotForAction,
@@ -18,7 +19,8 @@ function accepted(state: SspState, action: SspAction): boolean {
 
 /** Every raw action worth asking the reducer about. Trios are only tried
  *  with a starfish in them — the reducer rejects any trio without one, and
- *  the full cube of hand triples is slow for no extra coverage. */
+ *  the full cube of hand triples is slow for no extra coverage. Water Rodeo
+ *  duos (two swimmers / two sharks) have no slot: fixedChoices plays them. */
 function candidateActions(state: SspState): SspAction[] {
   const out: SspAction[] = [
     { type: 'drawPair' },
@@ -37,6 +39,7 @@ function candidateActions(state: SspState): SspAction[] {
   const hand = me?.hand ?? [];
   for (let i = 0; i < hand.length; i++) {
     for (let j = i + 1; j < hand.length; j++) {
+      if (!isValidDuoPair(hand[i], hand[j]) && hand[i].family === hand[j].family) continue;
       out.push({ type: 'playPair', cardIds: [hand[i].id, hand[j].id] });
       for (const star of hand) {
         if (star.family !== 'starfish' || star.id === hand[i].id || star.id === hand[j].id) continue;

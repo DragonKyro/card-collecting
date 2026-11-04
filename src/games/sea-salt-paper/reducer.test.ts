@@ -543,7 +543,7 @@ describe('Extra Pepper: event deck', () => {
     expect(() => applyAction(s, { type: 'stop' })).toThrow();
   });
 
-  it('Tornado zeroes mermaid color bonus at round end', () => {
+  it('Tornado zeroes the mermaid points at round end (not the colour bonus)', () => {
     let s = freshStateWithPepper();
     if (s.event) s.event.current = 'tornado';
     const a = s.players.find((q) => q.id === 'a')!;
@@ -554,7 +554,8 @@ describe('Extra Pepper: event deck', () => {
     s = applyAction(s, { type: 'drawFromDiscard', pile: 0 });
     s = applyAction(s, { type: 'stop' });
     const aRow = s.lastRoundSummary!.perPlayer.find((r) => r.playerId === 'a')!;
-    expect(aRow.colorBonus).toBe(0);
+    expect(aRow.breakdown?.mermaidClaim).toBe(0);
+    expect(aRow.colorBonus).toBeGreaterThan(0);
   });
 
   it('Dance of the Shells scores 2 pts per shell (overriding the set)', () => {

@@ -49,8 +49,13 @@ export interface SspPlayer {
   /** Each trio is exactly three card ids: 2 duo cards + 1 starfish (Extra Salt).
    *  Scored as 3 pts for the whole trio; the duo's ability does NOT fire. */
   trios?: Array<[number, number, number]>;
-  /** Pepper event cards currently held by this player (Extra Pepper). */
+  /** Pepper event cards currently held by this player (Extra Pepper) — at
+   *  most one. */
   heldEvents?: SspEventId[];
+  /** The Coral Reef (Pepper): a shell placed face down in front of the
+   *  player. Worth no points; while it's there the player is immune to
+   *  attacks. Cleared with the table at round start. */
+  coralShell?: SspCard | null;
   roundScore: number;
   matchScore: number;
 }
@@ -78,10 +83,15 @@ export type SspSubPhase =
   | 'awaitingAction'      // active player must acquire a card
   | 'awaitingKeep'        // they drew 2, pick which to keep
   | 'awaitingPlayOrEnd'   // optional pair plays, then end turn
-  | 'awaitingCrabPick'    // crab ability: pick any card from a discard pile
+  | 'awaitingCrabPick'    // crab ability: pick any card from a discard pile (Hermit Crab: from each)
   | 'awaitingSharkSteal'  // shark+swimmer ability: choose target to steal from
   | 'awaitingLobsterPick' // lobster+crab ability (Salt): keep 1 of top-5 reveal
+  | 'awaitingRodeoTarget' // swimmer pair (Water Rodeo): choose whose hand to look at
+  | 'awaitingRodeoSwap'   // …then swap one card with them, or not
+  | 'awaitingPairSteal'   // shark pair (Water Rodeo): take a pair from an opponent's table
+  | 'awaitingAngelfishPick' // end of turn (Angelfish): take one of the two same-colour tops
   | 'roundEnd'            // round over, scores displayed; awaiting nextRound
+  | 'awaitingEventChoice' // round over; the event winner already holds one — keep which?
   | 'gameOver';
 
 export interface SspPlayerRoundScore {
@@ -122,36 +132,34 @@ export interface SspRoundSummary {
 
 /** Stable identifiers for the 12 Extra Pepper event cards from the official
  *  rulebook. Each event applies to ALL players for the round it's revealed,
- *  then at round end is awarded to either the leader (+) or the laggard (-)
- *  who keeps it (and its rule applies only to them) until they no longer
- *  qualify, at which point it's discarded. */
+ *  then at round end is awarded to the sole leader (+) or the sole laggard
+ *  (-) — discarded on a tie — who keeps it (its rule now applies only to
+ *  them) until they no longer hold that place. See events.ts. */
 export type SspEventId =
   // CHANGE EFFECTS OF DUO
   | 'hermitCrab'        // -, crab pair takes one card from EACH discard pile
   | 'sunfish'           // -, fish pair adds the first 2 cards from the deck
-  | 'waterRodeo'        // -, swimmer pair = swap a card with opponent; shark pair = steal a pair from opponent tableau
+  | 'waterRodeo'        // -, swimmer pair = look at a hand, swap a card; shark pair = steal a pair from a table
   // CHANGE THE POINT VALUE
   | 'danceOfShells'     // -, each shell scores 2 pts (instead of the collector set)
-  | 'kraken'            // -, each octopus scores 1 pt (instead of the collector set)
+  | 'kraken'            // +, each octopus scores 1 pt (instead of the collector set)
   | 'tornado'           // +, mermaids score 0; instant win at 4 mermaids still applies
   // CHANGE A RULE
-  | 'danceOfMermaids'   // -, 3 mermaids = instant win (was: threeMermaids)
+  | 'danceOfMermaids'   // -, 3 mermaids = instant win
   | 'treasureChest'     // +, must reach 10 pts to call STOP / LAST CHANCE (instead of 7)
   | 'diodonFish'        // +, may not call STOP — must call LAST CHANCE to end the round
   // ADD A NEW RULE
-  | 'angelfish'         // -, end of turn: if both discard tops share a color, current player takes one
+  | 'angelfish'         // -, end of turn: if both discard tops share a color, take one of them
   | 'dolphins'          // -, when player discards a collector card, draw the top of the deck for free
-  | 'coralReef';        // -, may stash a shell face-down — immune to attacks but worth 0 pts (NOT modeled in v1)
+  | 'coralReef';        // -, may place a shell face down — immune to attacks, the shell scores 0
 
 /** Display-friendly metadata; see events.ts for the canonical table. */
 export interface SspEventCard {
   id: SspEventId;
   name: string;
-  /** Every event is awarded to a player at round end:
-   *   '+' goes to the round leader,
-   *   '-' goes to the laggard.
-   *  No "global, discarded after the round" sign exists in the rulebook —
-   *  every event has a persistent holder. */
+  /** Who the card goes to at round end — chosen to even the match out:
+   *   '+' (a handicap) goes to the player with the most points,
+   *   '-' (a boost) to the player with the fewest. */
   sign: '+' | '-';
   rule: string;
 }
@@ -172,8 +180,11 @@ export interface SspEventDeckState {
  *  reader concern — see knowledge.ts for what each seat may learn from an entry.
  *  `fromTop` on crabPick: the card was the pile's visible top, so everyone saw
  *  it go; a card dug from lower in the pile is seen only by the picker.
- *  `auto` on crabPick: taken by the Hermit Crab event without looking through
- *  the pile. */
+ *  `auto` on crabPick: taken without looking through the pile (legacy Hermit
+ *  Crab logs; Hermit Crab picks now look through each pile like any crab).
+ *  Water Rodeo: `hand` on rodeoLook is seen by the looker only; `given` /
+ *  `taken` on rodeoSwap by the two players involved — everyone else only
+ *  sees whether cards changed hands. `card` on coralShell is face down. */
 export type SspLogEntry =
   | { seq: number; round: number; kind: 'drawDeck';        playerId: PlayerId; keptFamily: SspCardFamily; discardedFamily: SspCardFamily; toPile: 0 | 1 }
   | { seq: number; round: number; kind: 'drawDiscard';     playerId: PlayerId; pile: 0 | 1; family: SspCardFamily; card?: SspCard }
@@ -185,9 +196,18 @@ export type SspLogEntry =
   | { seq: number; round: number; kind: 'lobsterPick';     playerId: PlayerId; family: SspCardFamily }
   | { seq: number; round: number; kind: 'jellyfishLock';   playerId: PlayerId; targetPlayerId: PlayerId }
   | { seq: number; round: number; kind: 'jellyfishDraw';   playerId: PlayerId; family: SspCardFamily }
-  | { seq: number; round: number; kind: 'angelfishDraw';   playerId: PlayerId; family: SspCardFamily; card?: SspCard }
+  | { seq: number; round: number; kind: 'angelfishDraw';   playerId: PlayerId; family: SspCardFamily; card?: SspCard; pile?: 0 | 1 }
+  | { seq: number; round: number; kind: 'rodeoLook';       playerId: PlayerId; targetPlayerId: PlayerId; hand?: SspCard[] }
+  | { seq: number; round: number; kind: 'rodeoSwap';       playerId: PlayerId; targetPlayerId: PlayerId; swapped: boolean; given?: SspCard; taken?: SspCard }
+  | { seq: number; round: number; kind: 'pairSteal';       playerId: PlayerId; targetPlayerId: PlayerId; cards: [SspCard, SspCard] }
+  | { seq: number; round: number; kind: 'coralShell';      playerId: PlayerId; card?: SspCard }
   | { seq: number; round: number; kind: 'eventReveal';     eventId: SspEventId }
+  /** playerId null only in legacy logs (the card was discarded). */
   | { seq: number; round: number; kind: 'eventAwarded';    eventId: SspEventId; playerId: PlayerId | null }
+  /** 'tie' — nobody was alone in first / last place to take it; 'lostPlace' —
+   *  its holder is no longer in that place; 'choice' — its holder kept the
+   *  other card. */
+  | { seq: number; round: number; kind: 'eventDiscarded';  eventId: SspEventId; playerId: PlayerId | null; reason: 'tie' | 'lostPlace' | 'choice' }
   | { seq: number; round: number; kind: 'stop';            playerId: PlayerId; score: number }
   | { seq: number; round: number; kind: 'lastChance';      playerId: PlayerId; score: number }
   | { seq: number; round: number; kind: 'pass';            playerId: PlayerId }
@@ -227,7 +247,7 @@ export interface SspState {
    *  stats screen (cumulative score graph, STOP/LAST CHANCE history, etc.).
    *  Appended every time a round ends. */
   roundHistory: SspRoundSummary[];
-  /** Set when someone collected 4 mermaids (or 3 with Three Mermaids event) — game ends instantly. */
+  /** Set when someone collected 4 mermaids (3 under Dance of the Mermaids) — game ends instantly. */
   mermaidWinnerId: PlayerId | null;
   /** Buffer of 5 cards while the lobster+crab ability is being resolved (Salt). */
   pendingLobsterPick?: SspCard[];
@@ -238,6 +258,22 @@ export interface SspState {
   lockedPlayerIds?: PlayerId[];
   /** Extra Pepper event-deck state, null when expansion disabled. */
   event?: SspEventDeckState | null;
+  /** The Hermit Crab (Pepper): piles the active player still takes a card
+   *  from during this crab pick. Null for an ordinary crab (one pile, any). */
+  crabPilesLeft?: Array<0 | 1> | null;
+  /** The Angelfish (Pepper): set while the active player picks a top; `via`
+   *  is how their turn ended, so play resumes the same way afterwards. */
+  pendingAngelfish?: { via: 'pass' | 'lastChance' } | null;
+  /** Water Rodeo (Pepper): whose hand the active player is looking at. */
+  pendingRodeo?: { targetId: PlayerId } | null;
+  /** Round end (Pepper): `playerId` won `newEventId` while holding
+   *  `oldEventId` and must keep one. `resumeActiveId` is restored after. */
+  pendingEventChoice?: {
+    playerId: PlayerId;
+    newEventId: SspEventId;
+    oldEventId: SspEventId;
+    resumeActiveId: PlayerId | null;
+  } | null;
   /** When 2+ players reach the target score in the same round AND tie on
    *  every tiebreaker (score, then mermaid count), the rulebook calls for
    *  another round. Set on the round-end transition; cleared when the tie
@@ -263,6 +299,19 @@ export type SspAction =
   | { type: 'sharkSteal'; targetPlayerId: PlayerId }
   /** Extra Salt: pick one card from the 5-card lobster reveal. */
   | { type: 'lobsterPick'; cardId: number }
+  // Extra Pepper
+  /** Water Rodeo swimmer pair: look at this opponent's hand. */
+  | { type: 'rodeoLook'; targetPlayerId: PlayerId }
+  /** …then swap [one of yours, one of theirs], or null to swap nothing. */
+  | { type: 'rodeoSwap'; swap: [number, number] | null }
+  /** Water Rodeo shark pair: move one of the opponent's played pairs to your table. */
+  | { type: 'stealPair'; targetPlayerId: PlayerId; cardIds: [number, number] }
+  /** The Coral Reef: place a shell from your hand face down. */
+  | { type: 'placeCoralShell'; cardId: number }
+  /** The Angelfish: take the top card of this pile. */
+  | { type: 'angelfishPick'; pile: 0 | 1 }
+  /** Round end: keep this event card (the new one or the one already held). */
+  | { type: 'chooseEvent'; keep: SspEventId }
   // end-of-turn
   | { type: 'stop' }
   | { type: 'lastChance' }

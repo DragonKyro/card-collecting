@@ -15,7 +15,14 @@
 //          - fish: top card of deck → hand.
 //          - crab: subPhase → awaitingCrabPick, then crabPick chooses a discard card.
 //          - shark+swimmer: subPhase → awaitingSharkSteal, then sharkSteal picks a target.
-//      Then either stop/lastChance/pass to end the turn.
+//          - Water Rodeo (Pepper): two swimmers → awaitingRodeoTarget → rodeoLook →
+//            awaitingRodeoSwap → rodeoSwap; two sharks → awaitingPairSteal → stealPair.
+//      Then either stop/lastChance/pass to end the turn. A pass or LAST CHANCE
+//      under the Angelfish (Pepper) may stop at awaitingAngelfishPick first.
+//
+// Extra Pepper events are applied through `eventAppliesTo`; at round end
+// `settleEvents` hands this round's card on (see events.ts for the rules),
+// pausing at awaitingEventChoice when its winner already holds one.
 //
 // Round-end paths:
 //   - stop                → score immediately, set roundEnd, populate summary.
@@ -30,12 +37,12 @@
 import type { PlayerId } from '@/core/types';
 import { rngInt, shuffle } from '@/core/rng';
 import type {
-  SspState, SspAction, SspCard, SspPlayer, SspEventId,
+  SspState, SspAction, SspCard, SspPlayer,
   SspRoundSummary, SspPlayerRoundScore, SspLogEntry,
 } from './types';
 import { buildShuffledDeck, isMultiplierFamily, isCollectorFamily } from './cards';
 import {
-  allCards, categoryBreakdown, isValidDuoPair, isValidStarfishTrio, tentativeScore, totalScore,
+  allCards, categoryBreakdown, isValidDuoPair, isValidStarfishTrio, tablePairs, tentativeScore, totalScore,
 } from './scoring';
 import {
   EVENT_BY_ID, currentEvent, eventAppliesTo,
@@ -68,7 +75,44 @@ export function scoringOptsFor(state: SspState, p: SspPlayer) {
     shellPerCard: eventAppliesTo(state, p, 'danceOfShells'),     // each shell = 2 pts, no set
     octopusPerCard: eventAppliesTo(state, p, 'kraken'),          // each octopus = 1 pt, no set
     mermaidsScoreZero: eventAppliesTo(state, p, 'tornado'),      // mermaids contribute 0 pts
+    waterRodeo: eventAppliesTo(state, p, 'waterRodeo'),          // two swimmers / two sharks are duos
   };
+}
+
+/** Can `attackerId` target `target` with a steal, swap or lock? Not
+ *  themselves, not the LAST CHANCE caller (their hand is the bet), and not a
+ *  player with a Coral Reef shell face down (immune to all attacks). */
+export function canAttack(state: SspState, attackerId: PlayerId, target: SspPlayer): boolean {
+  return target.id !== attackerId && state.lastChanceFrom !== target.id && !target.coralShell;
+}
+
+/** Opponents the Water Rodeo swimmer pair can look at. */
+export function rodeoTargets(state: SspState, attackerId: PlayerId): SspPlayer[] {
+  return state.players.filter((q) => canAttack(state, attackerId, q) && q.hand.length > 0);
+}
+
+/** Opponents' pairs the Water Rodeo shark pair can steal. */
+export function stealablePairs(state: SspState, attackerId: PlayerId): Array<{ target: SspPlayer; cards: [SspCard, SspCard] }> {
+  return state.players
+    .filter((q) => canAttack(state, attackerId, q))
+    .flatMap((q) => tablePairs(q.table, q.trios).map((cards) => ({ target: q, cards })));
+}
+
+/** Can `p` place a shell face down now (The Coral Reef)? One per round. */
+export function canPlaceCoralShell(state: SspState, p: SspPlayer): boolean {
+  return state.subPhase === 'awaitingPlayOrEnd'
+    && state.activePlayerId === p.id
+    && !p.coralShell
+    && eventAppliesTo(state, p, 'coralReef')
+    && p.hand.some((c) => c.family === 'shell');
+}
+
+/** The Angelfish: true when `p` ends a turn with two same-colour pile tops. */
+function angelfishOffered(state: SspState, p: SspPlayer): boolean {
+  if (!eventAppliesTo(state, p, 'angelfish')) return false;
+  const top0 = state.discards[0][state.discards[0].length - 1];
+  const top1 = state.discards[1][state.discards[1].length - 1];
+  return !!top0 && !!top1 && top0.color === top1.color;
 }
 
 /** Deep-clone the state for an action. We detach `state.log` first because
@@ -120,7 +164,7 @@ function pushLog(state: SspState, partial: LogPartial): void {
 }
 
 /** Count mermaids on a player's table; if their threshold is met → instant win.
- *  Default threshold is 4 — reduced to 3 if the player holds Three Mermaids (Pepper). */
+ *  Default threshold is 4 — 3 while Dance of the Mermaids applies to the player (Pepper). */
 function checkMermaidWin(state: SspState): PlayerId | null {
   for (const p of state.players) {
     const mermaids = p.table.filter((c) => c.family === 'mermaid').length
@@ -128,6 +172,21 @@ function checkMermaidWin(state: SspState): PlayerId | null {
     if (mermaids >= mermaidWinCountFor(state, p)) return p.id;
   }
   return null;
+}
+
+/** Run after anything that puts a card in a hand: a completed mermaid set
+ *  ends the match on the spot. Returns true when it did. */
+function endIfMermaidWin(state: SspState): boolean {
+  const mm = checkMermaidWin(state);
+  if (!mm) return false;
+  state.mermaidWinnerId = mm;
+  pushLog(state, { kind: 'mermaidWin', playerId: mm });
+  pushLog(state, { kind: 'matchEnd', winnerId: mm });
+  state.phase = 'gameOver';
+  state.subPhase = 'gameOver';
+  state.finalScores = {};
+  for (const player of state.players) state.finalScores[player.id] = player.matchScore;
+  return true;
 }
 
 function scoreRound(state: SspState, summaryKind: SspRoundSummary['endedBy'], endedBy: PlayerId | null): SspRoundSummary {
@@ -251,35 +310,61 @@ function endRound(state: SspState, endedBy: SspRoundSummary['endedBy'], endedByP
     endedByPlayerId,
     lastChanceWon: summary.lastChanceWon,
   });
-  // Pepper: award/discard the round's event based on its sign.
-  awardEventCard(state);
+  settleEvents(state);
 }
 
-/** At round end (after scoring), award the current event card:
- *   - '+'      → goes to the leader (highest matchScore; ties → seat order)
- *   - '-'      → goes to the laggard (lowest matchScore; ties → seat order)
- *  A player can only hold one event at a time — older one is dropped if so. */
-function awardEventCard(state: SspState): void {
+/** The player alone in first ('+') or last ('-') place by match score; null
+ *  when that place is shared. */
+function soleHolderOf(state: SspState, sign: '+' | '-'): SspPlayer | null {
+  const scores = state.players.map((p) => p.matchScore);
+  const target = sign === '+' ? Math.max(...scores) : Math.min(...scores);
+  const at = state.players.filter((p) => p.matchScore === target);
+  return at.length === 1 ? at[0] : null;
+}
+
+/** True when the round just scored ends the match (no tie-breaker round). */
+function matchDecided(state: SspState): boolean {
+  return state.players.some((p) => p.matchScore >= state.config.targetScore)
+    && decideWinner(state).winnerId !== null;
+}
+
+/** Extra Pepper, after the round's points are in (rules in events.ts):
+ *   1. a held card whose holder no longer has its place is discarded;
+ *   2. this round's card goes to the sole leader ('+') or laggard ('-'), or is
+ *      discarded on a tie. A winner already holding a card chooses which to
+ *      keep (awaitingEventChoice, played as `chooseEvent`).
+ *  Skipped once the match is decided — no later round would use the cards. */
+function settleEvents(state: SspState): void {
+  if (!state.event) return;
   const event = currentEvent(state);
-  if (!state.event || !event) return;
-  // Find leader / laggard. With ties, take the first in seat order.
-  const sortedDesc = [...state.players].sort((a, b) => b.matchScore - a.matchScore);
-  const sortedAsc = [...state.players].sort((a, b) => a.matchScore - b.matchScore);
-  const target = event.sign === '+' ? sortedDesc[0] : sortedAsc[0];
-  if (!target) {
-    state.event.current = null;
+  state.event.current = null;
+  if (matchDecided(state)) return;
+
+  for (const p of state.players) {
+    const held = p.heldEvents ?? [];
+    p.heldEvents = held.filter((id) => soleHolderOf(state, EVENT_BY_ID[id].sign)?.id === p.id);
+    for (const id of held) {
+      if (!p.heldEvents.includes(id)) pushLog(state, { kind: 'eventDiscarded', eventId: id, playerId: p.id, reason: 'lostPlace' });
+    }
+  }
+
+  if (!event) return;
+  const winner = soleHolderOf(state, event.sign);
+  if (!winner) {
+    pushLog(state, { kind: 'eventDiscarded', eventId: event.id, playerId: null, reason: 'tie' });
     return;
   }
-  // Remove this event from any prior holder; then assign.
-  for (const p of state.players) {
-    if (p.heldEvents) p.heldEvents = p.heldEvents.filter((id) => id !== event.id);
+  pushLog(state, { kind: 'eventAwarded', eventId: event.id, playerId: winner.id });
+  const old = winner.heldEvents?.[0];
+  if (!old) {
+    winner.heldEvents = [event.id];
+    return;
   }
-  if (!target.heldEvents) target.heldEvents = [];
-  // One-event-per-player rule: drop the older one if needed.
-  if (target.heldEvents.length >= 1) target.heldEvents = [];
-  target.heldEvents.push(event.id);
-  pushLog(state, { kind: 'eventAwarded', eventId: event.id, playerId: target.id });
-  state.event.current = null;
+  state.pendingEventChoice = {
+    playerId: winner.id, newEventId: event.id, oldEventId: old, resumeActiveId: state.activePlayerId,
+  };
+  state.subPhase = 'awaitingEventChoice';
+  state.activePlayerId = winner.id;
 }
 
 function startNewRound(state: SspState): void {
@@ -298,11 +383,16 @@ function startNewRound(state: SspState): void {
   state.lastChanceRemaining = [];
   state.pendingLobsterPick = [];
   state.lockedPlayerIds = [];
+  state.crabPilesLeft = null;
+  state.pendingAngelfish = null;
+  state.pendingRodeo = null;
+  state.pendingEventChoice = null;
   state.subPhase = 'awaitingAction';
   for (const p of state.players) {
     p.hand = [];
     p.table = [];
     p.trios = [];
+    p.coralShell = null;
     p.roundScore = 0;
   }
   // First player rotates round to round per rulebook ("the starting player
@@ -320,32 +410,7 @@ function startNewRound(state: SspState): void {
     const nextId = state.event.deck.pop();
     state.event.current = nextId ?? null;
     if (nextId) pushLog(state, { kind: 'eventReveal', eventId: nextId });
-    // Drop any held event no longer applicable (player must still be leader/
-    // laggard). Since we just rotated, recompute who qualifies.
-    reconcileHeldEvents(state);
   }
-}
-
-/** Walk every player's held events; discard those whose holder no longer
- *  meets the position requirement (leader for '+', laggard for '-'). */
-function reconcileHeldEvents(state: SspState): void {
-  if (!state.event) return;
-  const sortedDesc = [...state.players].sort((a, b) => b.matchScore - a.matchScore);
-  const sortedAsc = [...state.players].sort((a, b) => a.matchScore - b.matchScore);
-  const leaderId = sortedDesc[0]?.id;
-  const laggardId = sortedAsc[0]?.id;
-  for (const p of state.players) {
-    if (!p.heldEvents) continue;
-    p.heldEvents = p.heldEvents.filter((id) => {
-      const sign = lookupEventSign(id);
-      if (sign === '+') return p.id === leaderId;
-      return p.id === laggardId;
-    });
-  }
-}
-
-function lookupEventSign(id: SspEventId): '+' | '-' {
-  return EVENT_BY_ID[id].sign;
 }
 
 /** Decide the match winner among everyone who crossed the target.
@@ -440,27 +505,29 @@ function startTurn(state: SspState, playerId: PlayerId): void {
   const p = playerById(state, playerId);
   p.hand.push(card);
   pushLog(state, { kind: 'jellyfishDraw', playerId, family: card.family });
-  const mm = checkMermaidWin(state);
-  if (mm) {
-    state.mermaidWinnerId = mm;
-    pushLog(state, { kind: 'mermaidWin', playerId: mm });
-    pushLog(state, { kind: 'matchEnd', winnerId: mm });
-    state.phase = 'gameOver';
-    state.subPhase = 'gameOver';
-    state.finalScores = {};
-    for (const player of state.players) state.finalScores[player.id] = player.matchScore;
-    return;
-  }
+  if (endIfMermaidWin(state)) return;
   state.subPhase = 'awaitingPlayOrEnd';
   endTurn(state, p);
 }
 
-/** End the active player's turn (a pass): end-of-turn effects, then the next
- *  turn — or the round, if the deck has run out. */
-function endTurn(state: SspState, p: SspPlayer): void {
-  // Angelfish (Pepper, global): if both discard tops share a color at end
-  // of turn, current player gets a free draw from the deck.
-  maybeAngelfishDraw(state, p);
+/** The active player's turn is over without ending the round — a pass, or a
+ *  LAST CHANCE call. The Angelfish (Pepper) may first offer them a pile top
+ *  (awaitingAngelfishPick, answered by `angelfishPick`, which resumes here). */
+function endTurn(state: SspState, p: SspPlayer, via: 'pass' | 'lastChance' = 'pass'): void {
+  if (angelfishOffered(state, p)) {
+    state.pendingAngelfish = { via };
+    state.subPhase = 'awaitingAngelfishPick';
+    return;
+  }
+  continueAfterTurn(state, p, via);
+}
+
+/** Next turn — or, after a pass that emptied the deck, the end of the round. */
+function continueAfterTurn(state: SspState, p: SspPlayer, via: 'pass' | 'lastChance'): void {
+  if (via === 'lastChance') {
+    advanceTurnAfterEndChoice(state);
+    return;
+  }
   pushLog(state, { kind: 'pass', playerId: p.id });
   // If the deck is empty after the player's turn, end the round (no scoring penalty).
   if (state.deck.length === 0 && state.pendingDraw.length === 0 && state.lastChanceFrom === null) {
@@ -507,37 +574,30 @@ function applyDuoEffect(state: SspState, p: SspPlayer, family: DuoFamily, other:
     return;
   }
   if (family === 'crab' || other === 'crab') {
-    // The Hermit Crab (Pepper): crab pair takes ONE card from EACH discard
-    // pile (auto, no choice — the rulebook doesn't say "pick from anywhere",
-    // it says "one card from each pile"). With base rules: pick one card
-    // from EITHER pile via the awaitingCrabPick subphase.
-    if (eventAppliesTo(state, p, 'hermitCrab')) {
-      for (const pileIdx of [0, 1] as const) {
-        const pile = state.discards[pileIdx];
-        if (pile.length === 0) continue;
-        // Take the TOP of each pile (deterministic, no UI choice needed).
-        const taken = pile.pop()!;
-        p.hand.push(taken);
-        pushLog(state, { kind: 'crabPick', playerId: p.id, pile: pileIdx, family: taken.family, card: { ...taken }, fromTop: true, auto: true });
-      }
-      state.subPhase = 'awaitingPlayOrEnd';
-      return;
-    }
-    // Base crab: pick one card from any pile.
-    if (state.discards[0].length === 0 && state.discards[1].length === 0) {
-      state.subPhase = 'awaitingPlayOrEnd';
-    } else {
-      state.subPhase = 'awaitingCrabPick';
-    }
+    // Base crab: look through one discard pile and take any card. The Hermit
+    // Crab (Pepper): do that for each discard pile, in either order.
+    const nonEmpty = ([0, 1] as const).filter((i) => state.discards[i].length > 0);
+    state.crabPilesLeft = eventAppliesTo(state, p, 'hermitCrab') ? [...nonEmpty] : null;
+    state.subPhase = nonEmpty.length ? 'awaitingCrabPick' : 'awaitingPlayOrEnd';
     return;
   }
   if (family === 'jellyfish' || other === 'jellyfish') {
     // Salt: every opponent's next turn is only "take the top card of the
     // deck" (played for them when it comes up — see startTurn).
-    const opponents = state.players.filter((q) => q.id !== p.id).map((q) => q.id);
+    const opponents = state.players.filter((q) => canAttack(state, p.id, q)).map((q) => q.id);
     state.lockedPlayerIds = [...new Set([...(state.lockedPlayerIds ?? []), ...opponents])];
     for (const id of opponents) pushLog(state, { kind: 'jellyfishLock', playerId: p.id, targetPlayerId: id });
     state.subPhase = 'awaitingPlayOrEnd';
+    return;
+  }
+  if (family === 'swimmer' && other === 'swimmer') {
+    // Water Rodeo: look at an opponent's hand, then maybe swap a card.
+    state.subPhase = rodeoTargets(state, p.id).length ? 'awaitingRodeoTarget' : 'awaitingPlayOrEnd';
+    return;
+  }
+  if (family === 'shark' && other === 'shark') {
+    // Water Rodeo: take a pair from in front of an opponent.
+    state.subPhase = stealablePairs(state, p.id).length ? 'awaitingPairSteal' : 'awaitingPlayOrEnd';
     return;
   }
   // shark + swimmer
@@ -548,31 +608,11 @@ function applyDuoEffect(state: SspState, p: SspPlayer, family: DuoFamily, other:
   }
 }
 
-/** True when at least one other player has cards AND is not the LAST CHANCE
- *  caller (whose hand is protected by the bet). When false, the shark+swimmer
- *  pair still scores 1 pt but its steal step is skipped. */
+/** True when at least one opponent with cards can be attacked (see
+ *  `canAttack`). When false, the shark+swimmer pair still scores 1 pt but its
+ *  steal step is skipped. */
 function stealableTargetExists(state: SspState, exceptId: PlayerId): boolean {
-  return state.players.some((q) =>
-    q.id !== exceptId
-    && q.hand.length > 0
-    && state.lastChanceFrom !== q.id
-  );
-}
-
-/** If the Angelfish (Pepper) event applies to `p` and both discard tops share
- *  a color, the player takes one of those tops into their hand (per the
- *  rulebook — pick one of the two visible discards). For simplicity we pick
- *  the higher-value top, which gives the AI a deterministic choice.
- *  Triggered at end of every turn (whether normal pass or via pair plays). */
-function maybeAngelfishDraw(state: SspState, p: SspPlayer): void {
-  if (!eventAppliesTo(state, p, 'angelfish')) return;
-  const top0 = state.discards[0][state.discards[0].length - 1];
-  const top1 = state.discards[1][state.discards[1].length - 1];
-  if (!top0 || !top1 || top0.color !== top1.color) return;
-  // Take the top of pile 0 by default (deterministic for AI / replay).
-  const taken = state.discards[0].pop()!;
-  p.hand.push(taken);
-  pushLog(state, { kind: 'angelfishDraw', playerId: p.id, family: taken.family, card: { ...taken } });
+  return state.players.some((q) => canAttack(state, exceptId, q) && q.hand.length > 0);
 }
 
 export function applyAction(state: SspState, action: SspAction): SspState {
@@ -631,17 +671,7 @@ export function applyAction(state: SspState, action: SspAction): SspState {
         }
       }
 
-      const mm = checkMermaidWin(s);
-      if (mm) {
-        s.mermaidWinnerId = mm;
-        pushLog(s, { kind: 'mermaidWin', playerId: mm });
-        pushLog(s, { kind: 'matchEnd', winnerId: mm });
-        s.phase = 'gameOver';
-        s.subPhase = 'gameOver';
-        s.finalScores = {};
-        for (const player of s.players) s.finalScores[player.id] = player.matchScore;
-        return s;
-      }
+      if (endIfMermaidWin(s)) return s;
 
       // Deck-empty special case: if deck is empty at end-of-turn we'll trigger
       // round-end when player passes. Otherwise just go to play/end.
@@ -657,17 +687,7 @@ export function applyAction(state: SspState, action: SspAction): SspState {
       const p = requireActivePlayer(s);
       p.hand.push(c);
       pushLog(s, { kind: 'drawDiscard', playerId: p.id, pile: action.pile, family: c.family, card: { ...c } });
-      const mm = checkMermaidWin(s);
-      if (mm) {
-        s.mermaidWinnerId = mm;
-        pushLog(s, { kind: 'mermaidWin', playerId: mm });
-        pushLog(s, { kind: 'matchEnd', winnerId: mm });
-        s.phase = 'gameOver';
-        s.subPhase = 'gameOver';
-        s.finalScores = {};
-        for (const player of s.players) s.finalScores[player.id] = player.matchScore;
-        return s;
-      }
+      if (endIfMermaidWin(s)) return s;
       s.subPhase = 'awaitingPlayOrEnd';
       return s;
     }
@@ -679,18 +699,15 @@ export function applyAction(state: SspState, action: SspAction): SspState {
       const a = p.hand.find((c) => c.id === idA);
       const b = p.hand.find((c) => c.id === idB);
       if (!a || !b) throw new Error('playPair: card not in hand');
-      if (!isValidDuoPair(a, b)) throw new Error('playPair: not a valid pair');
+      if (!isValidDuoPair(a, b, { waterRodeo: eventAppliesTo(s, p, 'waterRodeo') })) throw new Error('playPair: not a valid pair');
       p.hand = p.hand.filter((c) => c.id !== idA && c.id !== idB);
       p.table.push(a, b);
       pushLog(s, { kind: 'playPair', playerId: p.id, families: [a.family, b.family] });
-      const deckTopBefore = s.deck[s.deck.length - 1];
       // For ambiguous-partner cases (swimmer can pair with shark OR jellyfish),
       // pass both actual families to applyDuoEffect — it dispatches on either.
+      // Fish (and Sunfish / Hermit Crab) put cards straight into the hand.
       applyDuoEffect(s, p, a.family as DuoFamily, b.family as DuoFamily);
-      // Fish drew one card from deck top into the active player's hand.
-      if ((a.family === 'fish' || b.family === 'fish') && deckTopBefore && p.hand.some((c) => c.id === deckTopBefore.id)) {
-        pushLog(s, { kind: 'fishDraw', playerId: p.id, family: deckTopBefore.family });
-      }
+      endIfMermaidWin(s);
       return s;
     }
 
@@ -702,7 +719,9 @@ export function applyAction(state: SspState, action: SspAction): SspState {
       const b = p.hand.find((c) => c.id === idB);
       const c = p.hand.find((c2) => c2.id === idC);
       if (!a || !b || !c) throw new Error('playTrio: card not in hand');
-      if (!isValidStarfishTrio(a, b, c)) throw new Error('playTrio: not a valid starfish trio');
+      if (!isValidStarfishTrio(a, b, c, { waterRodeo: eventAppliesTo(s, p, 'waterRodeo') })) {
+        throw new Error('playTrio: not a valid starfish trio');
+      }
       p.hand = p.hand.filter((x) => x.id !== idA && x.id !== idB && x.id !== idC);
       p.table.push(a, b, c);
       if (!p.trios) p.trios = [];
@@ -730,23 +749,16 @@ export function applyAction(state: SspState, action: SspAction): SspState {
       s.pendingLobsterPick = [];
       s.deck = shuffle(s.rngState, s.deck);
       pushLog(s, { kind: 'lobsterPick', playerId: p.id, family: picked.family });
-      const mm = checkMermaidWin(s);
-      if (mm) {
-        s.mermaidWinnerId = mm;
-        pushLog(s, { kind: 'mermaidWin', playerId: mm });
-        pushLog(s, { kind: 'matchEnd', winnerId: mm });
-        s.phase = 'gameOver';
-        s.subPhase = 'gameOver';
-        s.finalScores = {};
-        for (const player of s.players) s.finalScores[player.id] = player.matchScore;
-        return s;
-      }
+      if (endIfMermaidWin(s)) return s;
       s.subPhase = 'awaitingPlayOrEnd';
       return s;
     }
 
     case 'crabPick': {
       if (s.subPhase !== 'awaitingCrabPick') throw new Error('crabPick: wrong subPhase');
+      if (s.crabPilesLeft && !s.crabPilesLeft.includes(action.pile)) {
+        throw new Error('crabPick: already took a card from that pile (Hermit Crab)');
+      }
       const pile = s.discards[action.pile];
       const idx = pile.findIndex((c) => c.id === action.cardId);
       if (idx === -1) throw new Error('crabPick: card not in pile');
@@ -755,18 +767,11 @@ export function applyAction(state: SspState, action: SspAction): SspState {
       const p = requireActivePlayer(s);
       p.hand.push(card);
       pushLog(s, { kind: 'crabPick', playerId: p.id, pile: action.pile, family: card.family, card: { ...card }, fromTop });
-      const mm = checkMermaidWin(s);
-      if (mm) {
-        s.mermaidWinnerId = mm;
-        pushLog(s, { kind: 'mermaidWin', playerId: mm });
-        pushLog(s, { kind: 'matchEnd', winnerId: mm });
-        s.phase = 'gameOver';
-        s.subPhase = 'gameOver';
-        s.finalScores = {};
-        for (const player of s.players) s.finalScores[player.id] = player.matchScore;
-        return s;
-      }
-      s.subPhase = 'awaitingPlayOrEnd';
+      if (endIfMermaidWin(s)) return s;
+      // The Hermit Crab: on to the other pile, if it has cards.
+      const left = (s.crabPilesLeft ?? []).filter((i) => i !== action.pile && s.discards[i].length > 0);
+      s.crabPilesLeft = left.length ? left : null;
+      s.subPhase = left.length ? 'awaitingCrabPick' : 'awaitingPlayOrEnd';
       return s;
     }
 
@@ -780,6 +785,7 @@ export function applyAction(state: SspState, action: SspAction): SspState {
       if (s.lastChanceFrom === target.id) {
         throw new Error('sharkSteal: target called LAST CHANCE and is protected');
       }
+      if (target.coralShell) throw new Error('sharkSteal: target is immune (Coral Reef)');
       // Random steal per rulebook.
       const idx = rngInt(s.rngState, target.hand.length);
       const stolen = target.hand.splice(idx, 1)[0];
@@ -787,18 +793,103 @@ export function applyAction(state: SspState, action: SspAction): SspState {
       p.hand.push(stolen);
       pushLog(s, { kind: 'sharkSteal', playerId: p.id, targetPlayerId: target.id, family: stolen.family, card: { ...stolen } });
 
-      const mm = checkMermaidWin(s);
-      if (mm) {
-        s.mermaidWinnerId = mm;
-        pushLog(s, { kind: 'mermaidWin', playerId: mm });
-        pushLog(s, { kind: 'matchEnd', winnerId: mm });
-        s.phase = 'gameOver';
-        s.subPhase = 'gameOver';
-        s.finalScores = {};
-        for (const player of s.players) s.finalScores[player.id] = player.matchScore;
+      if (endIfMermaidWin(s)) return s;
+      s.subPhase = 'awaitingPlayOrEnd';
+      return s;
+    }
+
+    case 'rodeoLook': {
+      if (s.subPhase !== 'awaitingRodeoTarget') throw new Error('rodeoLook: wrong subPhase');
+      const p = requireActivePlayer(s);
+      const target = rodeoTargets(s, p.id).find((q) => q.id === action.targetPlayerId);
+      if (!target) throw new Error('rodeoLook: not a valid target');
+      s.pendingRodeo = { targetId: target.id };
+      pushLog(s, { kind: 'rodeoLook', playerId: p.id, targetPlayerId: target.id, hand: target.hand.map((c) => ({ ...c })) });
+      s.subPhase = 'awaitingRodeoSwap';
+      return s;
+    }
+
+    case 'rodeoSwap': {
+      if (s.subPhase !== 'awaitingRodeoSwap' || !s.pendingRodeo) throw new Error('rodeoSwap: wrong subPhase');
+      const p = requireActivePlayer(s);
+      const target = playerById(s, s.pendingRodeo.targetId);
+      s.pendingRodeo = null;
+      if (!action.swap) {
+        pushLog(s, { kind: 'rodeoSwap', playerId: p.id, targetPlayerId: target.id, swapped: false });
+        s.subPhase = 'awaitingPlayOrEnd';
         return s;
       }
+      const [mineId, theirsId] = action.swap;
+      const mine = p.hand.findIndex((c) => c.id === mineId);
+      const theirs = target.hand.findIndex((c) => c.id === theirsId);
+      if (mine === -1 || theirs === -1) throw new Error('rodeoSwap: card not in hand');
+      const given = p.hand[mine];
+      const taken = target.hand[theirs];
+      p.hand[mine] = taken;
+      target.hand[theirs] = given;
+      pushLog(s, { kind: 'rodeoSwap', playerId: p.id, targetPlayerId: target.id, swapped: true, given: { ...given }, taken: { ...taken } });
+      if (endIfMermaidWin(s)) return s;
       s.subPhase = 'awaitingPlayOrEnd';
+      return s;
+    }
+
+    case 'stealPair': {
+      if (s.subPhase !== 'awaitingPairSteal') throw new Error('stealPair: wrong subPhase');
+      const p = requireActivePlayer(s);
+      const [idA, idB] = action.cardIds;
+      const pick = stealablePairs(s, p.id).find(({ target, cards }) =>
+        target.id === action.targetPlayerId
+        && cards.some((c) => c.id === idA) && cards.some((c) => c.id === idB) && idA !== idB);
+      if (!pick) throw new Error('stealPair: not a pair in front of an attackable opponent');
+      pick.target.table = pick.target.table.filter((c) => c.id !== idA && c.id !== idB);
+      p.table.push(...pick.cards);
+      pushLog(s, {
+        kind: 'pairSteal', playerId: p.id, targetPlayerId: pick.target.id,
+        cards: [{ ...pick.cards[0] }, { ...pick.cards[1] }],
+      });
+      s.subPhase = 'awaitingPlayOrEnd';
+      return s;
+    }
+
+    case 'placeCoralShell': {
+      const p = requireActivePlayer(s);
+      if (!canPlaceCoralShell(s, p)) throw new Error('placeCoralShell: not allowed now');
+      const idx = p.hand.findIndex((c) => c.id === action.cardId && c.family === 'shell');
+      if (idx === -1) throw new Error('placeCoralShell: not a shell in hand');
+      const [shell] = p.hand.splice(idx, 1);
+      p.coralShell = shell;
+      pushLog(s, { kind: 'coralShell', playerId: p.id, card: { ...shell } });
+      return s;
+    }
+
+    case 'angelfishPick': {
+      if (s.subPhase !== 'awaitingAngelfishPick' || !s.pendingAngelfish) throw new Error('angelfishPick: wrong subPhase');
+      const pile = s.discards[action.pile];
+      if (pile.length === 0) throw new Error('angelfishPick: pile empty');
+      const p = requireActivePlayer(s);
+      const taken = pile.pop()!;
+      p.hand.push(taken);
+      pushLog(s, { kind: 'angelfishDraw', playerId: p.id, family: taken.family, card: { ...taken }, pile: action.pile });
+      const { via } = s.pendingAngelfish;
+      s.pendingAngelfish = null;
+      if (endIfMermaidWin(s)) return s;
+      continueAfterTurn(s, p, via);
+      return s;
+    }
+
+    case 'chooseEvent': {
+      const choice = s.pendingEventChoice;
+      if (s.subPhase !== 'awaitingEventChoice' || !choice) throw new Error('chooseEvent: wrong subPhase');
+      if (action.keep !== choice.newEventId && action.keep !== choice.oldEventId) {
+        throw new Error('chooseEvent: not one of the two cards');
+      }
+      const p = playerById(s, choice.playerId);
+      p.heldEvents = [action.keep];
+      const dropped = action.keep === choice.newEventId ? choice.oldEventId : choice.newEventId;
+      pushLog(s, { kind: 'eventDiscarded', eventId: dropped, playerId: p.id, reason: 'choice' });
+      s.pendingEventChoice = null;
+      s.activePlayerId = choice.resumeActiveId;
+      s.subPhase = 'roundEnd';
       return s;
     }
 
@@ -833,7 +924,7 @@ export function applyAction(state: SspState, action: SspAction): SspState {
       for (let i = 1; i < s.players.length; i++) {
         s.lastChanceRemaining.push(s.players[(idx + i) % s.players.length].id);
       }
-      advanceTurnAfterEndChoice(s);
+      endTurn(s, p, 'lastChance');
       return s;
     }
 
@@ -865,9 +956,10 @@ export function applyAction(state: SspState, action: SspAction): SspState {
 
 /** Used at game-start to set up the opening hand. Mutates passed state. */
 export function setupNewMatch(state: SspState): void {
+  // startNewRound counts the round up, so start from 0 — the round-1 event
+  // reveal is then logged under round 1.
+  state.round = 0;
   startNewRound(state);
-  // startNewRound increments round to 2 on top of round 1 setup; reset to 1.
-  state.round = 1;
   // Active player should be the first seat at match start.
   state.activePlayerId = state.players[0]?.id ?? null;
   state.currentRoundStarterId = state.players[0]?.id ?? null;

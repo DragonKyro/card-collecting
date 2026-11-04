@@ -5,6 +5,17 @@
     python training/ssp/train.py --run first-try --resume
     tensorboard --logdir training/runs
 
+    # one network for 2-4 players, continuing from runs/ssp/main's update 10000
+    python training/ssp/train.py --run multi --players 2,3,4 \\
+        --init training/runs/ssp/main/ckpt/update_010000.pt --updates 13000
+
+`--players 2,3,4` deals the env workers out over those table sizes (each
+size gets the same share of self-play and past-checkpoint workers, so the
+same share of decisions); every checkpoint is then also evaluated at 3 and 4
+players against (players - 1) copies of each benchmark. `--init` starts a new
+run from another run's checkpoint (weights, optimizer, update count) instead
+of from scratch, and exports that starting point as the run's first policy.
+
 To stop a run you can't Ctrl+C (e.g. one started in the background), create
 an empty file training/runs/ssp/<run>/STOP: it saves, finishes queued evals and
 exits after the current update (the file is removed on the next start).
@@ -14,7 +25,7 @@ Each update:
      × `--envs-per-worker` matches. Self-play workers train on both seats; the
      rest play a past checkpoint drawn from the pool (random play until the
      first checkpoint exists).
-  2. PPO on every finished transition. Training starts from scratch.
+  2. PPO on every finished transition. Training starts from scratch (or `--init`).
   3. Every `--save-every`: a resumable checkpoint (ckpt/update_N.pt) and an
      exported policy (policies/update_N.json) the TypeScript side can play —
      `evaluate.py` and the opponent pool use these.
@@ -74,8 +85,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     run.add_argument("--seed", type=int, default=1)
     run.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     run.add_argument("--no-build", action="store_true", help="skip rebuilding training/dist")
+    run.add_argument("--init", default=None, metavar="CKPT",
+                     help="start a new run from this checkpoint (.pt) instead of from scratch")
 
     game = p.add_argument_group("game / envs")
+    game.add_argument("--players", default="2",
+                      help="comma-separated table sizes (2-4) to train on, e.g. 2,3,4; workers are split evenly, "
+                           "and repeating a size gives it a bigger share (2,2,3,4 = half the workers on 2p)")
     game.add_argument("--base-game", action="store_true", help="train without Extra Salt")
     game.add_argument("--target", type=int, default=40)
     game.add_argument("--workers", type=int, default=default_workers(), help="node env processes")
@@ -114,7 +130,28 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     save.add_argument("--eval-same-update", default=None, metavar="RUN_DIR",
                       help="also eval against RUN_DIR's policy at the same update (e.g. an earlier run, to compare "
                            "two setups at equal training)")
-    return p.parse_args(argv)
+    args = p.parse_args(argv)
+    sizes = [int(n) for n in str(args.players).split(",")]
+    args.player_counts = sorted(set(sizes))
+    args.player_mix = {n: sizes.count(n) for n in args.player_counts}
+    if not args.player_counts or any(n not in (2, 3, 4) for n in args.player_counts):
+        p.error("--players takes table sizes from 2, 3, 4")
+    if any(share == 0 for share in worker_shares(args.workers, args.player_mix).values()):
+        p.error("need at least one worker per table size")
+    return args
+
+
+def worker_shares(n: int, mix: dict[int, int]) -> dict[int, int]:
+    """Workers per table size, in proportion to `mix` (largest remainders get the leftovers)."""
+    total = sum(mix.values())
+    exact = {size: n * w / total for size, w in mix.items()}
+    shares = {size: int(x) for size, x in exact.items()}
+    for size in sorted(mix, key=lambda s: exact[s] - shares[s], reverse=True)[: n - sum(shares.values())]:
+        shares[size] += 1
+    return shares
+
+
+MAX_SEATS = 4
 
 
 # ---------------------------------------------------------------- envs
@@ -124,12 +161,28 @@ class Worker:
     role: str  # 'self' | 'past'
     env: SspEnv
     opponent: str
+    players: int = 2
     batch: Batch | None = None
+
+    @property
+    def tag(self) -> str:
+        """Win-rate window key: the role, plus the table size when it isn't 2."""
+        return self.role if self.players == 2 else f"{self.role}{self.players}p"
 
 
 def worker_roles(n: int, self_share: float) -> list[str]:
     n_self = min(n, max(0, round(n * self_share)))
     return ["self"] * n_self + ["past"] * (n - n_self)
+
+
+def worker_layout(n: int, self_share: float, mix: dict[int, int]) -> list[tuple[str, int]]:
+    """(role, players) per worker: each table size gets its share of the
+    workers (see `worker_shares`), split into self-play and past-opponent
+    workers like the whole run."""
+    layout = []
+    for size, share in sorted(worker_shares(n, mix).items()):
+        layout += [(role, size) for role in worker_roles(share, self_share)]
+    return layout
 
 
 def build_typescript() -> None:
@@ -199,20 +252,20 @@ class Evaluator:
             job = self.jobs.get()
             if job is None:
                 return
-            update, tag, a, b, games = job
+            update, tag, a, b, games, players = job
             try:
-                summary = ev.evaluate(a, b, games=games, salt=self.salt, workers=self.workers)
+                summary = ev.evaluate(a, b, games=games, salt=self.salt, workers=self.workers, players=players)
                 self.results.put((update, tag, b, summary, None))
             except Exception as e:  # noqa: BLE001 — reported, training carries on
                 self.results.put((update, tag, b, None, str(e)))
 
-    def submit(self, update: int, policy: str, jobs: list[tuple[str, str, int]]) -> bool:
-        """Queue one eval cycle of (tag, opponent, games) jobs; refuse while the
-        previous cycle hasn't fully started."""
+    def submit(self, update: int, policy: str, jobs: list[tuple[str, str, int, int]]) -> bool:
+        """Queue one eval cycle of (tag, opponent, games, players) jobs; refuse
+        while the previous cycle hasn't fully started."""
         if self.jobs.qsize() > 0:
             return False
-        for tag, opponent, games in jobs:
-            self.jobs.put((update, tag, policy, opponent, games))
+        for tag, opponent, games, players in jobs:
+            self.jobs.put((update, tag, policy, opponent, games, players))
         return True
 
     def drain(self) -> list[tuple]:
@@ -268,15 +321,24 @@ class Trainer:
 
         ckpt_dir = os.path.join(self.run_dir, "ckpt")
         ckpts = sorted(f for f in os.listdir(ckpt_dir) if f.endswith(".pt")) if a.resume and os.path.isdir(ckpt_dir) else []
-        if ckpts:
-            ck = load_checkpoint(os.path.join(self.run_dir, "ckpt", ckpts[-1]), self.device)
+        start = os.path.join(self.run_dir, "ckpt", ckpts[-1]) if ckpts else a.init
+        if start:
+            ck = load_checkpoint(start, self.device)
             if ck["versions"] != self.versions:
                 raise SystemExit(f"checkpoint was trained on {ck['versions']}, this build is {self.versions}")
             self.net = net_from_checkpoint(ck, self.device)
             self.opt = torch.optim.Adam(self.net.parameters(), lr=a.lr, eps=1e-5)
             self.opt.load_state_dict(ck["optimizer"])
+            for g in self.opt.param_groups:
+                g["lr"] = a.lr
             self.update, self.decisions, self.episodes = ck["update"], ck["decisions"], ck["episodes"]
-            print(f"resumed {name} at update {self.update} ({self.decisions:,} decisions)")
+            if ckpts:
+                print(f"resumed {name} at update {self.update} ({self.decisions:,} decisions)")
+            else:
+                print(f"started {name} from {start} (update {self.update}, {self.decisions:,} decisions)")
+                # The starting point is the run's first policy: past opponents and
+                # the `past` eval have it from update one.
+                self.save(checkpoint=False)
         else:
             self.net = PolicyValueNet(self.obs_dim, self.num_slots, a.hidden, a.layers).to(self.device)
             self.opt = torch.optim.Adam(self.net.parameters(), lr=a.lr, eps=1e-5)
@@ -285,22 +347,25 @@ class Trainer:
             json.dump({**vars(a), **self.versions, "obsDim": self.obs_dim, "numSlots": self.num_slots,
                        "arch": {"hidden": self.net.hidden, "layers": self.net.layers}}, f, indent=2)
 
-        roles = worker_roles(a.workers, a.self_play)
-        for w, role in enumerate(roles):
+        layout = worker_layout(a.workers, a.self_play, a.player_mix)
+        for w, (role, players) in enumerate(layout):
             env = SspEnv()
             seed = a.seed * 10_007 + w * 7_919 + self.update * 104_729
             opponent = "self" if role == "self" else "random"  # past workers get a checkpoint once one exists
-            worker = Worker(role, env, opponent)
-            worker.batch = env.reset(num_envs=a.envs_per_worker, seed=seed, extra_salt=not a.base_game,
-                                     target_score=a.target, opponent=opponent, round_reward=a.round_reward)
+            worker = Worker(role, env, opponent, players)
+            worker.batch = env.reset(num_envs=a.envs_per_worker, seed=seed, players=players,
+                                     extra_salt=not a.base_game, target_score=a.target, opponent=opponent,
+                                     round_reward=a.round_reward)
             self.workers.append(worker)
         self.n_envs = a.workers * a.envs_per_worker
         self.slices = [slice(i * a.envs_per_worker, (i + 1) * a.envs_per_worker) for i in range(a.workers)]
-        print(f"run {self.run_dir}\n  {a.workers} workers ({', '.join(f'{roles.count(r)} {r}' for r in dict.fromkeys(roles))})"
+        mix = ", ".join(f"{layout.count(k)} {k[0]}{'' if k[1] == 2 else f' {k[1]}p'}" for k in dict.fromkeys(layout))
+        print(f"run {self.run_dir}\n  {a.workers} workers ({mix})"
               f" x {a.envs_per_worker} envs | obs {self.obs_dim} | slots {self.num_slots} | device {self.device}")
 
-        self.buf = Rollout(self.n_envs * (a.rollout + 2), self.obs_dim, self.num_slots)
-        self.last = np.full((self.n_envs, 2), -1, np.int64)
+        # Room for the rollout plus the carried-in pending transitions: one per seat per match.
+        self.buf = Rollout(self.n_envs * (a.rollout + MAX_SEATS), self.obs_dim, self.num_slots)
+        self.last = np.full((self.n_envs, MAX_SEATS), -1, np.int64)
         self.carry: dict | None = None
         self.carry_streams: np.ndarray | None = None
         self.writer = SummaryWriter(os.path.join(self.run_dir, "tb"))
@@ -365,9 +430,12 @@ class Trainer:
                 w.env.send_step(action_np[sl])
             for w in self.workers:
                 w.batch = w.env.recv_batch()
-            reward = np.concatenate([w.batch.reward for w in self.workers])
+            # Per-seat rewards, padded to MAX_SEATS (a worker's table size sets its width).
+            reward = np.zeros((self.n_envs, MAX_SEATS), np.float32)
+            for w, sl in zip(self.workers, self.slices):
+                reward[sl, : w.batch.reward.shape[1]] = w.batch.reward
             done = np.concatenate([w.batch.done for w in self.workers])
-            for s in (0, 1):
+            for s in range(MAX_SEATS):
                 ok = last[:, s] >= 0
                 buf.reward[last[ok, s]] += reward[ok, s]
                 buf.done[last[ok & done, s]] = True
@@ -376,7 +444,7 @@ class Trainer:
                 for ep in w.batch.episodes:
                     self.episodes += 1
                     if w.role != "self" and ep["winnerSeat"] is not None:
-                        self.win_window[w.role].append(float(ep["winnerSeat"] in ep["learnerSeats"]))
+                        self.win_window[w.tag].append(float(ep["winnerSeat"] in ep["learnerSeats"]))
             self.decisions += self.n_envs
 
         pending = np.zeros(buf.n, bool)
@@ -451,31 +519,36 @@ class Trainer:
 
     # ------------------------------------------------------------ checkpoints
 
-    def save(self) -> str:
+    def save(self, checkpoint: bool = True) -> str:
         a, u = self.args, self.update
-        state = {"update": u, "decisions": self.decisions, "episodes": self.episodes,
-                 "versions": self.versions, "args": vars(a)}
-        ckpt_dir = os.path.join(self.run_dir, "ckpt")
-        save_checkpoint(os.path.join(ckpt_dir, f"update_{u:06d}.pt"), self.net, self.opt, state)
-        for old in sorted(f for f in os.listdir(ckpt_dir) if f.endswith(".pt"))[:-a.keep_ckpt]:
-            os.remove(os.path.join(ckpt_dir, old))
+        if checkpoint:
+            state = {"update": u, "decisions": self.decisions, "episodes": self.episodes,
+                     "versions": self.versions, "args": vars(a)}
+            ckpt_dir = os.path.join(self.run_dir, "ckpt")
+            save_checkpoint(os.path.join(ckpt_dir, f"update_{u:06d}.pt"), self.net, self.opt, state)
+            for old in sorted(f for f in os.listdir(ckpt_dir) if f.endswith(".pt"))[:-a.keep_ckpt]:
+                os.remove(os.path.join(ckpt_dir, old))
         path = os.path.join(self.run_dir, "policies", f"update_{u:06d}.json")
         export_policy(self.net, path, self.versions["encoderVersion"], self.versions["actionSpaceVersion"],
-                      meta={"run": os.path.basename(self.run_dir), "update": u, "decisions": self.decisions})
+                      meta={"run": os.path.basename(self.run_dir), "update": u, "decisions": self.decisions,
+                            "players": a.player_counts})
         return path
 
-    def eval_jobs(self) -> list[tuple[str, str, int]]:
-        """(tag, opponent, games) for the checkpoint just saved."""
+    def eval_jobs(self) -> list[tuple[str, str, int, int]]:
+        """(tag, opponent, games, players) for the checkpoint just saved. The
+        2-player set as always; at 3-4 players, vs a table of each benchmark."""
         a = self.args
-        jobs = [("random", "random", min(200, a.eval_games))]
-        jobs += [(f"bench_{name}", ev.BENCH + name, a.eval_games) for name in self.benches]
+        jobs = [("random", "random", min(200, a.eval_games), 2)]
+        jobs += [(f"bench_{name}", ev.BENCH + name, a.eval_games, 2) for name in self.benches]
         if a.eval_same_update:
             same = os.path.join(a.eval_same_update, "policies", f"update_{self.update:06d}.json")
             if os.path.isfile(same):
-                jobs.append(("same", same, a.eval_games))
+                jobs.append(("same", same, a.eval_games, 2))
         past = ev.list_policies(self.run_dir)
         if len(past) > a.eval_past_gap:
-            jobs.append(("past", past[-1 - a.eval_past_gap][1], a.eval_games))
+            jobs.append(("past", past[-1 - a.eval_past_gap][1], a.eval_games, 2))
+        for players in (n for n in a.player_counts if n > 2):
+            jobs += [(f"bench_{name}_{players}p", ev.BENCH + name, a.eval_games, players) for name in self.benches]
         return jobs
 
     def refresh_past_opponents(self) -> None:
@@ -547,7 +620,16 @@ class Trainer:
         """(tag, header) for every eval tag seen, benchmarks first."""
         a = self.args
         tags = {t for res in self.eval_results.values() for t in res}
-        cols = [(t, f"vs {t[len('bench_'):]}") for t in sorted(tags) if t.startswith("bench_")]
+        multi = any(n > 2 for n in a.player_counts)
+
+        def bench_header(tag: str) -> str:
+            name, _, size = tag[len("bench_"):].rpartition("_")
+            if size.endswith("p") and size[:-1].isdigit():
+                n = int(size[:-1])
+                return f"{n}p vs {n - 1}x {name} (even {100 / n:.0f}%)"
+            return f"{'2p ' if multi else ''}vs {tag[len('bench_'):]}"
+
+        cols = [(t, bench_header(t)) for t in sorted(tags) if t.startswith("bench_")]
         if "same" in tags:
             cols.append(("same", f"vs {os.path.basename(os.path.normpath(a.eval_same_update or 'other run'))} @ same update"))
         if "past" in tags:
@@ -587,9 +669,13 @@ class Trainer:
         doc = [f"# {os.path.basename(self.run_dir)} progress",
                "",
                f"Encoder v{v['encoderVersion']} ({self.obs_dim} features), action space v{v['actionSpaceVersion']} "
-               f"({self.num_slots} slots), {a.hidden}x{a.layers} MLP. Seat-swapped evals, {a.eval_games} matches "
+               f"({self.num_slots} slots), {self.net.hidden}x{self.net.layers} MLP. Seat-swapped evals, {a.eval_games} matches "
                f"each ({min(200, a.eval_games)} vs random); score = wins + half draws, 95% CI in brackets. "
-               f"Updated {time.strftime('%Y-%m-%d %H:%M')}, update {self.update}.",
+               + (f"Trained on {', '.join(f'{n}p' for n in a.player_counts)}"
+                  + (f" from {a.init}" if a.init else "") + "; an Np column seats this checkpoint at a table of "
+                  "N - 1 copies of the benchmark, in every seat — an even match there is 1/N. "
+                  if a.player_counts != [2] or a.init else "")
+               + f"Updated {time.strftime('%Y-%m-%d %H:%M')}, update {self.update}.",
                "",
                "## Latest 10 checkpoints",
                "",
@@ -634,7 +720,7 @@ class Trainer:
                     if self.evaluator and self.update % a.eval_every == 0:
                         jobs = self.eval_jobs()
                         if self.evaluator.submit(self.update, policy, jobs):
-                            self.eval_expected[self.update] = [tag for tag, _, _ in jobs]
+                            self.eval_expected[self.update] = [job[0] for job in jobs]
                         else:
                             print("  (eval skipped - previous evals still running)")
                 if self.update % a.pool_refresh == 0 or self.update == a.save_every:

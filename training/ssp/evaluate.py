@@ -130,9 +130,11 @@ def label(ref: str) -> str:
 
 def evaluate(a: str, b: str, games: int = 1000, salt: bool = True, pepper: bool = False,
              target: int = 40, seed: int = EVAL_SEED, workers: int | None = None,
-             node: str | None = None) -> dict:
+             node: str | None = None, players: int = 2) -> dict:
     """Seat-swapped head-to-head: A vs B over `games` matches (rounded up to
-    even). Returns the harness summary — `aScore`, `aScoreCi95`, per-side stats
+    whole seeds, each played with A in every seat). With `players` > 2 it is A
+    against a table of B, where an even match scores 1 / players. Returns the
+    harness summary — `aScore`, `aScoreCi95`, `evenScore`, per-side stats
     (`a`, `b`), `seat0WinRate`, … — plus `report` (the printable table)."""
     if not os.path.isfile(EVAL_SCRIPT):
         raise FileNotFoundError(f"{EVAL_SCRIPT} missing -- run `npm run train:build`")
@@ -143,7 +145,8 @@ def evaluate(a: str, b: str, games: int = 1000, salt: bool = True, pepper: bool 
     os.close(fd)
     try:
         cmd = [node, EVAL_SCRIPT, "--a", agent_spec(a), "--b", agent_spec(b),
-               "--games", str(games), "--seed", str(seed), "--target", str(target), "--json", out_path]
+               "--games", str(games), "--seed", str(seed), "--target", str(target), "--json", out_path,
+               "--players", str(players)]
         if salt:
             cmd.append("--salt")
         if pepper:

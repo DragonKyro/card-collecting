@@ -14,7 +14,7 @@ function segment(x: Float32Array, name: string): Float32Array {
 
 const STATES: JaipurState[] = [
   ...sampleStates({ matches: 4, seed: 77, every: 2 }),
-  ...sampleStates({ matches: 3, seed: 78, every: 2, players: 'heuristic' }),
+  ...sampleStates({ matches: 3, seed: 78, every: 2, players: 'policy' }),
 ];
 
 describe('jaipur feature encoder', () => {

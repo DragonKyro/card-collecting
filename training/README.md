@@ -41,6 +41,23 @@ from every match: `--workers` (default cores − 4, max 12) node processes ×
 - Reward is ±1 for the match, plus `--round-reward` (0.02) × the round point
   margin.
 
+**More players, and starting from a checkpoint.** `--players 2,3,4` deals
+the workers out evenly over those table sizes, each with the same self-play /
+past-checkpoint split (past opponents fill every other seat). Rewards stay
+zero-sum: +1 to the winner and −1/(N−1) to each other seat, and the round
+shaping is the margin over the other seats' mean (both are ±1 / the plain
+margin at 2 players). Each checkpoint is then also evaluated at every larger
+table size against N−1 copies of each benchmark, with this checkpoint in each
+seat in turn; an even match there is 1/N (`evaluate.py`'s `players=N`,
+`ssp:eval --players N`). `--init CKPT` starts a new run from another run's
+checkpoint — weights, optimizer and update count — and exports it as the
+run's first policy, so the past pool has it from the start:
+
+```sh
+python training/ssp/train.py --run multi --players 2,3,4 \
+    --init training/runs/ssp/main/ckpt/update_010000.pt --updates 14000 --eval-bench hard-update10000
+```
+
 Everything lands in `training/runs/ssp/<run>/` (git-ignored). Runs are
 grouped by game — `training/runs/<game>/<run>/` — so other games' agents get
 their own folder next to `ssp/`:
@@ -113,14 +130,20 @@ python training/ssp/evaluate.py benchmarks
 python training/ssp/evaluate.py freeze training/runs/ssp/main@10000 --name hard-update10000 --games 2000 --note "..."
 ```
 
-| Level | Benchmark | Source (`runs/ssp/main`) | vs random | vs easy | vs normal |
+| Level | Benchmark | Source | vs random | vs easy | vs normal |
 |---|---|---|---|---|---|
-| easy | `bench:easy-update100` | update 100 | 100.0% | — | — |
-| normal | `bench:normal-update1000` | update 1000 | 99.9% | 61.4% | — |
-| hard | `bench:hard-update10000` | update 10000 | 100.0% | 71.6% | 64.8% |
+| easy | `bench:easy-update100` | `runs/ssp/main` update 100 | 100.0% | — | — |
+| normal | `bench:normal-update1000` | `runs/ssp/main` update 1000 | 99.9% | 61.4% | — |
+| hard | `bench:hard-multi-update14000` | `runs/ssp/multi` update 14000 | 100.0% | 76.1% | 64.7% |
+| (old hard) | `bench:hard-update10000` | `runs/ssp/main` update 10000 | 100.0% | 71.6% | 64.8% |
 
-2000 seat-swapped matches each. `bench:normal-update1000` doubles as the "1k"
-reference that the overnight run was measured against.
+2000 seat-swapped 2-player matches each; `bench:hard-multi-update14000`
+beats `bench:hard-update10000` 53.5% there. `bench:normal-update1000` doubles
+as the "1k" reference that the overnight run was measured against. The old
+hard is no longer shipped (`aiLevels.ts` imports the multi one) but stays as
+the benchmark the multi-player run was measured against: at tables of its
+copies, on fresh deals, the new hard wins 51.0% of 2p matches (4000), 44.5%
+of 3p (3000; even 33.3%) and 37.4% of 4p (3000; even 25%).
 
 `freeze` writes into the game's policy folder, but a new file only becomes a
 difficulty once `src/games/sea-salt-paper/aiLevels.ts` points a level at it.
@@ -220,14 +243,15 @@ CLAUDE.md.
 
 ## Jaipur (`jaipur/`)
 
-The same pipeline for Jaipur (2 players, first to 2 seals by default). The
-hand-written heuristic (`src/games/jaipur/ai.ts`) is the baseline every
-checkpoint is scored against, next to random and the checkpoint 500 updates
-earlier. Reward is ±1 for the match, plus `--round-reward` (0.005) × the
-round's rupee margin and `--seal-reward` (0.1) to the round's winner / loser.
-Workers: `--self-play` (half) train both seats against themselves,
-`--vs-heuristic` (0.17 → 2 of 12) spar with the heuristic — a fixed,
-competent opponent from update 1 — and the rest play past checkpoints.
+The same pipeline for Jaipur (2 players, first to 2 seals by default). Every
+checkpoint is scored against the shipped levels (`bench:`), random and the
+checkpoint 500 updates earlier. Reward is ±1 for the match, plus
+`--round-reward` (0.005) × the round's rupee margin and `--seal-reward` (0.1)
+to the round's winner / loser. Workers: `--self-play` (half) train both seats
+against themselves, and the rest play past checkpoints. (The game once had a
+hand-written heuristic AI — the original baseline, and 2 of the 12 workers'
+sparring partner in `runs/jaipur/main`. It was removed once the trained
+levels shipped.)
 
 The main run is launched by `training\runs\jaipur\main\train.cmd` (10k
 updates, `--resume`, output appended to `train.log`; run it again to carry on).
@@ -243,36 +267,30 @@ npm run jaipur:build                                   # → training/jaipur/dis
 python training/jaipur/env_client.py                   # random-agent smoke test of the bridge
 python training/jaipur/train.py --run main --updates 10000
 python training/jaipur/train.py --run main --resume
-python training/jaipur/evaluate.py match training/runs/jaipur/main heuristic --games 2000
-python training/jaipur/evaluate.py progress training/runs/jaipur/main --vs heuristic --every 1000
-npm run jaipur:eval -- --a heuristic --b "heuristic:holdDiscount=0.75" --games 2000   # tune the heuristic
+python training/jaipur/evaluate.py match training/runs/jaipur/main bench:hard-update10000 --games 2000
+python training/jaipur/evaluate.py progress training/runs/jaipur/main --vs bench:hard-update10000 --every 1000
 ```
 
-Agents: `random`, `heuristic`, `heuristic:k=v,…` (any of the `HeuristicParams`
-weights, e.g. `heuristic:holdDiscount=0.8,exposure=0.4`), `nn:<file>`,
-`nn-sample:<file>`; in `evaluate.py` also `bench:<name>` once
-`src/games/jaipur/policies/` holds frozen levels (`evaluate.py freeze`), a run
-dir or `RUN@N`. Runs land in `training/runs/jaipur/<run>/` with the same files
+Agents: `random`, `nn:<file>`, `nn-sample:<file>`; in `evaluate.py` also
+`bench:<name>` (the frozen levels in `src/games/jaipur/policies/`, see
+`evaluate.py freeze`), a run dir or `RUN@N`. Runs land in `training/runs/jaipur/<run>/` with the same files
 as the other games. The eval report adds how each side plays: rounds won,
 rupees per round, camel-token rate, sales per round and cards per sale, bonus
 tokens, trades, single takes and camel takes per round.
 
-For reference, the tuned heuristic beats random 100% and its first-guess
-weights 75.4% (2000 seat-swapped matches); it averages ~2.5 rounds and ~120
-actions per match, ~0.2 ms per decision. The env bridge runs ~4k random
-decisions/s per process at 32 envs.
+The env bridge runs ~4k random decisions/s per process at 32 envs.
 
 `runs/jaipur/main` (encoder v2, 256×2 MLP, 10k updates, 245M decisions,
-4 h 45 min) went from 28% vs the heuristic at update 100 to 80% at 1000 and
-~84% by 1500, then plateaued at 84–89% (vs the checkpoint 500 updates
-earlier ≈ 50% from ~update 2000). The game's AI levels are frozen
+4 h 45 min) went from 28% vs the (since removed) heuristic at update 100 to
+80% at 1000 and ~84% by 1500, then plateaued at 84–89% (vs the checkpoint 500
+updates earlier ≈ 50% from ~update 2000). The game's AI levels are frozen
 checkpoints of it, in `src/games/jaipur/policies/`:
 
-| Level | Benchmark | Source update | vs random | vs heuristic | vs easy | vs normal |
-|---|---|---:|---:|---:|---:|---:|
-| easy | `bench:easy-update100` | 100 | 100.0% | 29.1% | — | — |
-| normal | `bench:normal-update500` | 500 | 100.0% | 64.9% | 83.0% | — |
-| hard | `bench:hard-update10000` | 10000 | 100.0% | 87.5% | 89.8% | 68.5% |
+| Level | Benchmark | Source update | vs random | vs easy | vs normal |
+|---|---|---:|---:|---:|---:|
+| easy | `bench:easy-update100` | 100 | 100.0% | — | — |
+| normal | `bench:normal-update500` | 500 | 100.0% | 83.0% | — |
+| hard | `bench:hard-update10000` | 10000 | 100.0% | 89.8% | 68.5% |
 
 2000 seat-swapped matches each. Update 10000 ties the best-scoring
 checkpoint, u8400, 49.0%. Hard wins 68.5% against normal while averaging fewer
@@ -280,11 +298,11 @@ rupees per round: it plays to win rounds, not to run up the score.
 
 | File | Role |
 |---|---|
-| `jaipur/train.py` | PPO trainer (derived from `sgp/train.py`; shares `ssp/model.py`), plus heuristic sparring workers |
+| `jaipur/train.py` | PPO trainer (derived from `sgp/train.py`; shares `ssp/model.py`) |
 | `jaipur/test_training.py` | pytest: export parity, zero-sum rewards, train → resume → evaluate, freeze |
 | `jaipur/evaluate.py` | eval API + CLI (`match`, `baselines`, `progress`, `freeze`, `benchmarks`) |
 | `jaipur/env_client.py` | Python `JaipurEnv` client, plus a random-agent smoke test |
-| `jaipur/agents.ts` | `random`, `heuristic`, `heuristic:k=v,…`, `nn:`, `nn-sample:` |
+| `jaipur/agents.ts` | `random`, `nn:`, `nn-sample:` |
 | `jaipur/sim.ts` | `playMatch`: one headless match, per-seat play stats |
 | `jaipur/vec-env.ts` / `jaipur/env-server.ts` | the vectorized env and its stdio bridge (same protocol as SSP's) |
 | `jaipur/evaluate.ts` / `jaipur/eval.ts` | seat-swapped jobs, summary, report / CLI over worker threads |

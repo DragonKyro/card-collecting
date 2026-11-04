@@ -12,16 +12,15 @@ exits after the current update (the file is removed on the next start).
 Each update:
   1. Collect `--rollout` decisions from every env — `--workers` node processes
      × `--envs-per-worker` matches. Self-play workers train on both seats;
-     `--vs-heuristic` of them spar with the hand-written heuristic; the rest
-     play a past checkpoint drawn from the pool (random play until the first
-     checkpoint exists).
+     the rest play a past checkpoint drawn from the pool (random play until
+     the first checkpoint exists).
   2. PPO on every finished transition. Training starts from scratch.
   3. Every `--save-every`: a resumable checkpoint (ckpt/update_N.pt) and an
      exported policy (policies/update_N.json) the TypeScript side can play —
      `evaluate.py` and the opponent pool use these.
   4. Every `--eval-every`: in the background, a seat-swapped eval of the new
-     policy vs random, the hand-written heuristic, every benchmark (the
-     game's shipped AI levels, once there are any — see `evaluate.py freeze`),
+     policy vs random, every benchmark (the game's shipped AI levels — see
+     `evaluate.py freeze`),
      and the checkpoint `--eval-past-gap` saves earlier → tensorboard `eval/*`
      and evals.jsonl. Eval matches use their own seeds, so their deals are
      ones the agent never trained on. Once a checkpoint's evals are all
@@ -88,9 +87,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     game.add_argument("--envs-per-worker", type=int, default=32)
     game.add_argument("--rollout", type=int, default=64, help="decisions per env per update")
     game.add_argument("--self-play", type=float, default=0.5,
-                      help="share of workers in self-play; the rest face the heuristic or past checkpoints")
-    game.add_argument("--vs-heuristic", type=float, default=0.17,
-                      help="share of workers playing the hand-written heuristic (a fixed, competent sparring partner)")
+                      help="share of workers in self-play; the rest face past checkpoints")
     game.add_argument("--pool", type=int, default=20, help="newest checkpoints past opponents are drawn from")
     game.add_argument("--pool-refresh", type=int, default=10, help="updates between past-opponent re-draws")
     game.add_argument("--round-reward", type=float, default=0.005,
@@ -128,16 +125,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 @dataclass
 class Worker:
-    role: str  # 'self' | 'heuristic' | 'past'
+    role: str  # 'self' | 'past'
     env: JaipurEnv
     opponent: str
     batch: Batch | None = None
 
 
-def worker_roles(n: int, self_share: float, heuristic_share: float = 0.0) -> list[str]:
+def worker_roles(n: int, self_share: float) -> list[str]:
     n_self = min(n, max(0, round(n * self_share)))
-    n_heur = min(n - n_self, max(0, round(n * heuristic_share)))
-    return ["self"] * n_self + ["heuristic"] * n_heur + ["past"] * (n - n_self - n_heur)
+    return ["self"] * n_self + ["past"] * (n - n_self)
 
 
 def build_typescript() -> None:
@@ -293,12 +289,12 @@ class Trainer:
             json.dump({**vars(a), **self.versions, "obsDim": self.obs_dim, "numSlots": self.num_slots,
                        "arch": {"hidden": self.net.hidden, "layers": self.net.layers}}, f, indent=2)
 
-        roles = worker_roles(a.workers, a.self_play, a.vs_heuristic)
+        roles = worker_roles(a.workers, a.self_play)
         for w, role in enumerate(roles):
             env = JaipurEnv()
             seed = a.seed * 10_007 + w * 7_919 + self.update * 104_729
             # Past workers play random until the first checkpoint exists.
-            opponent = {"self": "self", "heuristic": "heuristic"}.get(role, "random")
+            opponent = "self" if role == "self" else "random"
             worker = Worker(role, env, opponent)
             worker.batch = env.reset(num_envs=a.envs_per_worker, seed=seed, opponent=opponent,
                                      round_reward=a.round_reward, seal_reward=a.seal_reward, seals_to_win=a.seals)
@@ -476,7 +472,7 @@ class Trainer:
     def eval_jobs(self) -> list[tuple[str, str, int]]:
         """(tag, opponent, games) for the checkpoint just saved."""
         a = self.args
-        jobs = [("random", "random", min(200, a.eval_games)), ("heuristic", "heuristic", a.eval_games)]
+        jobs = [("random", "random", min(200, a.eval_games))]
         jobs += [(f"bench_{name}", ev.BENCH + name, a.eval_games) for name in self.benches]
         past = ev.list_policies(self.run_dir)
         if len(past) > a.eval_past_gap:
@@ -555,8 +551,6 @@ class Trainer:
         benches = sorted((t for t in tags if t.startswith("bench_")),
                          key=lambda t: (order.get(t[len("bench_"):].split("-")[0], 9), t))
         cols = [(t, f"vs {t[len('bench_'):]}") for t in benches]
-        if "heuristic" in tags:
-            cols.append(("heuristic", "vs heuristic"))
         if "past" in tags:
             cols.append(("past", f"vs {a.eval_past_gap * a.save_every} updates earlier"))
         if "random" in tags:

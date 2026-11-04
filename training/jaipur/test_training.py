@@ -37,7 +37,7 @@ def test_exported_policy_matches_the_typescript_forward_pass(tmp_path):
             p.data.normal_(0, 0.2)
         path = str(tmp_path / "policy.json")
         export_policy(net, path, env.encoder_version, env.action_space_version, game=train.GAME)
-        batch = env.reset(num_envs=6, opponent="heuristic")
+        batch = env.reset(num_envs=6, opponent="random")
         for row in batch.obs:
             ts = env.policy_logits(path, row)
             with torch.no_grad():
@@ -76,14 +76,12 @@ def test_training_checkpoints_resumes_and_evaluates(tmp_path):
 
 
 def test_worker_roles():
-    assert train.worker_roles(12, 0.5, 0.17) == ["self"] * 6 + ["heuristic"] * 2 + ["past"] * 4
-    assert train.worker_roles(2, 0.5, 0.0) == ["self", "past"]
+    assert train.worker_roles(12, 0.5) == ["self"] * 6 + ["past"] * 6
+    assert train.worker_roles(2, 0.5) == ["self", "past"]
 
 
 def test_references_resolve():
     assert ev.resolve("random") == "random"
-    assert ev.resolve("heuristic") == "heuristic"
-    assert ev.agent_spec("heuristic:holdDiscount=0.8") == "heuristic:holdDiscount=0.8"
     with pytest.raises(FileNotFoundError):
         ev.resolve("no/such/run@5")
 
@@ -100,6 +98,6 @@ def test_freeze_makes_a_named_benchmark(tmp_path, monkeypatch):
     assert ev.label("bench:probe") == "bench:probe"
     with open(path, encoding="utf-8") as f:
         info = json.load(f)["meta"]["benchmark"]
-    assert info["note"] == "test" and set(info["evalAtFreeze"]) == {"random", "heuristic"}
+    assert info["note"] == "test" and set(info["evalAtFreeze"]) == {"random"}
     with pytest.raises(FileExistsError):
         ev.freeze(policy, "probe", games=2, workers=1, log=lambda *_: None)

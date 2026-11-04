@@ -90,7 +90,9 @@ export function legalMask(obs: SspObservation): Uint8Array {
   if (obs.activeOffset !== 0) return mask;
 
   // A jellyfish-locked player never decides anything: the reducer plays
-  // that whole turn (top card of the deck, then pass) for them.
+  // that whole turn (top card of the deck, then pass) for them. Extra Pepper
+  // decisions with no slots here — Water Rodeo, Angelfish, Coral Reef, the
+  // event choice — are answered by fixedChoices.ts; their subphases mask out.
   switch (obs.subPhase) {
     case 'awaitingAction':
       mask[SLOT_DRAW_PAIR] = 1;
@@ -126,7 +128,7 @@ export function legalMask(obs: SspObservation): Uint8Array {
 
     case 'awaitingCrabPick':
       if (obs.crabLookPile === null) {
-        for (const p of [0, 1] as const) if (obs.piles[p].size > 0) mask[SLOT_CRAB_PILE[p]] = 1;
+        for (const p of obs.crabPiles) mask[SLOT_CRAB_PILE[p]] = 1;
       } else {
         for (const c of pileCards(obs.piles[obs.crabLookPile])) mask[SLOT_CRAB_PICK[FAMILY_INDEX[c.family]]] = 1;
       }
@@ -134,7 +136,7 @@ export function legalMask(obs: SspObservation): Uint8Array {
 
     case 'awaitingSharkSteal':
       for (let off = 1; off < obs.players.length && off <= MAX_OPPONENTS; off++) {
-        if (obs.players[off].handSize > 0 && obs.lastChanceOffset !== off) {
+        if (obs.players[off].handSize > 0 && obs.lastChanceOffset !== off && !obs.players[off].coralShell) {
           mask[SLOT_SHARK_STEAL[off - 1]] = 1;
         }
       }
@@ -287,6 +289,14 @@ export function slotForAction(obs: SspObservation, action: SlotDecision): number
       const card = obs.lobsterReveal.find((c) => c.id === action.cardId);
       return card ? SLOT_LOBSTER_PICK[FAMILY_INDEX[card.family]] : -1;
     }
+    // Extra Pepper decisions with no slot (see fixedChoices.ts).
+    case 'rodeoLook':
+    case 'rodeoSwap':
+    case 'stealPair':
+    case 'placeCoralShell':
+    case 'angelfishPick':
+    case 'chooseEvent':
+      return -1;
   }
 }
 

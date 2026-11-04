@@ -2,18 +2,22 @@
 // action` shape. The policy only ever receives the seat's observation and
 // legal mask — this is the one hop where full state is narrowed down. A crab
 // pick takes two policy calls: pile first, then the card once that pile is
-// visible.
+// visible. Extra Pepper decisions the slots don't cover are answered by
+// fixedChoices.ts before the policy is asked.
 
 import type { PlayerId } from '@/core/types';
 import type { SspAction, SspState } from '../types';
 import { observe, type SspObservation } from './observation';
 import { decodeSlot, legalMask } from './actions';
+import { fixedChoice } from './fixedChoices';
 
 /** Chooses a slot from an observation and its legal mask. Must return a legal slot. */
 export type SlotPolicy = (obs: SspObservation, mask: Uint8Array) => number;
 
 export function actWithPolicy(state: SspState, playerId: PlayerId, policy: SlotPolicy): SspAction | null {
   let obs = observe(state, playerId);
+  const fixed = fixedChoice(obs);
+  if (fixed) return fixed;
   for (;;) {
     const mask = legalMask(obs);
     if (!mask.some((m) => m === 1)) return null;

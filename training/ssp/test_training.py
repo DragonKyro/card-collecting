@@ -60,6 +60,37 @@ def test_training_checkpoints_resumes_and_evaluates(tmp_path):
     assert vs_past["a"]["name"] == "nn:update_000003" and vs_past["b"]["name"] == "nn:update_000001"
 
 
+def test_multiplayer_run_from_another_runs_checkpoint(tmp_path):
+    common = ["--runs-dir", str(tmp_path), "--envs-per-worker", "4", "--rollout", "16", "--save-every", "1",
+              "--minibatch", "64", "--no-build", "--device", "cpu"]
+    base = train.main(common + ["--run", "base", "--workers", "2", "--updates", "2", "--eval-every", "0"])
+    init = os.path.join(base, "ckpt", "update_000002.pt")
+    run = train.main(common + ["--run", "multi", "--workers", "3", "--players", "2,3,4", "--init", init,
+                               "--updates", "4", "--eval-every", "2", "--eval-games", "3", "--eval-workers", "1",
+                               "--eval-bench", "hard-update10000"])
+    # The starting point is the new run's first policy, then training carries the count on.
+    assert [u for u, _ in ev.list_policies(run)] == [2, 3, 4]
+    with open(os.path.join(run, "metrics.jsonl"), encoding="utf-8") as f:
+        lines = [json.loads(line) for line in f]
+    assert lines[0]["update"] == 3
+    # Update 4's evals ran at every table size.
+    with open(os.path.join(run, "evals.jsonl"), encoding="utf-8") as f:
+        evals = {(r["update"], r["vs"]): r for r in map(json.loads, f)}
+    assert {vs for u, vs in evals if u == 4} >= {"random", "bench_hard-update10000",
+                                                  "bench_hard-update10000_3p", "bench_hard-update10000_4p"}
+    assert evals[(4, "bench_hard-update10000_4p")]["players"] == 4
+    with open(os.path.join(run, "progress.md"), encoding="utf-8") as f:
+        assert "4p vs 3x hard-update10000 (even 25%)" in f.read()
+    with pytest.raises(SystemExit):
+        train.main(common + ["--run", "bad", "--workers", "2", "--players", "2,3,4", "--updates", "1"])
+    # 4-player self-play carries up to four pending transitions per match between updates.
+    four_self = train.main(common + ["--run", "four", "--workers", "2", "--players", "4", "--self-play", "1",
+                                     "--updates", "3", "--eval-every", "0"])
+    assert [u for u, _ in ev.list_policies(four_self)] == [1, 2, 3]
+    four = ev.evaluate(run, "random", games=8, workers=1, players=4)
+    assert four["matches"] == 8 and four["players"] == 4 and four["a"]["errors"] == 0
+
+
 def test_references_resolve():
     assert ev.resolve("random") == "random"
     with pytest.raises(FileNotFoundError):

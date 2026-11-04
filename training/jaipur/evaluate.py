@@ -6,20 +6,18 @@ rules, with every seed — the deal of every round — played from both seats.
 
 Agents are named by reference:
     random                    uniformly random legal moves
-    heuristic                 the game's hand-written AI (src/games/jaipur/ai.ts)
-    heuristic:k=v,...         the same with some weights changed
     bench:<name>              a policy the game ships (src/games/jaipur/policies/<name>.json)
     path/to/update_000120.json  an exported policy file
     path/to/run_dir           that run's latest checkpoint
     path/to/run_dir@120       that run's checkpoint at update 120
 
-    python training/jaipur/evaluate.py match RUN@2000 heuristic --games 2000
-    python training/jaipur/evaluate.py baselines RUN             # vs random, heuristic and every benchmark
-    python training/jaipur/evaluate.py progress RUN --vs heuristic --every 1000
+    python training/jaipur/evaluate.py match RUN@2000 bench:hard-update10000 --games 2000
+    python training/jaipur/evaluate.py baselines RUN             # vs random and every benchmark
+    python training/jaipur/evaluate.py progress RUN --vs bench:hard-update10000 --every 1000
     python training/jaipur/evaluate.py freeze RUN@1000 --name normal-update1000 --note "..."   # pin a policy
     python training/jaipur/evaluate.py benchmarks               # list them
 
-Benchmarks are the policies the game ships as AI levels (once it has any): fixed
+Benchmarks are the policies the game ships as AI levels: fixed
 opponents that never change, so scores against them stay comparable across
 runs. `freeze` copies a policy into the game's policy folder and records where
 it came from and how it scored vs the baselines and the other benchmarks.
@@ -46,8 +44,7 @@ EVAL_SCRIPT = os.path.join(HERE, "dist", "jaipur-eval.mjs")
 # Eval seeds start far from the training env seeds so agents are scored on
 # deals they never trained on.
 EVAL_SEED = 900_000
-BASELINES = ("random", "heuristic")
-HEURISTIC = "heuristic:"
+BASELINES = ("random",)
 # Benchmarks are the policies the game ships as AI levels.
 BENCH_DIR = os.path.join(REPO, "src", "games", "jaipur", "policies")
 BENCH = "bench:"
@@ -75,7 +72,7 @@ def list_benchmarks() -> dict[str, str]:
 
 
 def is_baseline(ref: str) -> bool:
-    return ref in BASELINES or ref.startswith(HEURISTIC)
+    return ref in BASELINES
 
 
 def resolve(ref: str) -> str:
@@ -246,7 +243,7 @@ def main(argv: list[str] | None = None) -> None:
     m.add_argument("b")
     m.add_argument("--seed", type=int, default=EVAL_SEED)
 
-    b = sub.add_parser("baselines", parents=[common], help="a policy vs random, heuristic and every benchmark")
+    b = sub.add_parser("baselines", parents=[common], help="a policy vs random and every benchmark")
     b.add_argument("policy")
 
     fr = sub.add_parser("freeze", parents=[common], help="save a policy as a named benchmark")

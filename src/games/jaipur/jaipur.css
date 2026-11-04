@@ -288,6 +288,21 @@
 .jp-log ol { list-style: none; margin: 0; padding: 0; max-height: 330px; overflow-y: auto; font-size: 12px; }
 .jp-log li { padding: 3px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.05); line-height: 1.35; }
 .jp-log li.jp-log-roundEnd, .jp-log li.jp-log-matchEnd { color: #f3cf63; font-weight: 600; }
+/* A move as symbols: name, then + / ⇄ / ₹ with card icons (the sentence is the tooltip). */
+.jp-log li:not(.jp-log-roundEnd):not(.jp-log-matchEnd) { display: flex; align-items: center; gap: 5px; }
+.jp-log-who { font-weight: 700; white-space: nowrap; max-width: 7em; overflow: hidden; text-overflow: ellipsis; }
+.jp-log-move { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 3px; }
+.jp-log-verb { font-weight: 800; color: #f3cf63; min-width: 0.8em; text-align: center; }
+.jp-log-cards { display: inline-flex; align-items: center; gap: 1px; }
+.jp-log-n { font-size: 11px; font-weight: 700; }
+.jp-log-rupees { font-weight: 800; color: #f3cf63; margin-left: 2px; }
+.jp-log-bonus { width: 17px; height: 17px; flex: none; }
+.jp-log-refill { display: inline-flex; align-items: center; gap: 2px; margin-left: 4px; opacity: 0.55; font-size: 11px; }
+.jp-log-refill .jp-type-icon { width: 12px; height: 12px; }
+.jp-sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
 
 /* ---------- round summary / game over ---------- */
 

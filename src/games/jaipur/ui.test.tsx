@@ -35,6 +35,28 @@ function setup(state = position(), localPlayerId: string | null = 'me') {
 }
 
 describe('jaipur game view', () => {
+  it('shows the log as symbols, with the sentence as the tooltip', () => {
+    const s = position();
+    s.log = [
+      { seq: 1, round: 1, kind: 'sell', playerId: 'me', good: 'leather', count: 5, tokens: [4, 1, 1, 1, 1], bonus: { size: 5, value: 9 } },
+      { seq: 2, round: 1, kind: 'sell', playerId: 'ai', good: 'cloth', count: 3, tokens: [5, 3, 3], bonus: { size: 3, value: 2 } },
+      { seq: 3, round: 1, kind: 'exchange', playerId: 'me', took: ['leather', 'leather', 'leather'], gave: ['cloth', 'spice', 'camel'] },
+      { seq: 4, round: 1, kind: 'takeOne', playerId: 'ai', good: 'spice', refill: 'silver' },
+    ];
+    s.logSeq = 4;
+    const t = setup(s);
+    const [take, trade, theirSale, mySale] = Array.from(t.view.container.querySelectorAll<HTMLElement>('.jp-log li'));
+    expect(take.title).toBe('Bot took Spice (the deck turned up Silver).');
+    expect(take.querySelector('.jp-log-refill .jp-type-icon')).not.toBeNull();
+    expect(trade.querySelector('.jp-log-move')!.textContent).toContain('⇄');
+    expect(trade.querySelectorAll('.jp-type-icon')).toHaveLength(4); // cloth, spice, camel ⇄ leather
+    expect(trade.querySelector('.jp-log-n')!.textContent).toBe('×3');
+    expect(mySale.querySelector('.jp-log-rupees')!.textContent).toBe('→ 8');
+    expect(mySale.querySelector('.jp-log-bonus')!.textContent).toContain('9');
+    // An opponent's bonus value stays hidden: just its size.
+    expect(theirSale.querySelector('.jp-log-bonus')!.textContent).toBe('×3');
+  });
+
   it('takes one good from the market', () => {
     const t = setup();
     fireEvent.click(t.market()[1]);

@@ -3,20 +3,22 @@
 //   seatsFor       two AI seats
 //   sampleStates   a spread of states (every turn, round ends) from matches
 //                  where both seats pick uniformly random legal slots — or
-//                  the heuristic AI — so trades, sales and both round endings
-//                  all come up.
+//                  the strongest shipped policy — so trades, sales and both
+//                  round endings all come up.
 //   scrambleHidden rewrites everything one seat must NOT know, so a fair
 //                  agent's view has to come out identical.
 
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import type { PlayerId, Seat } from '@/core/types';
 import { createRng, rngInt, rngNext, shuffle, type RngState } from '@/core/rng';
 import { sampleLegal } from '@/ai/masked';
 import type { JaipurCard, JaipurConfig, JaipurGood, JaipurState } from './types';
 import { BONUS_SIZES, BONUS_VALUES } from './cards';
 import { applyAction, createJaipurState } from './reducer';
-import { chooseJaipurAction } from './ai';
 import { knowledgeOf } from './knowledge';
-import { actWithPolicy } from './nn/agent';
+import { actWithPolicy, type SlotPolicy } from './nn/agent';
+import { greedyPolicy, loadJaipurPolicy, type JaipurPolicyFile } from './nn/policy';
 
 export function seatsFor(n = 2): Seat[] {
   return Array.from({ length: n }, (_, i) => ({
@@ -31,9 +33,23 @@ export interface SampleOptions {
   seed: number;
   /** Keep every n-th state. */
   every?: number;
-  /** Who plays: uniformly random slots (default) or the heuristic AI. */
-  players?: 'random' | 'heuristic' | 'mixed';
+  /** Who plays: uniformly random slots (default), the strongest shipped
+   *  policy, or one of each. */
+  players?: 'random' | 'policy' | 'mixed';
   config?: JaipurConfig;
+}
+
+let shipped: SlotPolicy | null = null;
+/** The strongest shipped policy (hard, else the last file), loaded once. */
+function shippedPolicy(): SlotPolicy {
+  if (!shipped) {
+    const dir = join(__dirname, 'policies');
+    const files = readdirSync(dir).filter((f) => f.endsWith('.json')).sort();
+    const file = files.find((f) => f.startsWith('hard-')) ?? files.at(-1);
+    if (!file) throw new Error('no shipped Jaipur policy to play with');
+    shipped = greedyPolicy(loadJaipurPolicy(JSON.parse(readFileSync(join(dir, file), 'utf8')) as JaipurPolicyFile));
+  }
+  return shipped;
 }
 
 export function sampleStates(opts: SampleOptions): JaipurState[] {
@@ -53,8 +69,8 @@ export function sampleStates(opts: SampleOptions): JaipurState[] {
       }
       const pid = s.activePlayerId!;
       const who = opts.players ?? 'random';
-      const heuristic = who === 'heuristic' || (who === 'mixed' && pid === s.players[m % 2].id);
-      s = applyAction(s, heuristic ? chooseJaipurAction(s, pid)! : actWithPolicy(s, pid, random)!);
+      const trained = who === 'policy' || (who === 'mixed' && pid === s.players[m % 2].id);
+      s = applyAction(s, actWithPolicy(s, pid, trained ? shippedPolicy() : random)!);
     }
     out.push(s);
   }

@@ -110,8 +110,8 @@ class JaipurEnv:
         max_steps: int = 5_000,
         seals_to_win: int = 2,
     ) -> Batch:
-        """opponent: 'self' (both seats are the learner), 'random', 'heuristic',
-        'heuristic:k=v,...', 'nn:<policy.json>' or 'nn-sample:<policy.json>'.
+        """opponent: 'self' (both seats are the learner), 'random',
+        'nn:<policy.json>' or 'nn-sample:<policy.json>'.
         round_reward × (own − opponent round rupees) and ±seal_reward are paid
         at each round end, on top of ±1 for the match."""
         options = {

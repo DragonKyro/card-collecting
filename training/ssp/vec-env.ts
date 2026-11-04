@@ -1,4 +1,4 @@
-// A batch of independent 2-player matches for a learner to drive.
+// A batch of independent matches (2–4 players) for a learner to drive.
 //
 // Each env advances on its own (opponent moves, round-end click-throughs)
 // until a LEARNER seat has a decision, then reports that seat's encoded
@@ -9,35 +9,40 @@
 // marks that env i's episode ended during the last advance, and the obs
 // returned is already the first decision of its next episode.
 //
-// Rewards are per seat (always length 2) and accrue between consecutive
-// batches: credit `reward[i][s]` to seat s's most recent transition in env i.
-//   - match end: +1 winner, −1 loser (0 if truncated)
+// Rewards are per seat (`players` of them per env) and accrue between
+// consecutive batches: credit `reward[i][s]` to seat s's most recent
+// transition in env i. Both kinds are zero-sum over the table:
+//   - match end: +1 winner, −1/(players − 1) each other seat (0 if truncated)
+//     — at 2 players, ±1;
 //   - optional shaping at each round end: roundReward × (own round total −
-//     opponent's round total)
+//     the other seats' mean round total).
 //
-// opponent 'self' makes both seats learners (self-play); any agent spec from
-// agents.ts plays the non-learner seat otherwise. `configure` swaps that
-// opponent for matches that start afterwards (the self / fixed split can't
-// change mid-run).
+// opponent 'self' makes every seat a learner (self-play); any agent spec from
+// agents.ts plays the non-learner seats otherwise, with the learner in one
+// seat. `configure` swaps that opponent for matches that start afterwards
+// (the self / fixed split can't change mid-run).
 
 import type { SspState } from '@/games/sea-salt-paper/types';
 import { applyAction } from '@/games/sea-salt-paper/reducer';
 import { observe } from '@/games/sea-salt-paper/nn/observation';
 import { NUM_SLOTS, decodeSlot, legalMask } from '@/games/sea-salt-paper/nn/actions';
 import { OBS_DIM, encodeObservation } from '@/games/sea-salt-paper/nn/encode';
+import { fixedChoice } from '@/games/sea-salt-paper/nn/fixedChoices';
 import { agentFactory, agentSeed, type AgentFactory, type SspAgent } from './agents';
 import { newMatch, winnerSeatOf } from './sim';
 
 export interface VecEnvOptions {
   numEnvs: number;
   seed: number;
+  /** Seats per match, 2–4. */
+  players: number;
   extraSalt: boolean;
   extraPepper?: boolean;
   targetScore: number;
-  /** 'self' = both seats are learners; otherwise an agent spec for the other seat. */
+  /** 'self' = every seat is a learner; otherwise an agent spec for the other seats. */
   opponent: string;
-  /** Which seat the learner takes vs a fixed opponent; 'alternate' swaps every episode. */
-  learnerSeat: 'alternate' | 0 | 1;
+  /** Which seat the learner takes vs a fixed opponent; 'alternate' rotates every episode. */
+  learnerSeat: 'alternate' | number;
   roundReward: number;
   maxSteps: number;
 }
@@ -45,6 +50,7 @@ export interface VecEnvOptions {
 export const DEFAULT_VEC_ENV_OPTIONS: VecEnvOptions = {
   numEnvs: 16,
   seed: 1,
+  players: 2,
   extraSalt: true,
   extraPepper: false,
   targetScore: 40,
@@ -67,13 +73,13 @@ export interface Episode {
 
 /** Buffers are reused by the next reset / step — copy anything you keep. */
 export interface VecBatch {
-  /** Seat (0 / 1) whose decision row i is. */
+  /** Seat whose decision row i is. */
   seat: Int8Array;
   /** numEnvs × OBS_DIM, row-major. */
   obs: Float32Array;
   /** numEnvs × NUM_SLOTS, 1 = legal. */
   mask: Uint8Array;
-  /** numEnvs × 2, per-seat reward since the previous batch. */
+  /** numEnvs × players, per-seat reward since the previous batch. */
   reward: Float32Array;
   done: Uint8Array;
   episodes: Episode[];
@@ -83,7 +89,8 @@ interface EnvSlot {
   state: SspState;
   seed: number;
   episode: number;
-  learner: [boolean, boolean];
+  learner: boolean[];
+  /** Plays every non-learner seat. */
   opponent: SspAgent | null;
   steps: number;
   seat: number;
@@ -99,14 +106,15 @@ export class SspVecEnv {
 
   constructor(options: Partial<VecEnvOptions> = {}) {
     this.opts = { ...DEFAULT_VEC_ENV_OPTIONS, ...options };
-    const n = this.opts.numEnvs;
+    const { numEnvs: n, players } = this.opts;
     if (!(Number.isInteger(n) && n >= 1)) throw new Error('numEnvs must be a positive integer');
+    if (!(Number.isInteger(players) && players >= 2 && players <= 4)) throw new Error('players must be 2, 3 or 4');
     this.opponentFactory = this.opts.opponent === 'self' ? null : agentFactory(this.opts.opponent);
     this.batch = {
       seat: new Int8Array(n),
       obs: new Float32Array(n * OBS_DIM),
       mask: new Uint8Array(n * NUM_SLOTS),
-      reward: new Float32Array(n * 2),
+      reward: new Float32Array(n * players),
       done: new Uint8Array(n),
       episodes: [],
     };
@@ -155,15 +163,16 @@ export class SspVecEnv {
   }
 
   private startEpisode(i: number, episode: number): EnvSlot {
+    const { players } = this.opts;
     const seed = (Math.imul(this.opts.seed, 1_000_003) + Math.imul(i, 7919) + episode * 104_729) >>> 0;
-    let learner: [boolean, boolean] = [true, true];
+    let learner = Array.from({ length: players }, () => true);
     if (this.opponentFactory) {
-      const seat = this.opts.learnerSeat === 'alternate' ? (i + episode) % 2 : this.opts.learnerSeat;
-      learner = [seat === 0, seat === 1];
+      const seat = this.opts.learnerSeat === 'alternate' ? (i + episode) % players : this.opts.learnerSeat;
+      learner = learner.map((_, k) => k === seat);
     }
-    const opponentSeat = learner[0] ? 1 : 0;
+    const opponentSeat = learner.indexOf(false);
     return {
-      state: newMatch(seed, this.opts),
+      state: newMatch(seed, this.opts, players),
       seed,
       episode,
       learner,
@@ -177,6 +186,7 @@ export class SspVecEnv {
   /** Run env i forward to the next learner decision, resetting finished matches. */
   private advance(i: number): void {
     const r = this.batch.reward;
+    const P = this.opts.players;
     for (;;) {
       const env = this.envs[i];
       const s = env.state;
@@ -184,14 +194,13 @@ export class SspVecEnv {
         const truncated = s.phase === 'playing';
         const winner = truncated ? null : winnerSeatOf(s);
         if (winner !== null) {
-          r[i * 2 + winner] += 1;
-          r[i * 2 + (1 - winner)] -= 1;
+          for (let k = 0; k < P; k++) r[i * P + k] += k === winner ? 1 : -1 / (P - 1);
         }
         this.batch.done[i] = 1;
         this.batch.episodes.push({
           env: i,
           seed: env.seed,
-          learnerSeats: [0, 1].filter((k) => env.learner[k]),
+          learnerSeats: env.learner.flatMap((on, k) => (on ? [k] : [])),
           winnerSeat: winner,
           scores: s.players.map((p) => p.matchScore),
           rounds: s.round,
@@ -204,10 +213,19 @@ export class SspVecEnv {
       if (s.subPhase === 'roundEnd') {
         if (this.opts.roundReward !== 0 && s.lastRoundSummary) {
           const totals = s.players.map((p) => s.lastRoundSummary!.perPlayer.find((row) => row.playerId === p.id)?.total ?? 0);
-          r[i * 2] += this.opts.roundReward * (totals[0] - totals[1]);
-          r[i * 2 + 1] += this.opts.roundReward * (totals[1] - totals[0]);
+          const sum = totals.reduce((a, b) => a + b, 0);
+          for (let k = 0; k < P; k++) {
+            r[i * P + k] += this.opts.roundReward * (totals[k] - (sum - totals[k]) / (P - 1));
+          }
         }
         env.state = applyAction(s, { type: 'nextRound' });
+        env.steps++;
+        continue;
+      }
+      // Extra Pepper decisions without action slots play themselves.
+      const fixed = s.event ? fixedChoice(observe(s, s.activePlayerId!)) : null;
+      if (fixed) {
+        env.state = applyAction(s, fixed);
         env.steps++;
         continue;
       }

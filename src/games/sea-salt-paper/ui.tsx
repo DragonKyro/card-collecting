@@ -7,7 +7,9 @@ import type {
 import { CardView, FaceDownCard, TrackedFaceDownCard } from './Card';
 import { isValidDuoPair, isValidStarfishTrio, tentativeScore, totalScore } from './scoring';
 import { FAMILY, FAMILY_COLORS, FAMILY_ORDER } from './cards';
-import { EVENT_BY_ID, ALL_EVENT_IDS } from './events';
+import { EVENT_BY_ID, ALL_EVENT_IDS, eventAppliesTo } from './events';
+import { canPlaceCoralShell, rodeoTargets, scoringOptsFor, stealablePairs, stopThresholdFor } from './reducer';
+import { roundLog } from './knowledge';
 import { Sidebar } from './Sidebar';
 import { RulesBook, RulesHero, RulesGrid, RulesTile } from '@/ui/RulesBook';
 import { SspFlipProvider, useFlipAnchor } from './cardFlip';
@@ -301,22 +303,24 @@ function Rules() {
               </RulesGrid>
               <h3>Extra Pepper (event deck)</h3>
               <p>
-                One event card is revealed per round and applied to that round.
-                <strong> Plus</strong> events go to the round leader after the
-                round (and persist until they're no longer leading),
-                <strong> minus</strong> events to the laggard (same persistence
-                rule), and <strong> global</strong> events apply to everyone for
-                the round only.
+                One event card is revealed each round, and its rule applies to
+                everyone that round. When the round&apos;s points are in, the card
+                goes to the player with the <strong>most</strong> points (the
+                handicaps) or the <strong>fewest</strong> (the boosts) — on a tie
+                for that place, nobody takes it. From then on its rule applies
+                only to its holder, for as long as they stay alone in that place.
+                A player holds one event card at most: winning a second, they
+                choose which to keep.
               </p>
               <table className="tight">
                 <thead>
-                  <tr><th>Event</th><th>Sign</th><th>Effect</th></tr>
+                  <tr><th>Event</th><th>Goes to</th><th>Effect</th></tr>
                 </thead>
                 <tbody>
                   {ALL_EVENT_IDS.map((id) => {
                     const e = EVENT_BY_ID[id];
-                    const signLabel = e.sign === '+' ? '+ leader' : e.sign === '-' ? '− laggard' : 'global';
-                    const signColor = e.sign === '+' ? '#9ed27c' : e.sign === '-' ? '#ff7070' : '#6aa0ff';
+                    const signLabel = e.sign === '+' ? 'most points' : 'fewest points';
+                    const signColor = e.sign === '+' ? '#ff7070' : '#9ed27c';
                     return (
                       <tr key={id}>
                         <td>{e.name}</td>
@@ -328,9 +332,11 @@ function Rules() {
                 </tbody>
               </table>
               <p className="muted" style={{ fontSize: 11, marginTop: 4 }}>
-                v1 models 6 of the published expansion's 12 event cards
-                (covering each sign/effect shape). Remaining 6 will be added
-                when authoritative rule text is in hand.
+                Readings used here: the Hermit Crab looks through each pile and
+                takes any card from it; the Angelfish also fires when a turn ends
+                with LAST CHANCE (not STOP, which ends the round at once); the
+                Coral Reef&apos;s &quot;attacks&quot; are shark steals, the Water Rodeo
+                swap and pair steal, and the jellyfish lock.
               </p>
             </>
           ),
@@ -369,7 +375,8 @@ function GameView({
     setSelected([]);
     setKeepIndex(null);
     setCrabPickPile(null);
-  }, [state.activePlayerId, state.subPhase, state.round]);
+    // (crabPilesLeft: the Hermit Crab's second pile is a new pick.)
+  }, [state.activePlayerId, state.subPhase, state.round, state.crabPilesLeft?.join()]);
 
   // Timing: reset on fresh match (round 1, no log yet), then credit gaps to
   // whichever seat was previously active on every active-player change. Lives
@@ -409,7 +416,8 @@ function GameView({
     : state.players.filter((p) => p.id !== localPlayerId);
   const mySeatName = getSeat(state, localPlayerId ?? '')?.name ?? 'You';
   const flipOrigins = useMemo(() => cardOrigins(state), [state]);
-  const flipScene = `${state.round}:${state.phase === 'gameOver' ? 'over' : state.subPhase === 'roundEnd' ? 'summary' : 'board'}`;
+  const onSummary = state.subPhase === 'roundEnd' || state.subPhase === 'awaitingEventChoice';
+  const flipScene = `${state.round}:${state.phase === 'gameOver' ? 'over' : onSummary ? 'summary' : 'board'}`;
 
   // ----- Auto-end-turn: if active human has no plays AND can't stop, just pass.
   // We let the AI driver in GameHost handle AI seats; for humans we only auto
@@ -419,22 +427,11 @@ function GameView({
     if (!isLocalActive) return;
     if (state.subPhase !== 'awaitingPlayOrEnd') return;
     if (!me) return;
-    const pairs = findHandPairs(me.hand);
-    const ev = state.event?.current;
-    const meHasEvent = (id: 'danceOfShells' | 'kraken' | 'tornado' | 'treasureChest' | 'diodonFish') =>
-      (me.heldEvents ?? []).includes(id) || ev === id;
-    const opts = {
-      trioCancelledIds: new Set<number>((me.trios ?? []).flat()),
-      trios: me.trios?.length ?? 0,
-      shellPerCard: meHasEvent('danceOfShells'),
-      octopusPerCard: meHasEvent('kraken'),
-      mermaidsScoreZero: meHasEvent('tornado'),
-    };
-    const score = tentativeScore(me.hand, me.table, opts);
+    const pairs = findHandPairs(me.hand, eventAppliesTo(state, me, 'waterRodeo'));
+    const score = tentativeScore(me.hand, me.table, scoringOptsFor(state, me));
     const noPair = pairs.length === 0;
-    const stopThreshold = meHasEvent('treasureChest') ? 10 : 7;
-    const cannotEnd = score < stopThreshold;
-    if (noPair && cannotEnd) {
+    const cannotEnd = score < stopThresholdFor(state, me);
+    if (noPair && cannotEnd && !canPlaceCoralShell(state, me)) {
       const t = setTimeout(() => dispatch({ type: 'pass' }), 400);
       return () => clearTimeout(t);
     }
@@ -451,12 +448,12 @@ function GameView({
     );
   }
 
-  if (state.subPhase === 'roundEnd') {
+  if (state.subPhase === 'roundEnd' || state.subPhase === 'awaitingEventChoice') {
     return (
       <SspFlipProvider origins={flipOrigins} scene={flipScene}>
       <div className="ssp-layout">
         <div className="ssp">
-          <RoundSummary state={state} dispatch={dispatch} />
+          <RoundSummary state={state} dispatch={dispatch} localPlayerId={localPlayerId} />
         </div>
         <Sidebar state={state} mySeatName={mySeatName} localPlayerId={localPlayerId} />
       </div>
@@ -464,12 +461,13 @@ function GameView({
     );
   }
 
+  const pairRules = { waterRodeo: !!me && eventAppliesTo(state, me, 'waterRodeo') };
   const canPlaySelectedPair =
     selected.length === 2 && me &&
     (() => {
       const a = me.hand.find((c) => c.id === selected[0]);
       const b = me.hand.find((c) => c.id === selected[1]);
-      return a && b && isValidDuoPair(a, b);
+      return a && b && isValidDuoPair(a, b, pairRules);
     })();
 
   const canPlaySelectedTrio =
@@ -477,26 +475,22 @@ function GameView({
     (() => {
       const cards = selected.map((id) => me.hand.find((c) => c.id === id));
       if (cards.some((c) => !c)) return false;
-      return isValidStarfishTrio(cards[0]!, cards[1]!, cards[2]!);
+      return isValidStarfishTrio(cards[0]!, cards[1]!, cards[2]!, pairRules);
     })();
 
-  const ev = state.event?.current;
-  const myHasEvent = (id: 'danceOfShells' | 'kraken' | 'tornado' | 'treasureChest' | 'diodonFish') =>
-    !!(me && ((me.heldEvents ?? []).includes(id) || ev === id));
-  const myScoringOpts = me ? {
-    trioCancelledIds: new Set<number>((me.trios ?? []).flat()),
-    trios: me.trios?.length ?? 0,
-    shellPerCard: myHasEvent('danceOfShells'),
-    octopusPerCard: myHasEvent('kraken'),
-    mermaidsScoreZero: myHasEvent('tornado'),
-  } : {};
-  const myTentative = me ? tentativeScore(me.hand, me.table, myScoringOpts) : 0;
-  const myStopThreshold = myHasEvent('treasureChest') ? 10 : 7;
+  const myTentative = me ? tentativeScore(me.hand, me.table, scoringOptsFor(state, me)) : 0;
+  const myStopThreshold = me ? stopThresholdFor(state, me) : 7;
   // Diodon Fish: may not call STOP — only LAST CHANCE ends the round.
-  const canStop = isLocalActive && state.subPhase === 'awaitingPlayOrEnd' && myTentative >= myStopThreshold && state.lastChanceFrom === null && !myHasEvent('diodonFish');
+  const canStop = isLocalActive && state.subPhase === 'awaitingPlayOrEnd' && myTentative >= myStopThreshold && state.lastChanceFrom === null && !(me && eventAppliesTo(state, me, 'diodonFish'));
   const canLastChanceFromScore = isLocalActive && state.subPhase === 'awaitingPlayOrEnd' && myTentative >= myStopThreshold && state.lastChanceFrom === null;
   const canLastChance = canLastChanceFromScore && state.players.length > 1;
   const canPass = isLocalActive && state.subPhase === 'awaitingPlayOrEnd';
+  // The Coral Reef: the selected shell, else the only shell in hand.
+  const coralShell = me && isLocalActive && canPlaceCoralShell(state, me)
+    ? (selected.length === 1
+        ? me.hand.find((c) => c.id === selected[0] && c.family === 'shell')
+        : me.hand.filter((c) => c.family === 'shell').length === 1 ? me.hand.find((c) => c.family === 'shell') : undefined)
+    : undefined;
 
   const toggleSelect = (cardId: number) => {
     setSelected((prev) => {
@@ -527,8 +521,13 @@ function GameView({
       // Step 2 (picking a card from that pile) happens inside CrabPicker, which
       // shows the pile contents only once we've committed.
       if (state.discards[pileIdx].length === 0) return;
+      if (state.crabPilesLeft && !state.crabPilesLeft.includes(pileIdx)) return; // Hermit Crab: pile done
       setCrabPickPile(pileIdx);
       return;
+    }
+    if (state.subPhase === 'awaitingAngelfishPick') {
+      if (state.discards[pileIdx].length === 0) return;
+      dispatch({ type: 'angelfishPick', pile: pileIdx });
     }
   };
 
@@ -614,24 +613,39 @@ function GameView({
             />
           )}
 
+          {state.subPhase === 'awaitingRodeoSwap' && isLocalActive && me && (
+            <RodeoSwapPanel
+              state={state}
+              dispatch={dispatch}
+              give={selected.length === 1 ? selected[0] : null}
+            />
+          )}
+
           {isAllAI ? null : me ? (
             <div className="hand-area">
               <h3>
-                <span>{getSeat(state, me.id)?.name ?? 'You'} — {myTentative} pt{myTentative === 1 ? '' : 's'}</span>
+                <span>
+                  {getSeat(state, me.id)?.name ?? 'You'} — {myTentative} pt{myTentative === 1 ? '' : 's'}
+                  <HeldEventBadge player={me} />
+                </span>
                 <ColorCountStrip cards={[...me.hand, ...me.table]} />
               </h3>
 
               <div className="cards">
                 {sortedHand(me.hand, handOrder).map((c) => {
-                  const allowSelect =
-                    isLocalActive && state.subPhase === 'awaitingPlayOrEnd';
+                  // Water Rodeo swap: pick the one card to give.
+                  const allowSelect = isLocalActive
+                    && (state.subPhase === 'awaitingPlayOrEnd' || state.subPhase === 'awaitingRodeoSwap');
+                  const onSelect = state.subPhase === 'awaitingRodeoSwap'
+                    ? () => setSelected((prev) => (prev[0] === c.id ? [] : [c.id]))
+                    : () => toggleSelect(c.id);
                   return (
                     <DraggableHandCard
                       key={c.id}
                       card={c}
                       selectable={allowSelect}
                       selected={selected.includes(c.id)}
-                      onClick={allowSelect ? () => toggleSelect(c.id) : undefined}
+                      onClick={allowSelect ? onSelect : undefined}
                       isDragging={dragId === c.id}
                       onDragStart={() => setDragId(c.id)}
                       onDragEnd={() => setDragId(null)}
@@ -655,11 +669,28 @@ function GameView({
                 {me.table.map((c) => (
                   <CardView key={c.id} card={c} size="small" zone="table-me" />
                 ))}
+                {me.coralShell && (
+                  <div className="ssp-coral" title="The Coral Reef: face down, worth no points — you are immune to attacks.">
+                    <CardView card={me.coralShell} size="small" zone="coral-me" />
+                    <span className="ssp-coral-tag">🛡 face down</span>
+                  </div>
+                )}
               </div>
 
               <div className="actions">
                 {state.subPhase === 'awaitingPlayOrEnd' && (
                   <>
+                    {coralShell && (
+                      <button
+                        title="The Coral Reef: the shell scores nothing, but you become immune to attacks."
+                        onClick={() => {
+                          dispatch({ type: 'placeCoralShell', cardId: coralShell.id });
+                          setSelected([]);
+                        }}
+                      >
+                        Place shell face down
+                      </button>
+                    )}
                     <button
                       disabled={!canPlaySelectedPair}
                       onClick={() => {
@@ -698,11 +729,27 @@ function GameView({
                 )}
                 {state.subPhase === 'awaitingCrabPick' && isLocalActive && crabPickPile === null && (
                   <p className="help" style={{ alignSelf: 'center', margin: 0 }}>
-                    (Crab) Click a discard pile to dig into.
+                    {state.crabPilesLeft
+                      ? `(Hermit Crab) Take a card from each pile — click pile ${state.crabPilesLeft.map((i) => i + 1).join(' or ')} to dig into.`
+                      : '(Crab) Click a discard pile to dig into.'}
                   </p>
                 )}
                 {state.subPhase === 'awaitingLobsterPick' && isLocalActive && (
                   <LobsterPicker state={state} dispatch={dispatch} />
+                )}
+                {state.subPhase === 'awaitingRodeoTarget' && isLocalActive && (
+                  <RodeoTargetPicker state={state} dispatch={dispatch} />
+                )}
+                {state.subPhase === 'awaitingRodeoSwap' && isLocalActive && (
+                  <p className="help" style={{ alignSelf: 'center', margin: 0 }}>
+                    (Water Rodeo) Select one of your cards to give.
+                  </p>
+                )}
+                {state.subPhase === 'awaitingPairSteal' && isLocalActive && (
+                  <PairStealPicker state={state} dispatch={dispatch} />
+                )}
+                {state.subPhase === 'awaitingAngelfishPick' && isLocalActive && (
+                  <AngelfishPicker state={state} dispatch={dispatch} />
                 )}
               </div>
             </div>
@@ -745,6 +792,7 @@ function CenterStrip({
   const canDraw = isLocalActive && state.subPhase === 'awaitingAction';
   const canCommitKeep = isLocalActive && state.subPhase === 'awaitingKeep' && keepIndex !== null;
   const isCrabPickPhase = isLocalActive && state.subPhase === 'awaitingCrabPick';
+  const isAngelfishPhase = isLocalActive && state.subPhase === 'awaitingAngelfishPick';
   const deckAnchorRef = useFlipAnchor('deck');
 
   // Render the action-hint slots with a stable height (and an &nbsp;
@@ -774,16 +822,18 @@ function CenterStrip({
         // pile tops are always face-up). Cards BENEATH the top remain hidden
         // until the player commits to a pile; that's enforced inside
         // CrabPicker, which only reveals the full pile once it's been chosen.
-        const isThisCrabTarget = isCrabPickPhase && pile.length > 0 && crabPickPile === null;
-        const clickable = canTakeFromPile || canDropHere || isThisCrabTarget;
-        const titleText = canTakeFromPile
+        const isThisCrabTarget = isCrabPickPhase && pile.length > 0 && crabPickPile === null
+          && (state.crabPilesLeft ?? [0, 1]).includes(i as 0 | 1);
+        const isAngelfishTarget = isAngelfishPhase && !!top;
+        const clickable = canTakeFromPile || canDropHere || isThisCrabTarget || isAngelfishTarget;
+        const titleText = canTakeFromPile || isAngelfishTarget
           ? `Click to take ${FAMILY[top.family].label} from pile ${i + 1}`
           : canDropHere
             ? `Discard the other card to pile ${i + 1}`
             : isThisCrabTarget
               ? `(Crab) click to dig into pile ${i + 1}`
               : '';
-        const hint = canTakeFromPile
+        const hint = canTakeFromPile || isAngelfishTarget
           ? 'Click to take'
           : canDropHere
             ? 'Drop here'
@@ -798,7 +848,7 @@ function CenterStrip({
             top={top}
             under={under}
             clickable={clickable}
-            highlight={!!(canDropHere || isThisCrabTarget)}
+            highlight={!!(canDropHere || isThisCrabTarget || isAngelfishTarget)}
             onPileClick={onPileClick}
             titleText={titleText}
             hint={hint}
@@ -995,6 +1045,163 @@ function StealPicker({ state, dispatch }: { state: SspState; dispatch: (a: SspAc
   );
 }
 
+/** Water Rodeo, swimmer pair: whose hand to look at. */
+function RodeoTargetPicker({ state, dispatch }: { state: SspState; dispatch: (a: SspAction) => void }) {
+  const targets = rodeoTargets(state, state.activePlayerId ?? '');
+  useEffect(() => {
+    if (targets.length === 1) {
+      const t = setTimeout(() => dispatch({ type: 'rodeoLook', targetPlayerId: targets[0].id }), 250);
+      return () => clearTimeout(t);
+    }
+  }, [targets.length, targets[0]?.id]);
+  if (targets.length === 1) {
+    return <span className="ssp-prompt">Looking at {nameOf(state, targets[0].id)}&apos;s hand…</span>;
+  }
+  return (
+    <>
+      <span className="ssp-prompt">(Water Rodeo) Look at the hand of:</span>
+      {targets.map((p) => (
+        <button key={p.id} onClick={() => dispatch({ type: 'rodeoLook', targetPlayerId: p.id })}>
+          {nameOf(state, p.id)} ({p.hand.length})
+        </button>
+      ))}
+    </>
+  );
+}
+
+/** Water Rodeo, swimmer pair: the opponent's hand, shown to the looker only.
+ *  Pick one of theirs (here) and one of yours (in your hand) to swap. */
+function RodeoSwapPanel({ state, dispatch, give }: {
+  state: SspState;
+  dispatch: (a: SspAction) => void;
+  give: number | null;
+}) {
+  const target = state.players.find((p) => p.id === state.pendingRodeo?.targetId);
+  const [take, setTake] = useState<number | null>(null);
+  if (!target) return null;
+  return (
+    <div className="crab-overlay">
+      <div className="keep-hint" style={{ marginBottom: 8 }}>
+        (Water Rodeo) {nameOf(state, target.id)}&apos;s hand — pick a card to take, and one of yours below to give.
+      </div>
+      <div className="cards" style={{ justifyContent: 'center' }}>
+        {target.hand.map((c) => (
+          <CardView
+            key={c.id}
+            card={c}
+            zone={`hand-${target.id}`}
+            size="small"
+            selectable
+            selected={take === c.id}
+            onClick={() => setTake(take === c.id ? null : c.id)}
+          />
+        ))}
+      </div>
+      <div className="actions" style={{ justifyContent: 'center' }}>
+        <button disabled={take === null || give === null} onClick={() => dispatch({ type: 'rodeoSwap', swap: [give!, take!] })}>
+          Swap
+        </button>
+        <button onClick={() => dispatch({ type: 'rodeoSwap', swap: null })}>Don&apos;t swap</button>
+      </div>
+    </div>
+  );
+}
+
+/** Water Rodeo, shark pair: which pair to take from in front of an opponent. */
+function PairStealPicker({ state, dispatch }: { state: SspState; dispatch: (a: SspAction) => void }) {
+  const options = stealablePairs(state, state.activePlayerId ?? '');
+  return (
+    <>
+      <span className="ssp-prompt">(Water Rodeo) Take a pair from:</span>
+      {options.map(({ target, cards }) => (
+        <button
+          key={`${cards[0].id}-${cards[1].id}`}
+          onClick={() => dispatch({ type: 'stealPair', targetPlayerId: target.id, cardIds: [cards[0].id, cards[1].id] })}
+        >
+          {nameOf(state, target.id)}: {FAMILY[cards[0].family].label} + {FAMILY[cards[1].family].label}
+        </button>
+      ))}
+    </>
+  );
+}
+
+/** The Angelfish: both pile tops share a colour — take one. */
+function AngelfishPicker({ state, dispatch }: { state: SspState; dispatch: (a: SspAction) => void }) {
+  return (
+    <>
+      <span className="ssp-prompt">(Angelfish) Both discard tops are the same colour — take one:</span>
+      {([0, 1] as const).map((i) => {
+        const top = state.discards[i][state.discards[i].length - 1];
+        return top ? (
+          <button key={i} onClick={() => dispatch({ type: 'angelfishPick', pile: i })}>
+            {FAMILY[top.family].label} (pile {i + 1})
+          </button>
+        ) : null;
+      })}
+    </>
+  );
+}
+
+/** The event card a player holds (Extra Pepper), with its rule on hover. */
+function HeldEventBadge({ player }: { player: SspPlayer }) {
+  const id = player.heldEvents?.[0];
+  if (!id) return null;
+  const e = EVENT_BY_ID[id];
+  return (
+    <span className={`ssp-held-event ${e.sign === '+' ? 'plus' : 'minus'}`} title={e.rule}>
+      {e.name}
+    </span>
+  );
+}
+
+/** What happened to the event cards as this round ended. */
+function EventOutcome({ state }: { state: SspState }) {
+  const lines = roundLog(state).flatMap((e) => {
+    if (e.kind === 'eventAwarded' && e.playerId) {
+      return [`${EVENT_BY_ID[e.eventId].name} goes to ${nameOf(state, e.playerId)}.`];
+    }
+    if (e.kind !== 'eventDiscarded') return [];
+    const name = EVENT_BY_ID[e.eventId].name;
+    if (e.reason === 'tie') {
+      return [`${name} is discarded — tie for the ${EVENT_BY_ID[e.eventId].sign === '+' ? 'most' : 'fewest'} points.`];
+    }
+    if (e.reason === 'lostPlace') {
+      return [`${nameOf(state, e.playerId)} is no longer ${EVENT_BY_ID[e.eventId].sign === '+' ? 'in the lead' : 'in last place'} — ${name} is discarded.`];
+    }
+    return [`${nameOf(state, e.playerId)} keeps the other card — ${name} is discarded.`];
+  });
+  if (lines.length === 0) return null;
+  return (
+    <ul className="ssp-event-outcome">
+      {lines.map((l, i) => <li key={i}>{l}</li>)}
+    </ul>
+  );
+}
+
+/** Round end: the event winner already holds a card and keeps one of two. */
+function EventChoicePanel({ state, dispatch, localPlayerId }: {
+  state: SspState;
+  dispatch: (a: SspAction) => void;
+  localPlayerId: PlayerId | null;
+}) {
+  const choice = state.pendingEventChoice;
+  if (!choice || state.subPhase !== 'awaitingEventChoice') return null;
+  if (choice.playerId !== localPlayerId) {
+    return <p className="help">Waiting for {nameOf(state, choice.playerId)} to choose which event card to keep…</p>;
+  }
+  return (
+    <div className="ssp-event-choice">
+      <p>You can only keep one event card. Which one?</p>
+      {[choice.newEventId, choice.oldEventId].map((id) => (
+        <button key={id} onClick={() => dispatch({ type: 'chooseEvent', keep: id })} title={EVENT_BY_ID[id].rule}>
+          Keep {EVENT_BY_ID[id].name}{id === choice.newEventId ? ' (new)' : ''}
+          <span className="ssp-event-rule">{EVENT_BY_ID[id].rule}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function CrabPickerOverlay({ state, dispatch, pickedPile }: {
   state: SspState;
   dispatch: (a: SspAction) => void;
@@ -1060,6 +1267,7 @@ function PlayerStrip({ player, seat, isActive, reveal }: {
           <span style={{ width: 10, height: 10, background: seat?.color ?? '#888', borderRadius: 2 }} />
           {seat?.name ?? player.id}
           {seat?.isAI ? <span style={{ fontSize: 10, opacity: 0.6, marginLeft: 4 }}>(AI)</span> : null}
+          <HeldEventBadge player={player} />
         </span>
       </header>
       <div className="table-strip">
@@ -1075,6 +1283,12 @@ function PlayerStrip({ player, seat, isActive, reveal }: {
         {player.table.map((c) => (
           <CardView key={c.id} card={c} size="small" zone={`table-${player.id}`} />
         ))}
+        {player.coralShell && (
+          <div className="ssp-coral" title="The Coral Reef: a shell face down — immune to attacks.">
+            <TrackedFaceDownCard card={player.coralShell} zone={`coral-${player.id}`} size="small" />
+            <span className="ssp-coral-tag">🛡 immune</span>
+          </div>
+        )}
       </div>
       {reveal && (
         <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)' }}>
@@ -1085,7 +1299,11 @@ function PlayerStrip({ player, seat, isActive, reveal }: {
   );
 }
 
-function RoundSummary({ state, dispatch }: { state: SspState; dispatch: (a: SspAction) => void }) {
+function RoundSummary({ state, dispatch, localPlayerId }: {
+  state: SspState;
+  dispatch: (a: SspAction) => void;
+  localPlayerId: PlayerId | null;
+}) {
   const s = state.lastRoundSummary;
   if (!s) return null;
   const tied = state.tieBreakerPlayers ?? [];
@@ -1094,10 +1312,12 @@ function RoundSummary({ state, dispatch }: { state: SspState; dispatch: (a: SspA
     <div className="round-summary">
       <div className="round-summary-header">
         <h2>Round {s.round} complete</h2>
-        <button onClick={() => dispatch({ type: 'nextRound' })}>
+        <button disabled={state.subPhase !== 'roundEnd'} onClick={() => dispatch({ type: 'nextRound' })}>
           {isTieBreak ? 'Tie-breaker round →' : 'Next round →'}
         </button>
       </div>
+      <EventOutcome state={state} />
+      <EventChoicePanel state={state} dispatch={dispatch} localPlayerId={localPlayerId} />
       <p style={{ margin: '6px 0', fontStyle: 'italic' }}>
         {s.endedBy === 'stop' && `${nameOf(state, s.endedByPlayerId)} called STOP.`}
         {s.endedBy === 'lastChance' && `${nameOf(state, s.endedByPlayerId)} called LAST CHANCE — ${s.lastChanceWon ? 'bet won!' : 'bet lost.'}`}
@@ -1636,11 +1856,11 @@ function GameClock({ isOver }: { isOver: boolean }) {
   );
 }
 
-function findHandPairs(hand: SspCard[]): Array<[SspCard, SspCard]> {
+function findHandPairs(hand: SspCard[], waterRodeo: boolean): Array<[SspCard, SspCard]> {
   const out: Array<[SspCard, SspCard]> = [];
   for (let i = 0; i < hand.length; i++) {
     for (let j = i + 1; j < hand.length; j++) {
-      if (isValidDuoPair(hand[i], hand[j])) out.push([hand[i], hand[j]]);
+      if (isValidDuoPair(hand[i], hand[j], { waterRodeo })) out.push([hand[i], hand[j]]);
     }
   }
   return out;

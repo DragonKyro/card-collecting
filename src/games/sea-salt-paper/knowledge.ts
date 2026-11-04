@@ -4,11 +4,14 @@
 // the AI plays by the same information rules a person at the table would:
 //
 //   Opponents' hands. Known only through cards taken off a pile's visible
-//   top (discard draws, crab picks of the top card, Angelfish) and cards an
-//   opponent stole from this seat. Each stays known until it shows up on a
-//   table or this seat steals it back. Cards kept from the deck, fish draws,
-//   lobster picks, a crab dig below the top, and steals between two OTHER
-//   players are all hidden.
+//   top (discard draws, crab picks of the top card, Angelfish), cards an
+//   opponent stole from this seat, and — Water Rodeo — the whole hand this
+//   seat looked at, plus both cards of a swap it was part of. Each stays
+//   known until it shows up on a table or this seat steals it back. Cards
+//   kept from the deck, fish draws, lobster picks, a crab dig below the top,
+//   and steals or swaps between two OTHER players are all hidden (and make
+//   this seat forget what it knew of those hands). A Coral Reef shell goes
+//   face down: others no longer know which of that player's shells it was.
 //
 //   Discard piles. Every card landed face-up, so the seat remembers each pile
 //   in full — until an opponent's crab digs out a card from under the top.
@@ -123,6 +126,35 @@ export function knowledgeOf(state: SspState, seatId: PlayerId, opts: KnowledgeOp
           // victim's known cards may be the one that left.
           known[target].clear();
         }
+        break;
+      }
+      case 'rodeoLook': {
+        const target = seatOf(e.targetPlayerId);
+        if (seatOf(e.playerId) !== me || target === -1 || !e.hand) break;
+        for (const c of e.hand) known[target].set(c.id, c);
+        break;
+      }
+      case 'rodeoSwap': {
+        const looker = seatOf(e.playerId);
+        const target = seatOf(e.targetPlayerId);
+        if (!e.swapped || looker === -1 || target === -1) break;
+        if (looker === me || target === me) {
+          const other = looker === me ? target : looker;
+          const toOther = looker === me ? e.given : e.taken;
+          const fromOther = looker === me ? e.taken : e.given;
+          if (fromOther) known[other].delete(fromOther.id);
+          if (toOther) known[other].set(toOther.id, toOther);
+        } else {
+          // One card each way, unseen: either hand may have lost a known card.
+          known[looker].clear();
+          known[target].clear();
+        }
+        break;
+      }
+      case 'coralShell': {
+        const who = seatOf(e.playerId);
+        if (who === -1 || who === me) break;
+        for (const [id, c] of known[who]) if (c.family === 'shell') known[who].delete(id);
         break;
       }
       default:
