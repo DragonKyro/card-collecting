@@ -4,7 +4,7 @@ import type { SspState } from '../types';
 import { applyAction } from '../reducer';
 import { createSspState } from '../setup';
 import { sampleStates, scrambleHidden, seatsFor } from '../testSupport';
-import { observe } from './observation';
+import { observe, type ObserveOptions } from './observation';
 import { encodeObservation } from './encode';
 import { legalMask } from './actions';
 
@@ -15,9 +15,9 @@ const CONFIGS = [
   { name: '3p Extra Salt', players: 3, extraSalt: true, extraPepper: false, matches: 4 },
 ];
 
-function sameView(a: SspState, b: SspState, viewerId: string, crabLookPile: 0 | 1 | null = null) {
-  const oa = observe(a, viewerId, { crabLookPile });
-  const ob = observe(b, viewerId, { crabLookPile });
+function sameView(a: SspState, b: SspState, viewerId: string, opts: ObserveOptions = {}) {
+  const oa = observe(a, viewerId, opts);
+  const ob = observe(b, viewerId, opts);
   expect(JSON.stringify(ob)).toBe(JSON.stringify(oa));
   expect(Array.from(encodeObservation(ob))).toEqual(Array.from(encodeObservation(oa)));
   expect(Array.from(legalMask(ob))).toEqual(Array.from(legalMask(oa)));
@@ -40,9 +40,13 @@ describe('observe() hides what a real player cannot see', () => {
             for (const pile of [0, 1] as const) {
               if (state.discards[pile].length === 0) continue;
               const { s: s2 } = scrambleHidden(state, viewer.id, rng, { lookingAt: pile });
-              sameView(state, s2, viewer.id, pile);
+              sameView(state, s2, viewer.id, { crabLookPile: pile });
               crabLooks++;
             }
+          }
+          // Water Rodeo, after choosing the kind of card to take.
+          for (const c of observe(state, viewer.id).rodeoLook?.hand ?? []) {
+            sameView(state, s, viewer.id, { rodeoTake: c.family });
           }
         }
       }

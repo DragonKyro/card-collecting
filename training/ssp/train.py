@@ -9,10 +9,12 @@
     python training/ssp/train.py --run multi --players 2,3,4 \\
         --init training/runs/ssp/main/ckpt/update_010000.pt --updates 13000
 
-`--players 2,3,4` deals the env workers out over those table sizes (each
-size gets the same share of self-play and past-checkpoint workers, so the
-same share of decisions); every checkpoint is then also evaluated at 3 and 4
-players against (players - 1) copies of each benchmark. `--init` starts a new
+`--players 2,3,4` deals the env workers out over those tables (each gets the
+same share of self-play and past-checkpoint workers, so the same share of
+decisions; repeat one to give it more). A `p` suffix makes it an Extra Pepper
+table, a `b` one a base-game table (no Extra Salt): `2,2,2p,2p,3,3p,4,4p`.
+Every checkpoint is then also evaluated at each kind of table against
+(players - 1) copies of each benchmark. `--init` starts a new
 run from another run's checkpoint (weights, optimizer, update count) instead
 of from scratch, and exports that starting point as the run's first policy.
 
@@ -49,11 +51,13 @@ import json
 import os
 import queue
 import random
+import re
 import shutil
 import subprocess
 import threading
 import time
 from dataclasses import dataclass, field
+from typing import NamedTuple
 
 import numpy as np
 import torch
@@ -90,8 +94,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     game = p.add_argument_group("game / envs")
     game.add_argument("--players", default="2",
-                      help="comma-separated table sizes (2-4) to train on, e.g. 2,3,4; workers are split evenly, "
-                           "and repeating a size gives it a bigger share (2,2,3,4 = half the workers on 2p)")
+                      help="comma-separated tables to train on: a size 2-4, plus `p` for Extra Pepper and/or `b` "
+                           "for the base game (no Extra Salt), e.g. 2,3,4,2p; workers are split evenly, and "
+                           "repeating a table gives it a bigger share (2,2,3,4 = half the workers on 2p)")
     game.add_argument("--base-game", action="store_true", help="train without Extra Salt")
     game.add_argument("--target", type=int, default=40)
     game.add_argument("--workers", type=int, default=default_workers(), help="node env processes")
@@ -131,18 +136,38 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                       help="also eval against RUN_DIR's policy at the same update (e.g. an earlier run, to compare "
                            "two setups at equal training)")
     args = p.parse_args(argv)
-    sizes = [int(n) for n in str(args.players).split(",")]
-    args.player_counts = sorted(set(sizes))
-    args.player_mix = {n: sizes.count(n) for n in args.player_counts}
-    if not args.player_counts or any(n not in (2, 3, 4) for n in args.player_counts):
-        p.error("--players takes table sizes from 2, 3, 4")
-    if any(share == 0 for share in worker_shares(args.workers, args.player_mix).values()):
-        p.error("need at least one worker per table size")
+    try:
+        tables = [Table.parse(t, salt=not args.base_game) for t in str(args.players).split(",")]
+    except ValueError as e:
+        p.error(str(e))
+    args.table_mix = {t: tables.count(t) for t in sorted(set(tables))}
+    args.player_counts = sorted({t.players for t in tables})
+    if any(share == 0 for share in worker_shares(args.workers, args.table_mix).values()):
+        p.error("need at least one worker per table")
     return args
 
 
-def worker_shares(n: int, mix: dict[int, int]) -> dict[int, int]:
-    """Workers per table size, in proportion to `mix` (largest remainders get the leftovers)."""
+class Table(NamedTuple):
+    """One kind of match the workers play."""
+    players: int
+    pepper: bool
+    salt: bool
+
+    @staticmethod
+    def parse(token: str, salt: bool) -> "Table":
+        m = re.fullmatch(r"([234])([pb]*)", token.strip())
+        if not m:
+            raise ValueError(f"bad table {token!r}: a size 2-4, then p (Extra Pepper) and/or b (base game)")
+        return Table(int(m.group(1)), "p" in m.group(2), salt and "b" not in m.group(2))
+
+    @property
+    def label(self) -> str:
+        """e.g. 2p, 3p+pepper, 2p-base — the suffix of this table's eval tags."""
+        return f"{self.players}p" + ("+pepper" if self.pepper else "") + ("" if self.salt else "-base")
+
+
+def worker_shares(n: int, mix: dict) -> dict:
+    """Workers per table, in proportion to `mix` (largest remainders get the leftovers)."""
     total = sum(mix.values())
     exact = {size: n * w / total for size, w in mix.items()}
     shares = {size: int(x) for size, x in exact.items()}
@@ -154,6 +179,15 @@ def worker_shares(n: int, mix: dict[int, int]) -> dict[int, int]:
 MAX_SEATS = 4
 
 
+def multi_tables(a: argparse.Namespace) -> bool:
+    return list(a.table_mix) != [Table(2, False, not a.base_game)]
+
+
+def plain_args(a: argparse.Namespace) -> dict:
+    """The arguments as plain data, for config.json and checkpoints."""
+    return {**vars(a), "table_mix": {t.label: k for t, k in a.table_mix.items()}}
+
+
 # ---------------------------------------------------------------- envs
 
 @dataclass
@@ -161,13 +195,14 @@ class Worker:
     role: str  # 'self' | 'past'
     env: SspEnv
     opponent: str
-    players: int = 2
+    table: Table
     batch: Batch | None = None
 
     @property
     def tag(self) -> str:
-        """Win-rate window key: the role, plus the table size when it isn't 2."""
-        return self.role if self.players == 2 else f"{self.role}{self.players}p"
+        """Win-rate window key: the role, plus the table unless it's a plain 2-player one."""
+        plain = self.table.players == 2 and not self.table.pepper
+        return self.role if plain else f"{self.role}{self.table.label}"
 
 
 def worker_roles(n: int, self_share: float) -> list[str]:
@@ -175,13 +210,13 @@ def worker_roles(n: int, self_share: float) -> list[str]:
     return ["self"] * n_self + ["past"] * (n - n_self)
 
 
-def worker_layout(n: int, self_share: float, mix: dict[int, int]) -> list[tuple[str, int]]:
-    """(role, players) per worker: each table size gets its share of the
-    workers (see `worker_shares`), split into self-play and past-opponent
-    workers like the whole run."""
+def worker_layout(n: int, self_share: float, mix: dict) -> list[tuple[str, "Table"]]:
+    """(role, table) per worker: each table gets its share of the workers
+    (see `worker_shares`), split into self-play and past-opponent workers like
+    the whole run."""
     layout = []
-    for size, share in sorted(worker_shares(n, mix).items()):
-        layout += [(role, size) for role in worker_roles(share, self_share)]
+    for table, share in sorted(worker_shares(n, mix).items()):
+        layout += [(role, table) for role in worker_roles(share, self_share)]
     return layout
 
 
@@ -240,8 +275,8 @@ class Evaluator:
     """Runs evaluate.evaluate() jobs one at a time on a thread (each is a
     node process), so training never waits for an eval."""
 
-    def __init__(self, games: int, workers: int, salt: bool):
-        self.games, self.workers, self.salt = games, workers, salt
+    def __init__(self, games: int, workers: int):
+        self.games, self.workers = games, workers
         self.jobs: queue.Queue = queue.Queue()
         self.results: queue.Queue = queue.Queue()
         self.thread = threading.Thread(target=self._loop, daemon=True)
@@ -252,20 +287,21 @@ class Evaluator:
             job = self.jobs.get()
             if job is None:
                 return
-            update, tag, a, b, games, players = job
+            update, tag, a, b, games, table = job
             try:
-                summary = ev.evaluate(a, b, games=games, salt=self.salt, workers=self.workers, players=players)
+                summary = ev.evaluate(a, b, games=games, salt=table.salt, pepper=table.pepper,
+                                      workers=self.workers, players=table.players)
                 self.results.put((update, tag, b, summary, None))
             except Exception as e:  # noqa: BLE001 — reported, training carries on
                 self.results.put((update, tag, b, None, str(e)))
 
-    def submit(self, update: int, policy: str, jobs: list[tuple[str, str, int, int]]) -> bool:
-        """Queue one eval cycle of (tag, opponent, games, players) jobs; refuse
+    def submit(self, update: int, policy: str, jobs: list[tuple[str, str, int, "Table"]]) -> bool:
+        """Queue one eval cycle of (tag, opponent, games, table) jobs; refuse
         while the previous cycle hasn't fully started."""
         if self.jobs.qsize() > 0:
             return False
-        for tag, opponent, games, players in jobs:
-            self.jobs.put((update, tag, policy, opponent, games, players))
+        for tag, opponent, games, table in jobs:
+            self.jobs.put((update, tag, policy, opponent, games, table))
         return True
 
     def drain(self) -> list[tuple]:
@@ -325,10 +361,12 @@ class Trainer:
         if start:
             ck = load_checkpoint(start, self.device)
             if ck["versions"] != self.versions:
-                raise SystemExit(f"checkpoint was trained on {ck['versions']}, this build is {self.versions}")
+                raise SystemExit(f"checkpoint was trained on {ck['versions']}, this build is {self.versions}"
+                                 " (a v2 one can be upgraded with training/ssp/upgrade.py)")
             self.net = net_from_checkpoint(ck, self.device)
             self.opt = torch.optim.Adam(self.net.parameters(), lr=a.lr, eps=1e-5)
-            self.opt.load_state_dict(ck["optimizer"])
+            if ck.get("optimizer"):  # (an upgraded checkpoint starts a fresh optimizer)
+                self.opt.load_state_dict(ck["optimizer"])
             for g in self.opt.param_groups:
                 g["lr"] = a.lr
             self.update, self.decisions, self.episodes = ck["update"], ck["decisions"], ck["episodes"]
@@ -344,22 +382,22 @@ class Trainer:
             self.opt = torch.optim.Adam(self.net.parameters(), lr=a.lr, eps=1e-5)
 
         with open(os.path.join(self.run_dir, "config.json"), "w", encoding="utf-8") as f:
-            json.dump({**vars(a), **self.versions, "obsDim": self.obs_dim, "numSlots": self.num_slots,
+            json.dump({**plain_args(a), **self.versions, "obsDim": self.obs_dim, "numSlots": self.num_slots,
                        "arch": {"hidden": self.net.hidden, "layers": self.net.layers}}, f, indent=2)
 
-        layout = worker_layout(a.workers, a.self_play, a.player_mix)
-        for w, (role, players) in enumerate(layout):
+        layout = worker_layout(a.workers, a.self_play, a.table_mix)
+        for w, (role, table) in enumerate(layout):
             env = SspEnv()
             seed = a.seed * 10_007 + w * 7_919 + self.update * 104_729
             opponent = "self" if role == "self" else "random"  # past workers get a checkpoint once one exists
-            worker = Worker(role, env, opponent, players)
-            worker.batch = env.reset(num_envs=a.envs_per_worker, seed=seed, players=players,
-                                     extra_salt=not a.base_game, target_score=a.target, opponent=opponent,
-                                     round_reward=a.round_reward)
+            worker = Worker(role, env, opponent, table)
+            worker.batch = env.reset(num_envs=a.envs_per_worker, seed=seed, players=table.players,
+                                     extra_salt=table.salt, extra_pepper=table.pepper, target_score=a.target,
+                                     opponent=opponent, round_reward=a.round_reward)
             self.workers.append(worker)
         self.n_envs = a.workers * a.envs_per_worker
         self.slices = [slice(i * a.envs_per_worker, (i + 1) * a.envs_per_worker) for i in range(a.workers)]
-        mix = ", ".join(f"{layout.count(k)} {k[0]}{'' if k[1] == 2 else f' {k[1]}p'}" for k in dict.fromkeys(layout))
+        mix = ", ".join(f"{layout.count(k)} {k[0]} {k[1].label}" for k in dict.fromkeys(layout))
         print(f"run {self.run_dir}\n  {a.workers} workers ({mix})"
               f" x {a.envs_per_worker} envs | obs {self.obs_dim} | slots {self.num_slots} | device {self.device}")
 
@@ -369,7 +407,7 @@ class Trainer:
         self.carry: dict | None = None
         self.carry_streams: np.ndarray | None = None
         self.writer = SummaryWriter(os.path.join(self.run_dir, "tb"))
-        self.evaluator = Evaluator(a.eval_games, a.eval_workers, not a.base_game) if a.eval_every > 0 else None
+        self.evaluator = Evaluator(a.eval_games, a.eval_workers) if a.eval_every > 0 else None
         available = list(ev.list_benchmarks())
         wanted = available if a.eval_bench == "all" else [] if a.eval_bench == "none" else a.eval_bench.split(",")
         missing = [b for b in wanted if b not in available]
@@ -523,7 +561,7 @@ class Trainer:
         a, u = self.args, self.update
         if checkpoint:
             state = {"update": u, "decisions": self.decisions, "episodes": self.episodes,
-                     "versions": self.versions, "args": vars(a)}
+                     "versions": self.versions, "args": plain_args(a)}
             ckpt_dir = os.path.join(self.run_dir, "ckpt")
             save_checkpoint(os.path.join(ckpt_dir, f"update_{u:06d}.pt"), self.net, self.opt, state)
             for old in sorted(f for f in os.listdir(ckpt_dir) if f.endswith(".pt"))[:-a.keep_ckpt]:
@@ -531,24 +569,26 @@ class Trainer:
         path = os.path.join(self.run_dir, "policies", f"update_{u:06d}.json")
         export_policy(self.net, path, self.versions["encoderVersion"], self.versions["actionSpaceVersion"],
                       meta={"run": os.path.basename(self.run_dir), "update": u, "decisions": self.decisions,
-                            "players": a.player_counts})
+                            "tables": [t.label for t in a.table_mix]})
         return path
 
-    def eval_jobs(self) -> list[tuple[str, str, int, int]]:
-        """(tag, opponent, games, players) for the checkpoint just saved. The
-        2-player set as always; at 3-4 players, vs a table of each benchmark."""
+    def eval_jobs(self) -> list[tuple[str, str, int, Table]]:
+        """(tag, opponent, games, table) for the checkpoint just saved. The
+        plain 2-player set as always; at every other kind of table the run
+        plays, vs a table of each benchmark."""
         a = self.args
-        jobs = [("random", "random", min(200, a.eval_games), 2)]
-        jobs += [(f"bench_{name}", ev.BENCH + name, a.eval_games, 2) for name in self.benches]
+        plain = Table(2, False, not a.base_game)
+        jobs = [("random", "random", min(200, a.eval_games), plain)]
+        jobs += [(f"bench_{name}", ev.BENCH + name, a.eval_games, plain) for name in self.benches]
         if a.eval_same_update:
             same = os.path.join(a.eval_same_update, "policies", f"update_{self.update:06d}.json")
             if os.path.isfile(same):
-                jobs.append(("same", same, a.eval_games, 2))
+                jobs.append(("same", same, a.eval_games, plain))
         past = ev.list_policies(self.run_dir)
         if len(past) > a.eval_past_gap:
-            jobs.append(("past", past[-1 - a.eval_past_gap][1], a.eval_games, 2))
-        for players in (n for n in a.player_counts if n > 2):
-            jobs += [(f"bench_{name}_{players}p", ev.BENCH + name, a.eval_games, players) for name in self.benches]
+            jobs.append(("past", past[-1 - a.eval_past_gap][1], a.eval_games, plain))
+        for table in (t for t in a.table_mix if t != plain):
+            jobs += [(f"bench_{name}_{table.label}", ev.BENCH + name, a.eval_games, table) for name in self.benches]
         return jobs
 
     def refresh_past_opponents(self) -> None:
@@ -620,14 +660,15 @@ class Trainer:
         """(tag, header) for every eval tag seen, benchmarks first."""
         a = self.args
         tags = {t for res in self.eval_results.values() for t in res}
-        multi = any(n > 2 for n in a.player_counts)
+        multi = len(a.table_mix) > 1
 
         def bench_header(tag: str) -> str:
-            name, _, size = tag[len("bench_"):].rpartition("_")
-            if size.endswith("p") and size[:-1].isdigit():
-                n = int(size[:-1])
-                return f"{n}p vs {n - 1}x {name} (even {100 / n:.0f}%)"
-            return f"{'2p ' if multi else ''}vs {tag[len('bench_'):]}"
+            m = re.fullmatch(r"bench_(.+)_([234])p(\+pepper)?(-base)?", tag)
+            if not m:
+                return f"{'2p ' if multi else ''}vs {tag[len('bench_'):]}"
+            name, n = m.group(1), int(m.group(2))
+            kind = f"{n}p" + (" Pepper" if m.group(3) else "") + (" base" if m.group(4) else "")
+            return f"{kind} vs {name}" if n == 2 else f"{kind} vs {n - 1}x {name} (even {100 / n:.0f}%)"
 
         cols = [(t, bench_header(t)) for t in sorted(tags) if t.startswith("bench_")]
         if "same" in tags:
@@ -671,10 +712,10 @@ class Trainer:
                f"Encoder v{v['encoderVersion']} ({self.obs_dim} features), action space v{v['actionSpaceVersion']} "
                f"({self.num_slots} slots), {self.net.hidden}x{self.net.layers} MLP. Seat-swapped evals, {a.eval_games} matches "
                f"each ({min(200, a.eval_games)} vs random); score = wins + half draws, 95% CI in brackets. "
-               + (f"Trained on {', '.join(f'{n}p' for n in a.player_counts)}"
+               + (f"Trained on {', '.join(f'{t.label} x{k}' for t, k in a.table_mix.items())}"
                   + (f" from {a.init}" if a.init else "") + "; an Np column seats this checkpoint at a table of "
                   "N - 1 copies of the benchmark, in every seat — an even match there is 1/N. "
-                  if a.player_counts != [2] or a.init else "")
+                  if multi_tables(a) or a.init else "")
                + f"Updated {time.strftime('%Y-%m-%d %H:%M')}, update {self.update}.",
                "",
                "## Latest 10 checkpoints",

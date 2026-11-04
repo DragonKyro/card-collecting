@@ -23,8 +23,10 @@
 //
 // None were trained with Extra Pepper (or the base game alone); they play
 // every supported setup legally (2–4 players, any expansions), just untuned
-// outside the ones above. Pepper decisions without action slots are answered
-// by nn/fixedChoices.ts.
+// outside the ones above. Their Pepper-only action slots (Water Rodeo, Coral
+// Reef, Angelfish, the event choice) were added when they were upgraded to
+// action space v3 and taught to copy nn/fixedChoices.ts (training/ssp/teach.py);
+// everything else plays exactly as it was trained.
 
 import type { PlayerId } from '@/core/types';
 import type { SspAction, SspAiLevel, SspConfig, SspState } from './types';

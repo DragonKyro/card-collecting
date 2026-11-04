@@ -3,9 +3,9 @@
 // Each env advances on its own (opponent moves, round-end click-throughs)
 // until a LEARNER seat has a decision, then reports that seat's encoded
 // observation and legal mask. The learner answers with one action slot per
-// env. A crab pick is two decisions (pile, then card once that pile is
-// visible); the first changes no game state, so the env simply asks the same
-// seat again with the pile revealed. Finished matches auto-reset: `done[i]`
+// env. A crab pick and a Water Rodeo swap are two decisions each (see
+// nn/actions.ts); the first changes no game state, so the env simply asks the
+// same seat again with the next observation. Finished matches auto-reset: `done[i]`
 // marks that env i's episode ended during the last advance, and the obs
 // returned is already the first decision of its next episode.
 //
@@ -22,12 +22,13 @@
 // seat. `configure` swaps that opponent for matches that start afterwards
 // (the self / fixed split can't change mid-run).
 
-import type { SspState } from '@/games/sea-salt-paper/types';
+import type { SspAction, SspState } from '@/games/sea-salt-paper/types';
 import { applyAction } from '@/games/sea-salt-paper/reducer';
 import { observe } from '@/games/sea-salt-paper/nn/observation';
 import { NUM_SLOTS, decodeSlot, legalMask } from '@/games/sea-salt-paper/nn/actions';
 import { OBS_DIM, encodeObservation } from '@/games/sea-salt-paper/nn/encode';
-import { fixedChoice } from '@/games/sea-salt-paper/nn/fixedChoices';
+import { nextStep } from '@/games/sea-salt-paper/nn/agent';
+import type { ObserveOptions } from '@/games/sea-salt-paper/nn/observation';
 import { agentFactory, agentSeed, type AgentFactory, type SspAgent } from './agents';
 import { newMatch, winnerSeatOf } from './sim';
 
@@ -94,8 +95,8 @@ interface EnvSlot {
   opponent: SspAgent | null;
   steps: number;
   seat: number;
-  /** Pile chosen in the first half of a pending crab pick. */
-  crabLook: 0 | 1 | null;
+  /** The first half of a pending two-step decision (crab pile, Water Rodeo take). */
+  step: ObserveOptions;
 }
 
 export class SspVecEnv {
@@ -149,13 +150,14 @@ export class SspVecEnv {
     for (let i = 0; i < this.envs.length; i++) {
       const env = this.envs[i];
       const pid = env.state.players[env.seat].id;
-      const decision = decodeSlot(observe(env.state, pid, { crabLookPile: env.crabLook }), slots[i]);
-      if (decision.type === 'crabLook') {
-        env.crabLook = decision.pile;
+      const decision = decodeSlot(observe(env.state, pid, env.step), slots[i]);
+      const step = nextStep(decision);
+      if (step) {
+        env.step = step;
         continue;
       }
-      env.crabLook = null;
-      env.state = applyAction(env.state, decision);
+      env.step = {};
+      env.state = applyAction(env.state, decision as SspAction);
       env.steps++;
       this.advance(i);
     }
@@ -179,7 +181,7 @@ export class SspVecEnv {
       opponent: this.opponentFactory ? this.opponentFactory(agentSeed(seed, opponentSeat)) : null,
       steps: 0,
       seat: 0,
-      crabLook: null,
+      step: {},
     };
   }
 
@@ -222,13 +224,6 @@ export class SspVecEnv {
         env.steps++;
         continue;
       }
-      // Extra Pepper decisions without action slots play themselves.
-      const fixed = s.event ? fixedChoice(observe(s, s.activePlayerId!)) : null;
-      if (fixed) {
-        env.state = applyAction(s, fixed);
-        env.steps++;
-        continue;
-      }
       const seat = s.players.findIndex((p) => p.id === s.activePlayerId);
       if (env.learner[seat]) {
         env.seat = seat;
@@ -250,7 +245,7 @@ export class SspVecEnv {
   private finishBatch(): VecBatch {
     const b = this.batch;
     this.envs.forEach((env, i) => {
-      const obs = observe(env.state, env.state.players[env.seat].id, { crabLookPile: env.crabLook });
+      const obs = observe(env.state, env.state.players[env.seat].id, env.step);
       b.seat[i] = env.seat;
       encodeObservation(obs, b.obs.subarray(i * OBS_DIM, (i + 1) * OBS_DIM));
       b.mask.set(legalMask(obs), i * NUM_SLOTS);

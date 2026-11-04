@@ -7,7 +7,8 @@
 // ../knowledge.ts:
 //
 //   visible   own hand, every table, pile tops and sizes, hand sizes, match
-//             scores, events, who has a Coral Reef shell down, the viewer's
+//             scores, events (and which are still to come — the event deck's
+//             contents, never its order), who has a Coral Reef shell down, the viewer's
 //             own pending draw / lobster reveal, mid-crab the one pile the
 //             viewer chose to dig through, and mid-Water-Rodeo the hand the
 //             viewer is looking at.
@@ -25,7 +26,7 @@
 import type { GamePhase, PlayerId } from '@/core/types';
 import type { SspCard, SspCardFamily, SspEventId, SspState, SspSubPhase } from '../types';
 import { FAMILY_ORDER } from '../cards';
-import { canEndRound, canPlaceCoralShell, scoringOptsFor, stopThresholdFor } from '../reducer';
+import { canEndRound, canPlaceCoralShell, mermaidWinCountFor, scoringOptsFor, stopThresholdFor } from '../reducer';
 import { eventAppliesTo } from '../events';
 import { knowledgeOf, roundLog, type PileMemory } from '../knowledge';
 
@@ -41,6 +42,8 @@ export interface SspPlayerRules {
   mermaidsScoreZero: boolean;
   waterRodeo: boolean;
   stopThreshold: number;
+  /** Mermaids that win the match on the spot: 4, or 3 under the Dance of the Mermaids. */
+  mermaidsToWin: number;
 }
 
 export interface SspObservedPlayer {
@@ -87,6 +90,8 @@ export interface SspObservation {
   lobsterReveal: SspCard[];
   players: SspObservedPlayer[];
   currentEvent: SspEventId | null;
+  /** Events not revealed yet, sorted (the event deck as a set — its order stays hidden). */
+  eventsLeft: SspEventId[];
   /** End-of-turn options for the viewer (false unless it's their call). */
   canStop: boolean;
   canLastChance: boolean;
@@ -99,12 +104,19 @@ export interface SspObservation {
   eventChoice: { newEventId: SspEventId; oldEventId: SspEventId } | null;
   /** Water Rodeo: the hand the viewer is looking at, by seat offset. */
   rodeoLook: { offset: number; hand: SspCard[] } | null;
+  /** Water Rodeo swap, second step: the kind of card the viewer chose to take
+   *  (they now pick which of theirs to give), or null. */
+  rodeoTake: SspCardFamily | null;
 }
 
 export interface ObserveOptions {
   /** Second step of a crab pick: the pile the viewer chose to look through.
    *  Ignored unless the viewer is the active player in awaitingCrabPick. */
   crabLookPile?: 0 | 1 | null;
+  /** Second step of a Water Rodeo swap: the kind of card the viewer takes.
+   *  Ignored unless it's in the hand being looked at and the viewer has a
+   *  card to give. */
+  rodeoTake?: SspCardFamily | null;
 }
 
 export function observe(state: SspState, viewerId: PlayerId, opts: ObserveOptions = {}): SspObservation {
@@ -151,6 +163,7 @@ export function observe(state: SspState, viewerId: PlayerId, opts: ObserveOption
         mermaidsScoreZero: opts.mermaidsScoreZero,
         waterRodeo: opts.waterRodeo,
         stopThreshold: stopThresholdFor(state, p),
+        mermaidsToWin: mermaidWinCountFor(state, p),
       },
       locked: (state.lockedPlayerIds ?? []).includes(p.id),
       coralShell: !!p.coralShell,
@@ -167,6 +180,8 @@ export function observe(state: SspState, viewerId: PlayerId, opts: ObserveOption
     }
   }
   const choice = state.pendingEventChoice;
+  const rodeoTake = rodeoLook && viewer.hand.length > 0 && opts.rodeoTake
+    && rodeoLook.hand.some((c) => c.family === opts.rodeoTake) ? opts.rodeoTake : null;
 
   const canEnd = viewerActive && canEndRound(state);
   return {
@@ -190,6 +205,7 @@ export function observe(state: SspState, viewerId: PlayerId, opts: ObserveOption
       ? (state.pendingLobsterPick ?? []).map(copyCard) : [],
     players,
     currentEvent: state.event?.current ?? null,
+    eventsLeft: [...(state.event?.deck ?? [])].sort(),
     canStop: canEnd && !eventAppliesTo(state, viewer, 'diodonFish'),
     canLastChance: canEnd,
     crabPiles,
@@ -198,6 +214,7 @@ export function observe(state: SspState, viewerId: PlayerId, opts: ObserveOption
       ? { newEventId: choice.newEventId, oldEventId: choice.oldEventId }
       : null,
     rodeoLook,
+    rodeoTake,
   };
 }
 

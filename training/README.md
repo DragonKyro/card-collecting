@@ -4,8 +4,8 @@ Offline tooling for learned AI agents. Nothing here ships to GitHub Pages:
 it runs the real game reducers headlessly (no React, no timers) for evaluation
 and for a Python learner to train against.
 
-Currently: **Sea Salt & Paper**, trained on 2-player Extra Salt matches. The
-game's easy / normal / hard AI levels came from here.
+Currently: **Sea Salt & Paper** (2-player Extra Salt, Hard then 2–4 players),
+**Sushi Go! Party** and **Jaipur** — every trained AI level came from here.
 
 ## Setup
 
@@ -41,21 +41,45 @@ from every match: `--workers` (default cores − 4, max 12) node processes ×
 - Reward is ±1 for the match, plus `--round-reward` (0.02) × the round point
   margin.
 
-**More players, and starting from a checkpoint.** `--players 2,3,4` deals
-the workers out evenly over those table sizes, each with the same self-play /
-past-checkpoint split (past opponents fill every other seat). Rewards stay
+**More players, Extra Pepper, and starting from a checkpoint.** `--players
+2,3,4` deals the workers out evenly over those tables, each with the same
+self-play / past-checkpoint split (past opponents fill every other seat);
+repeating a table gives it a bigger share. A `p` suffix makes it an Extra
+Pepper table and a `b` one a base-game table (no Extra Salt), so
+`2,2,2p,2p,3,3p,4,4p` is half 2-player, half Pepper. Rewards stay
 zero-sum: +1 to the winner and −1/(N−1) to each other seat, and the round
 shaping is the margin over the other seats' mean (both are ±1 / the plain
-margin at 2 players). Each checkpoint is then also evaluated at every larger
-table size against N−1 copies of each benchmark, with this checkpoint in each
-seat in turn; an even match there is 1/N (`evaluate.py`'s `players=N`,
-`ssp:eval --players N`). `--init CKPT` starts a new run from another run's
-checkpoint — weights, optimizer and update count — and exports it as the
-run's first policy, so the past pool has it from the start:
+margin at 2 players). Each checkpoint is then also evaluated at every other kind
+of table the run plays against N−1 copies of each benchmark, with this
+checkpoint in each seat in turn; an even match there is 1/N (`evaluate.py`'s
+`players=N` / `pepper=True`, `ssp:eval --players N --pepper`). `--init CKPT`
+starts a new run from another run's checkpoint — weights, optimizer and update
+count (an upgraded checkpoint starts a fresh optimizer) — and exports it as
+the run's first policy, so the past pool has it from the start:
 
 ```sh
 python training/ssp/train.py --run multi --players 2,3,4 \
     --init training/runs/ssp/main/ckpt/update_010000.pt --updates 14000 --eval-bench hard-update10000
+```
+
+**Upgrading a policy to a new layout.** Encoder / action space v3 added the
+Extra Pepper inputs and slots after v2's, so a v2 policy or checkpoint is
+upgraded rather than retrained: `upgrade.py FILE…` pads it (zero weights on
+the new inputs, zero output rows for the new slots), which leaves every v2
+decision exactly as it was. `teach.py POLICY.json` then fits the Pepper slots
+to the hand-written rules in `nn/fixedChoices.ts`: `teach-data.ts` plays
+Salt + Pepper matches at 2–4 players with the policy and records each
+decision where a Pepper slot is legal, and only the Pepper output rows and the
+first layer's `pepperDecision.*` input columns are trained (those inputs are
+non-zero only in decisions where every legal slot is a Pepper one), so no
+other decision can move; the tool checks that and records the held-out
+agreement in `meta.taught`. To start a Pepper run from a shipped level, give
+the upgraded checkpoint the taught weights:
+
+```sh
+python training/ssp/upgrade.py training/runs/ssp/multi/ckpt/update_014000.pt \
+    --policy src/games/sea-salt-paper/policies/hard-multi-update14000.json \
+    --out training/runs/ssp/pepper-init/update_014000.pt
 ```
 
 Everything lands in `training/runs/ssp/<run>/` (git-ignored). Runs are
@@ -321,7 +345,9 @@ live in `src/games/jaipur/nn/` and `knowledge.ts`: see CLAUDE.md.
 | `ssp/model.py` | policy-value MLP, export to the TS runtime format, checkpoint I/O |
 | `ssp/evaluate.py` | Python eval API + CLI (`match`, `baselines`, `ladder`, `freeze`, `benchmarks`, `analyze`, Elo fit) |
 | `ssp/env_client.py` | Python `SspEnv` client (numpy), plus a random-agent smoke test |
-| `ssp/test_training.py` | pytest: export parity, train → checkpoint → resume → evaluate, freeze |
+| `ssp/upgrade.py` | pad a v2 policy / checkpoint to the current layout (`--policy` swaps in a taught policy's weights) |
+| `ssp/teach.py` / `teach-data.ts` | fit the Pepper slots of an upgraded policy to `nn/fixedChoices.ts`, touching nothing else |
+| `ssp/test_training.py` | pytest: export parity, train → checkpoint → resume → evaluate, freeze, upgrade, teach |
 | `ssp/sim.ts` | `playMatch(agents, seed, opts)`: one headless match + per-seat stats |
 | `ssp/agents.ts` | agent registry (`random`, `nn:`, `nn-sample:`) |
 | `ssp/evaluate.ts` / `eval.ts` | seat-swapped jobs, summary, report / CLI over worker threads |
@@ -334,8 +360,9 @@ The game-side pieces live in `src/games/sea-salt-paper/`. `knowledge.ts`
 defines what a seat may know. In `nn/`:
 
 - `observation.ts`: the agent's view
-- `actions.ts`: 66 action slots, legal mask, decoder
-- `encode.ts`: 632 features
+- `actions.ts`: action space v3, 141 slots (v2's 66, then Extra Pepper's), legal mask, decoder
+- `encode.ts`: encoder v3, 833 features (v2's 632, then Extra Pepper's)
+- `fixedChoices.ts`: hand-written Pepper answers, the teacher for `teach.py`
 - `policy.ts`: loading policy files, greedy / sampled play
 
 `aiLevels.ts` holds the game's difficulty levels, and the network runtime is
@@ -344,8 +371,9 @@ receives `SspState`.
 
 A crab pick takes two decisions, as in the rulebook: first `crabPile:N`
 (chosen from memory), then `crab:<family>` once the env re-observes with that
-pile revealed. The env asks the same seat twice; the first answer changes no
-game state.
+pile revealed. A Water Rodeo swap is the same: `rodeoTake:<family>`, then
+`rodeoGive:<family>`. The env asks the same seat twice; the first answer
+changes no game state.
 
 ## Hidden information
 
@@ -367,12 +395,12 @@ fixed opponent for matches that start afterwards. A batch has:
 - `seat`
 - `obs` (n × obsDim float32)
 - `mask` (n × numSlots)
-- `reward` (n × 2, per seat, since the previous batch)
+- `reward` (n × players, per seat, since the previous batch)
 - `done`
 - `episodes`
 
 Credit `reward[i][s]` to seat s's latest transition in env i. With
-`opponent: 'self'` both seats are the learner.
+`opponent: 'self'` every seat is the learner.
 
 ## Versioning
 
@@ -380,4 +408,4 @@ Credit `reward[i][s]` to seat s's latest transition in env i. With
 pinned by tests together with `OBS_DIM` / `NUM_SLOTS`. Any layout change must
 bump the version. Policy files record both, and loading refuses a mismatch,
 so old checkpoints stop loading rather than playing nonsense. Retrain after
-an encoder change.
+an encoder change — or, if it only appends inputs / slots, upgrade (above).

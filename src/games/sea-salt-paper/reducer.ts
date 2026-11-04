@@ -60,7 +60,7 @@ export function stopThresholdFor(state: SspState, p: SspPlayer): number {
 
 /** Mermaid-win threshold for a player. Reduced to 3 when Dance of the Mermaids
  *  is in force (round event) or held by the player. */
-function mermaidWinCountFor(state: SspState, p: SspPlayer): number {
+export function mermaidWinCountFor(state: SspState, p: SspPlayer): number {
   return eventAppliesTo(state, p, 'danceOfMermaids') ? 3 : 4;
 }
 

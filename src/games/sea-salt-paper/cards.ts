@@ -107,6 +107,20 @@ export const DUO_PAIRS: ReadonlyArray<[SspCardFamily, SspCardFamily]> = [
   ['lobster', 'crab'],
 ];
 
+/** The Water Rodeo (Pepper)'s extra duos. */
+export const RODEO_PAIRS: ReadonlyArray<[SspCardFamily, SspCardFamily]> = [
+  ['swimmer', 'swimmer'],
+  ['shark', 'shark'],
+];
+
+/** Every kind of pair that can lie on a table (what a Water Rodeo shark pair steals). */
+export const PAIR_TYPES: ReadonlyArray<[SspCardFamily, SspCardFamily]> = [...DUO_PAIRS, ...RODEO_PAIRS];
+
+/** Index into PAIR_TYPES of the pair these two families make, or -1. */
+export function pairTypeIndex(a: SspCardFamily, b: SspCardFamily): number {
+  return PAIR_TYPES.findIndex(([x, y]) => (x === a && y === b) || (x === b && y === a));
+}
+
 export function isDuoFamily(f: SspCardFamily): boolean {
   return FAMILY[f].category === 'duo';
 }

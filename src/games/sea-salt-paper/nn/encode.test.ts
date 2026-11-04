@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { observe } from './observation';
-import { ENCODER_VERSION, OBS_DIM, encodeObservation, featureLayout } from './encode';
+import { ENCODER_VERSION, OBS_DIM, V2_OBS_DIM, encodeObservation, featureLayout, isPepperDecisionSegment } from './encode';
 import { sampleStates } from '../testSupport';
 
 /** Name the segments holding out-of-range values, for a readable failure. */
@@ -25,7 +25,36 @@ describe('feature encoder', () => {
   });
 
   it('matches the versioned size (bump ENCODER_VERSION when this changes)', () => {
-    expect({ version: ENCODER_VERSION, dim: OBS_DIM }).toEqual({ version: 2, dim: 632 });
+    expect({ version: ENCODER_VERSION, dim: OBS_DIM }).toEqual({ version: 3, dim: 833 });
+  });
+
+  it('keeps the v2 inputs first; every input after them is zero without Pepper', () => {
+    const first = featureLayout().find((seg) => seg.offset === V2_OBS_DIM)!;
+    expect(first.name.startsWith('pepper')).toBe(true);
+    expect(featureLayout().filter((seg) => seg.offset >= V2_OBS_DIM).every((seg) => seg.name.startsWith('pepper'))).toBe(true);
+    for (const state of [
+      ...sampleStates({ players: 2, extraSalt: true, matches: 3, seed: 81, every: 3 }),
+      ...sampleStates({ players: 4, extraSalt: false, matches: 2, seed: 82, every: 4 }),
+    ]) {
+      for (const p of state.players) {
+        expect(encodeObservation(observe(state, p.id)).subarray(V2_OBS_DIM).every((v) => v === 0)).toBe(true);
+      }
+    }
+  });
+
+  it('writes the pepperDecision inputs only in the Pepper decision subphases', () => {
+    const decision = new Set(['awaitingRodeoTarget', 'awaitingRodeoSwap', 'awaitingPairSteal', 'awaitingAngelfishPick', 'awaitingEventChoice']);
+    const segs = featureLayout().filter((seg) => isPepperDecisionSegment(seg.name));
+    let seen = 0;
+    for (const state of sampleStates({ players: 3, extraSalt: true, extraPepper: true, matches: 12, seed: 83 })) {
+      for (const p of state.players) {
+        const x = encodeObservation(observe(state, p.id));
+        const used = segs.some((seg) => x.subarray(seg.offset, seg.offset + seg.size).some((v) => v !== 0));
+        if (used) seen++;
+        if (!decision.has(state.subPhase) || state.activePlayerId !== p.id) expect(used, state.subPhase).toBe(false);
+      }
+    }
+    expect(seen).toBeGreaterThan(0);
   });
 
   it('produces bounded, finite, deterministic features across real states', () => {
