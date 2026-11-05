@@ -35,8 +35,19 @@ import { DUEL_CARD_SCIENCE } from './types';
 import { isSlotAvailable } from './pyramid';
 import { wonderById } from './wonders';
 import { progressTokenById } from './progress';
-import { cardPayment, discardCoins, distinctScience, scienceSymbols, shieldsFor, wonderPayment, type Payment } from './resources';
-import { CardBack, CardBand, CardFace, ProgressToken, WonderCard, costText } from './Card';
+import { divinityById, mythologyInfo } from './pantheon';
+import { conspiracyById, decreeById, sectionChambers } from './agora';
+import { cardPayment, discardGain, distinctScience, purse, scienceSymbols, shieldsFor, wonderPayment, type Payment } from './resources';
+import { CardBack, CardBand, CardFace, ProgressToken, WonderCard, backKindOf, costText } from './Card';
+import {
+  ConspiracyTile, EXPANSION_TITLES, ExpansionDecision, InvokePanel, PantheonBoard, PlayerExtras, SenateBoard, StructureTokenBadge,
+  TriggerChoices,
+} from './ExpansionViews';
+import { DIVINITIES, MYTHOLOGIES } from './pantheon';
+import { CONSPIRACIES, DECREES } from './agora';
+import { EXPANSION_WONDERS } from './wonders';
+import { EXPANSION_PROGRESS_TOKENS } from './progress';
+import { ConspiracyArt, ConspiracyBackArt, CubeIcon, DecreeArt, DivinityEmblem } from './artExpansions';
 import {
   ChipGlyph, CoinIcon, Icon, LaurelIcon, MilitaryTrackArt, ProgressGlyph, ScienceIcon, ShieldIcon, WonderGlyph,
 } from './art';
@@ -48,12 +59,32 @@ import './seven-wonders-duel.css';
 // LobbyConfig
 // ===================================================================
 
-function LobbyConfig({ config, seats, onChange }: { config: DuelConfig; seats: Seat[]; onChange: (c: DuelConfig) => void }) {
-  void onChange; void config; void seats;
+function LobbyConfig({ config, seats, onChange, readOnly }: { config: DuelConfig; seats: Seat[]; onChange: (c: DuelConfig) => void; readOnly?: boolean }) {
+  void seats;
+  const set = (key: 'pantheon' | 'agora', on: boolean) => {
+    const next: DuelConfig = { ...config };
+    if (on) next[key] = true;
+    else delete next[key];
+    onChange(next);
+  };
   return (
     <div className="game-config swd-lobby">
-      <p style={{ fontSize: 12, color: 'var(--fg-muted)', marginTop: 0 }}>
-        The first player, the wonders on offer and the Progress tokens are drawn from the seed.
+      <label className="swd-lobby-check">
+        <input type="checkbox" checked={!!config.pantheon} disabled={readOnly} onChange={(e) => set('pantheon', e.target.checked)} />
+        <span>
+          <strong>Pantheon</strong>
+          <small>Place Divinities in the Pantheon during Age I, then invoke them instead of taking a card. Grand Temples replace the Guilds; 2 wonders, 3 Progress tokens.</small>
+        </span>
+      </label>
+      <label className="swd-lobby-check">
+        <input type="checkbox" checked={!!config.agora} disabled={readOnly} onChange={(e) => set('agora', e.target.checked)} />
+        <span>
+          <strong>Agora</strong>
+          <small>Senators join the ages: win Chambers of the Senate and their Decrees, plot Conspiracies — or win by Political Supremacy. 2 wonders, 2 Progress tokens.</small>
+        </span>
+      </label>
+      <p style={{ fontSize: 12, color: 'var(--fg-muted)', marginTop: 4 }}>
+        The first player, the wonders on offer and the Progress tokens are drawn from the seed. The expansions can be played together.
       </p>
     </div>
   );
@@ -165,6 +196,114 @@ function Rules() {
             </>
           ),
         },
+        {
+          title: 'Pantheon',
+          body: (
+            <>
+              <p>
+                Five Mythology decks of three Divinities each, and the Pantheon: six spaces. Grand
+                Temples replace the Guilds in Age III. Two more wonders and three more Progress tokens
+                join the game.
+              </p>
+              <h3>Age I: Mythology tokens</h3>
+              <p>
+                Five Mythology tokens lie on face-down cards of the structure. Whoever turns such a card up
+                takes the token, draws the top two Divinities of that Mythology, places one face down on an
+                empty space (your opponent sees only its Mythology) and puts the other back on top.
+              </p>
+              <h3>Ages II and III: invoking</h3>
+              <p>
+                At the start of Age II the Gate fills the empty space and every Divinity turns face up;
+                three Offering tokens (−2, −3, −4) lie on face-down Age II cards. On your turn you may invoke
+                a Divinity instead of taking a card: space 1 to 6 costs the first player 8 to 3 coins and the
+                other player 3 to 8 (the Gate twice that); Offering tokens (once each) and the Sanctuary (−2)
+                take coins off.
+              </p>
+              <table className="tight">
+                <thead><tr><th>Divinity</th><th>Power</th></tr></thead>
+                <tbody>
+                  {DIVINITIES.map((d) => (
+                    <tr key={d.id}>
+                      <td><span className="swd-rules-name"><DivinityEmblem id={d.id} mythology={d.mythology} size={20} /> {d.name}</span></td>
+                      <td>{d.description} {d.mythology && <span className="muted">({MYTHOLOGIES.find((m) => m.id === d.mythology)!.name})</span>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <h3>Grand Temples, wonders and tokens</h3>
+              <p>
+                A Grand Temple is free with a Mythology token of its type; together they score 5 / 12 / 21 VP
+                for 1 / 2 / 3. Astarte's coins and Aphrodite's 9 VP score in a Divinities column.
+              </p>
+              <table className="tight">
+                <tbody>
+                  {EXPANSION_WONDERS.filter((w) => w.expansion === 'pantheon').map((w) => (
+                    <tr key={w.id}><td>{w.name}</td><td>{w.description} <span className="muted">({costText(w.cost)})</span></td></tr>
+                  ))}
+                  {EXPANSION_PROGRESS_TOKENS.filter((t) => t.expansion === 'pantheon').map((t) => (
+                    <tr key={t.id}><td>{t.name}</td><td>{t.description}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          ),
+        },
+        {
+          title: 'Agora',
+          body: (
+            <>
+              <p>
+                The Senate has six Chambers in three sections (1–2, 3–4, 5–6). Each player has 12 Influence
+                cubes; whoever has more cubes in a Chamber controls it and its Decree. Decrees in Chambers
+                1, 3 and 5 start face up, the others turn up once someone controls their Chamber.
+              </p>
+              <RulesGrid cols={3}>
+                <RulesTile icon="🏛️" label="Political Supremacy" hint="Control all six Chambers: an instant win." accent="#c9a86a" />
+                <RulesTile icon="⚔️" label="Military tokens" hint="Small: place a cube. Large: remove one of your opponent's, then you may move one." accent="#ff7070" />
+                <RulesTile icon="🗳️" label="Senate VP" hint="Chambers score 1 / 2 / 3 / 3 / 2 / 1 VP to their controller." accent="#6aa0ff" />
+              </RulesGrid>
+              <h3>Senators</h3>
+              <p>
+                Thirteen Senators are shuffled into the ages (5 / 5 / 3), so the structures hold 25 / 25 / 23
+                cards. A Senator costs a coin per Senator already in your city. A <strong>Politician</strong> gives
+                1 / 2 / 3 Senate actions (0–1 / 2–3 / 4+ blue cards): place a cube in its section, or move one of
+                yours to the next Chamber. A <strong>Conspirator</strong> places a cube in any Chamber, or Conspires:
+                draw 2 Conspiracies, keep one face down and put the other on top or bottom of the deck.
+              </p>
+              <h3>Conspiracies</h3>
+              <p>
+                On your turn you may prepare one with an accessible card (tucked under it, instead of building
+                it). From a later turn, before taking a card, you may trigger one prepared Conspiracy.
+              </p>
+              <table className="tight">
+                <tbody>
+                  {CONSPIRACIES.map((c) => (
+                    <tr key={c.id}><td><span className="swd-rules-name"><ConspiracyArt id={c.id} size={20} /> {c.name}</span></td><td>{c.description}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+              <h3>Decrees</h3>
+              <table className="tight">
+                <tbody>
+                  {DECREES.map((d) => (
+                    <tr key={d.id}><td><span className="swd-rules-name"><DecreeArt id={d.id} size={20} /> {d.name}</span></td><td>{d.description}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+              <h3>Wonders and tokens</h3>
+              <table className="tight">
+                <tbody>
+                  {EXPANSION_WONDERS.filter((w) => w.expansion === 'agora').map((w) => (
+                    <tr key={w.id}><td>{w.name}</td><td>{w.description} <span className="muted">({costText(w.cost)})</span></td></tr>
+                  ))}
+                  {EXPANSION_PROGRESS_TOKENS.filter((t) => t.expansion === 'agora').map((t) => (
+                    <tr key={t.id}><td>{t.name}</td><td>{t.description}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          ),
+        },
       ]}
     />
   );
@@ -195,20 +334,51 @@ function GameView({ state, localPlayerId, dispatch }: { state: DuelState; localP
   const lastByAI = !!last && 'playerId' in last && !!state.seats.find((s) => s.id === last.playerId)?.isAI;
   const pace = anyHuman && lastByAI ? 'slow' : 'normal';
 
+  // Pantheon: a space picked to invoke its Divinity (instead of a card).
+  const [selectedSpace, setSelectedSpace] = useState<number | null>(null);
+  const canInvoke = isMyTurn && state.subPhase === 'turn' && !!state.pantheon?.revealed;
+  const space = canInvoke && selectedSpace !== null && state.pantheon?.spaces[selectedSpace] ? selectedSpace : null;
+
   if (state.phase === 'gameOver') return <GameOver state={state} />;
 
+  const pending = state.pending[0];
+  const senateHighlight = pending?.kind === 'senate' ? sectionChambers(pending.section) : [];
   return (
     <DuelFlipProvider scene={`${viewerSeatIdx}`} pace={pace}>
       <div className="swd-game">
         <div className="swd-main">
-          <PlayerPanel key={oppSeatIdx} state={state} seatIdx={oppSeatIdx} />
+          <PlayerPanel key={oppSeatIdx} state={state} seatIdx={oppSeatIdx} viewerSeatIdx={viewerSeatIdx} />
           <MilitaryTrack state={state} />
+          {(state.pantheon || state.agora) && (
+            <div className="swd-boards">
+              {state.pantheon && (
+                <PantheonBoard state={state} viewerSeatIdx={viewerSeatIdx} canInvoke={canInvoke} selectedSpace={space} onPickSpace={setSelectedSpace} />
+              )}
+              {state.agora && <SenateBoard state={state} highlight={senateHighlight} />}
+            </div>
+          )}
           <section className="swd-table">
-            {state.subPhase === 'wonderDraft'
-              ? <WonderDraftPanel state={state} viewerSeatIdx={viewerSeatIdx} isMyTurn={isMyTurn} dispatch={dispatch} />
-              : <PyramidView state={state} viewerSeatIdx={viewerSeatIdx} isMyTurn={isMyTurn} dispatch={dispatch} />}
+            {state.wonderDraft ? (
+              <>
+                <WonderDraftPanel state={state} viewerSeatIdx={viewerSeatIdx} isMyTurn={isMyTurn && state.subPhase === 'wonderDraft'} dispatch={dispatch} />
+                {state.subPhase !== 'wonderDraft' && (
+                  <div className="swd-table-row">
+                    <DecisionPanel state={state} viewerSeatIdx={viewerSeatIdx} isMyTurn={isMyTurn} cardId={null} space={null} dispatch={dispatch} onClear={() => {}} />
+                  </div>
+                )}
+              </>
+            ) : (
+              <PyramidView
+                state={state}
+                viewerSeatIdx={viewerSeatIdx}
+                isMyTurn={isMyTurn}
+                dispatch={dispatch}
+                space={space}
+                onClearSpace={() => setSelectedSpace(null)}
+              />
+            )}
           </section>
-          <PlayerPanel key={viewerSeatIdx} state={state} seatIdx={viewerSeatIdx} />
+          <PlayerPanel key={viewerSeatIdx} state={state} seatIdx={viewerSeatIdx} viewerSeatIdx={viewerSeatIdx} />
         </div>
         <aside className="swd-side">
           <ProgressOffer state={state} />
@@ -224,7 +394,7 @@ function GameView({ state, localPlayerId, dispatch }: { state: DuelState; localP
 // Players
 // ===================================================================
 
-const CITY_ORDER: DuelCardColor[] = ['brown', 'gray', 'yellow', 'red', 'blue', 'green', 'purple'];
+const CITY_ORDER: DuelCardColor[] = ['brown', 'gray', 'yellow', 'red', 'blue', 'green', 'purple', 'senator'];
 
 /** Recent changes of a number, each shown for a moment (the floating ±N). */
 function useDeltas(value: number): { id: number; d: number }[] {
@@ -289,7 +459,7 @@ const BUILT_GLOW: Keyframe[] = [
   { filter: 'drop-shadow(0 0 0 rgba(255, 217, 112, 0))' },
 ];
 
-function PlayerPanel({ state, seatIdx }: { state: DuelState; seatIdx: 0 | 1 }) {
+function PlayerPanel({ state, seatIdx, viewerSeatIdx }: { state: DuelState; seatIdx: 0 | 1; viewerSeatIdx: 0 | 1 }) {
   const player = state.players[seatIdx];
   const seat = state.seats[seatIdx];
   const active = state.phase !== 'gameOver' && state.activeSeatIdx === seatIdx;
@@ -328,6 +498,7 @@ function PlayerPanel({ state, seatIdx }: { state: DuelState; seatIdx: 0 | 1 }) {
           </span>
         )}
       </header>
+      <PlayerExtras state={state} seatIdx={seatIdx} viewerSeatIdx={viewerSeatIdx} />
       <div className="swd-player-body">
         <div className="swd-city">
           {player.tableau.length === 0 && <span className="swd-empty">No buildings yet</span>}
@@ -361,6 +532,8 @@ function MilitaryTrack({ state }: { state: DuelState }) {
         awards={state.militaryAwards}
         leftColor={state.seats[0]?.color ?? '#8a6a4a'}
         rightColor={state.seats[1]?.color ?? '#8a6a4a'}
+        minerva={state.pantheon?.minerva ?? null}
+        agora={!!state.agora}
       />
       <div className="swd-military-labels">
         <span>◀ {left}’s capital</span>
@@ -465,12 +638,17 @@ function PyramidSlot({ slot, card, age, minX, pickable, available, selected, onP
     >
       {slot.faceUp && card
         ? <CardFace card={card} size="md" nodeRef={flip} onClick={pickable ? onPick : undefined} />
-        : <CardBack age={age} guild={card?.color === 'purple'} size="md" />}
+        : (
+          <CardBack age={age} kind={backKindOf(card)} size="md" onClick={pickable ? onPick : undefined}>
+            {slot.token && <StructureTokenBadge token={slot.token} />}
+          </CardBack>
+        )}
     </div>
   );
 }
 
 const SUBPHASE_TITLE: Partial<Record<DuelState['subPhase'], [string, string]>> = {
+  ...EXPANSION_TITLES,
   // [your title, opponent's]
   turn: ['your turn', 'turn'],
   progressPick: ['choose a Progress token', 'choosing a Progress token'],
@@ -480,10 +658,14 @@ const SUBPHASE_TITLE: Partial<Record<DuelState['subPhase'], [string, string]>> =
   chooseStarter: ['who starts this age?', 'choosing who starts'],
 };
 
-function PyramidView({ state, viewerSeatIdx, isMyTurn, dispatch }: {
+function PyramidView({ state, viewerSeatIdx, isMyTurn, dispatch, space, onClearSpace }: {
   state: DuelState; viewerSeatIdx: 0 | 1; isMyTurn: boolean; dispatch: Dispatch;
+  /** A Pantheon space picked to invoke (it replaces a card selection). */
+  space: number | null;
+  onClearSpace: () => void;
 }) {
   const [selectedCardId, setSelectedCardId] = useState<number | null>(null);
+  useEffect(() => { if (space !== null) setSelectedCardId(null); }, [space]);
   const rowRef = useRef<HTMLDivElement>(null);
   const xs = state.pyramid.map((s) => s.x);
   const minX = Math.min(0, ...xs);
@@ -495,6 +677,9 @@ function PyramidView({ state, viewerSeatIdx, isMyTurn, dispatch }: {
   const scale = rowW !== null && rowW < fullW ? rowW / fullW : 1;
 
   const picking = state.subPhase === 'turn' && isMyTurn;
+  // Zeus (any card) and Turn of Events (an accessible one) pick from the structure.
+  const discarding = isMyTurn && (state.subPhase === 'zeus' || state.subPhase === 'discardAvailable');
+  const discard = (cardId: number) => dispatch({ type: 'discardStructureCard', playerId: state.players[viewerSeatIdx].id, cardId });
   // A stale selection (the card was taken meanwhile) shows nothing.
   const selectedSlot = state.pyramid.find((s) => s.cardId === selectedCardId && isSlotAvailable(s, state.pyramid));
   const selected = picking && selectedSlot ? selectedSlot.cardId : null;
@@ -522,6 +707,7 @@ function PyramidView({ state, viewerSeatIdx, isMyTurn, dispatch }: {
           {state.pyramid.map((slot) => {
             if (slot.taken) return null;
             const available = isSlotAvailable(slot, state.pyramid) && slot.faceUp;
+            const discardable = discarding && (state.subPhase === 'zeus' || available);
             return (
               <PyramidSlot
                 key={slot.index}
@@ -530,9 +716,13 @@ function PyramidView({ state, viewerSeatIdx, isMyTurn, dispatch }: {
                 age={state.age}
                 minX={minX}
                 available={available}
-                pickable={picking && available}
+                pickable={(picking && available) || discardable}
                 selected={slot.cardId === selected}
-                onPick={() => setSelectedCardId(slot.cardId === selectedCardId ? null : slot.cardId)}
+                onPick={() => {
+                  if (discardable) { discard(slot.cardId); return; }
+                  onClearSpace();
+                  setSelectedCardId(slot.cardId === selectedCardId ? null : slot.cardId);
+                }}
               />
             );
           })}
@@ -543,8 +733,9 @@ function PyramidView({ state, viewerSeatIdx, isMyTurn, dispatch }: {
         viewerSeatIdx={viewerSeatIdx}
         isMyTurn={isMyTurn}
         cardId={selected}
+        space={space}
         dispatch={dispatch}
-        onClear={() => setSelectedCardId(null)}
+        onClear={() => { setSelectedCardId(null); onClearSpace(); }}
       />
     </div>
   );
@@ -555,35 +746,44 @@ function PyramidView({ state, viewerSeatIdx, isMyTurn, dispatch }: {
 // ===================================================================
 
 function DecisionPanel(props: {
-  state: DuelState; viewerSeatIdx: 0 | 1; isMyTurn: boolean; cardId: number | null; dispatch: Dispatch; onClear: () => void;
+  state: DuelState; viewerSeatIdx: 0 | 1; isMyTurn: boolean; cardId: number | null; space: number | null; dispatch: Dispatch; onClear: () => void;
 }) {
   const { state, isMyTurn } = props;
   if (!isMyTurn) {
     const actor = state.seats[state.activeSeatIdx]?.name ?? 'your opponent';
+    const doing = EXPANSION_TITLES[state.subPhase]?.[1];
     return (
       <div className="swd-pick-panel">
         <p className="swd-pick-hint">Waiting for {actor}…</p>
         {state.subPhase === 'chooseStarter' && <p className="swd-pick-sub">They choose who takes the first card of Age {['I', 'II', 'III'][state.age - 1]}.</p>}
+        {doing && <p className="swd-pick-sub">{actor} is {doing}.</p>}
       </div>
     );
   }
   switch (state.subPhase) {
-    case 'turn': return <CardActionsPanel {...props} />;
+    case 'turn':
+      return props.space !== null
+        ? <InvokePanel state={state} viewerSeatIdx={props.viewerSeatIdx} space={props.space} dispatch={props.dispatch} onClear={props.onClear} />
+        : <CardActionsPanel {...props} />;
     case 'chooseStarter': return <StarterPanel {...props} />;
     case 'progressPick':
     case 'libraryPick': return <TokenChoicePanel {...props} />;
     case 'destroyCard':
     case 'discardBuild': return <CardChoicePanel {...props} />;
-    default: return null;
+    default:
+      return EXPANSION_TITLES[state.subPhase] ? <ExpansionDecision state={state} viewerSeatIdx={props.viewerSeatIdx} dispatch={props.dispatch} /> : null;
   }
 }
 
 function paymentLines(payment: Payment, card?: DuelCard): ReactNode {
-  if (payment.chained) return <span>Free — you own {card?.chainFrom}</span>;
+  if (payment.chained) return <span>Free — {card?.chainFrom ? `you own ${card.chainFrom}` : 'a chain or a Mythology token'}</span>;
+  if (payment.engineering) return <span>Engineering: 1 coin</span>;
+  if (card?.color === 'senator') return <span>{payment.coins ? `A coin per Senator in your city: ${payment.coins}` : 'Free'}</span>;
   return (
     <>
       {payment.bought.length > 0 && <span>Buy {payment.bought.join(', ')}: {payment.trade} coin{payment.trade === 1 ? '' : 's'}</span>}
       {payment.waived.length > 0 && <span>Skipped (Masonry / Architecture): {payment.waived.join(', ')}</span>}
+      {payment.ignored && <span>Ignored (a Decree): {payment.ignored === 'coins' ? 'the coins' : payment.ignored}</span>}
       {payment.bought.length === 0 && payment.coins === 0 && <span>You make everything it needs</span>}
     </>
   );
@@ -592,30 +792,49 @@ function paymentLines(payment: Payment, card?: DuelCard): ReactNode {
 function CardActionsPanel({ state, viewerSeatIdx, cardId, dispatch, onClear }: {
   state: DuelState; viewerSeatIdx: 0 | 1; cardId: number | null; dispatch: Dispatch; onClear: () => void;
 }) {
-  const [mode, setMode] = useState<'actions' | 'wonder'>('actions');
+  const [mode, setMode] = useState<'actions' | 'wonder' | 'prepare'>('actions');
   useEffect(() => setMode('actions'), [cardId]);
   const me = state.players[viewerSeatIdx];
+  const coins = purse(me);
   const card = cardId !== null ? state.cardsById[cardId] : undefined;
   if (!card || cardId === null) {
     return (
       <div className="swd-pick-panel">
-        <p className="swd-pick-hint">Pick a glowing card from the pyramid.</p>
-        <p className="swd-pick-sub">Then build it, use it to build a wonder, or discard it for coins.</p>
+        <TriggerChoices state={state} seat={viewerSeatIdx} dispatch={dispatch} />
+        <p className="swd-pick-hint">Pick a glowing card from the pyramid{state.pantheon?.revealed ? ', or a Divinity of the Pantheon' : ''}.</p>
+        <p className="swd-pick-sub">
+          Then build it, use it to build a wonder{state.agora ? ', prepare a Conspiracy with it' : ''}, or discard it for coins.
+        </p>
       </div>
     );
   }
 
   const payment = cardPayment(state, viewerSeatIdx, card);
-  const alreadyBuilt = me.tableau.some((c) => c.name === card.name);
-  const canAfford = me.coins >= payment.coins;
+  const alreadyBuilt = card.color !== 'senator' && me.tableau.some((c) => c.name === card.name);
+  const canAfford = coins >= payment.coins;
   const unbuilt = me.wonders.filter((w) => !w.built);
   const wonderOptions = unbuilt.map((ws) => {
     const w = wonderById(ws.wonderId);
     const pay = wonderPayment(state, viewerSeatIdx, w);
-    return { w, pay, ok: pay.coins <= me.coins };
+    return { w, pay, ok: pay.coins <= coins };
   });
   const anyWonder = wonderOptions.some((o) => o.ok);
+  const unprepared = (me.agora?.conspiracies ?? []).filter((c) => c.preparedWith === null && !c.triggered);
   const done = (a: DuelAction) => { dispatch(a); onClear(); };
+
+  if (mode === 'prepare') {
+    return (
+      <div className="swd-pick-panel">
+        <p className="swd-pick-hint">Prepare which Conspiracy with {card.name}?</p>
+        <div className="swd-conspiracy-choices">
+          {unprepared.map((c) => (
+            <ConspiracyTile key={c.id} id={c.id} onPick={() => done({ type: 'takeAndPrepare', playerId: me.id, cardId, conspiracy: c.id })} />
+          ))}
+        </div>
+        <button className="secondary swd-btn-cancel" onClick={() => setMode('actions')}>Back</button>
+      </div>
+    );
+  }
 
   if (mode === 'wonder') {
     return (
@@ -631,7 +850,7 @@ function CardActionsPanel({ state, viewerSeatIdx, cardId, dispatch, onClear }: {
               onClick={ok ? () => done({ type: 'takeAndWonder', playerId: me.id, cardId, wonderId: w.id }) : undefined}
               footer={(
                 <div className={`swd-wonder-desc ${ok ? '' : 'short'}`}>
-                  {ok ? 'Costs' : 'Needs'} <CoinIcon value={pay.coins} size={15} />{ok ? '' : ` — you have ${me.coins}`}
+                  {ok ? 'Costs' : 'Needs'} <CoinIcon value={pay.coins} size={15} />{ok ? '' : ` — you have ${coins}`}
                 </div>
               )}
             />
@@ -652,7 +871,7 @@ function CardActionsPanel({ state, viewerSeatIdx, cardId, dispatch, onClear }: {
       <div className="swd-pick-buttons">
         <button
           disabled={alreadyBuilt || !canAfford}
-          title={alreadyBuilt ? 'Already in your city' : !canAfford ? `Needs ${payment.coins} coins (you have ${me.coins})` : ''}
+          title={alreadyBuilt ? 'Already in your city' : !canAfford ? `Needs ${payment.coins} coins (you have ${coins})` : ''}
           onClick={() => done({ type: 'takeAndBuild', playerId: me.id, cardId })}
         >
           <span>Build</span>
@@ -667,13 +886,19 @@ function CardActionsPanel({ state, viewerSeatIdx, cardId, dispatch, onClear }: {
           <span>Build a wonder with it</span>
           <span className="swd-btn-cost"><Icon size={18}><WonderGlyph /></Icon></span>
         </button>
+        {unprepared.length > 0 && (
+          <button className="secondary" onClick={() => setMode('prepare')}>
+            <span>Prepare a Conspiracy with it</span>
+            <span className="swd-btn-cost"><ConspiracyBackArt size={18} /></span>
+          </button>
+        )}
         <button className="secondary" onClick={() => done({ type: 'takeAndDiscard', playerId: me.id, cardId })}>
           <span>Discard for coins</span>
-          <span className="swd-btn-cost">+<CoinIcon value={discardCoins(me)} size={18} /></span>
+          <span className="swd-btn-cost">+<CoinIcon value={discardGain(state, viewerSeatIdx)} size={18} /></span>
         </button>
         <button className="secondary swd-btn-cancel" onClick={onClear}>Cancel</button>
       </div>
-      <div className="swd-pick-sub">You have <CoinIcon value={me.coins} size={16} /> coins.</div>
+      <div className="swd-pick-sub">You have <CoinIcon value={coins} size={16} /> coins.</div>
     </div>
   );
 }
@@ -819,6 +1044,42 @@ function logText(state: DuelState, e: DuelLogEntry): string | null {
     case 'wonderRemoved': return `${wonderById(e.wonderId).name} goes back to the box`;
     case 'playAgain': return `${name(e.playerId)} plays again`;
     case 'gameEnd': return null;
+    // Pantheon
+    case 'tokenTaken':
+      return e.token.kind === 'mythology'
+        ? `${name(e.playerId)} takes a ${mythologyInfo(e.token.mythology).name} Mythology token`
+        : `${name(e.playerId)} takes the −${e.token.value} Offering token`;
+    case 'divinityPlaced': return `${name(e.playerId)} places a ${mythologyInfo(e.mythology).name} Divinity on space ${e.space + 1}`;
+    case 'divinityInvoked':
+      return `${name(e.playerId)} invokes ${divinityById(e.divinity).name}${e.free ? ' (free)' : e.paid ? ` (${coins(e.paid)})` : ''}`;
+    case 'gatePlaced': return `The Gate opens on space ${e.space + 1}; the Divinities turn face up`;
+    case 'snakePlaced': return `${name(e.playerId)} puts the Snake on ${e.cardName}`;
+    case 'cardTaken': return `${name(e.playerId)} takes ${name(e.ownerId)}'s ${e.cardName}`;
+    case 'structureDiscard': return `${name(e.playerId)} discards ${e.cardName} from the structure`;
+    case 'wonderUnbuilt': return `${name(e.playerId)} un-builds ${wonderById(e.wonderId).name}${e.cardName ? ` (${e.cardName} to the discard pile)` : ''}`;
+    case 'wonderTaken': return `${name(e.playerId)} takes ${wonderById(e.wonderId).name} from ${name(e.ownerId)}`;
+    case 'wonderSabotaged': return `${name(e.playerId)} returns ${name(e.ownerId)}'s ${wonderById(e.wonderId).name} to the box`;
+    case 'minervaPlaced': return `${name(e.playerId)} puts Minerva on the track`;
+    case 'minervaStop': return 'Minerva stops the conflict pawn and leaves the game';
+    case 'militaryToken': return `${name(e.playerId)} ${e.applied ? 'applies' : 'discards'} a ${e.token.endsWith('6') ? 'large' : 'small'} military token`;
+    // Agora
+    case 'influence':
+      return e.action === 'move'
+        ? `${name(e.playerId)} moves a cube from Chamber ${(e.from ?? 0) + 1} to ${e.chamber + 1}`
+        : e.action === 'place' ? `${name(e.playerId)} places a cube in Chamber ${e.chamber + 1}`
+        : `${name(e.playerId)} removes a cube from Chamber ${e.chamber + 1}`;
+    case 'chamberControl': return `${name(e.playerId)} ${e.gained ? 'takes control of' : 'loses'} Chamber ${e.chamber + 1}`;
+    case 'decreeRevealed': return `Chamber ${e.chamber + 1}'s Decree turns up: ${decreeById(e.decree).name}`;
+    case 'decreeMoved': return `${name(e.playerId)} moves a Decree from Chamber ${e.from + 1} to ${e.to + 1}`;
+    case 'decreeCoins': return `${name(e.playerId)} takes ${coins(e.coins)} (${decreeById(e.decree).name})`;
+    case 'conspired': return `${name(e.playerId)} conspires and keeps ${e.kept === 1 ? 'a Conspiracy' : `${e.kept} Conspiracies`}`;
+    case 'remnantPlaced': return `${name(e.playerId)} puts the other Conspiracy on the ${e.top ? 'top' : 'bottom'} of the deck`;
+    case 'conspiracyPrepared': return `${name(e.playerId)} prepares a Conspiracy with an Age ${['I', 'II', 'III'][e.cardAge - 1]} card`;
+    case 'conspiracyTriggered': return `${name(e.playerId)} triggers ${conspiracyById(e.conspiracy).name}`;
+    case 'coinsTaken': return `${name(e.playerId)} takes ${coins(e.coins)} from ${name(e.fromId)}`;
+    case 'tokenLocked':
+      return e.tokenId ? `${name(e.playerId)} locks ${progressTokenById(e.tokenId).name} away` : `${name(e.playerId)} locks a token from the box away`;
+    case 'cardsSwapped': return `${name(e.playerId)} takes ${e.took} and gives ${e.gave}`;
   }
 }
 
@@ -844,13 +1105,17 @@ function History({ state }: { state: DuelState }) {
 function GameOver({ state }: { state: DuelState }) {
   const winnerSeat = state.winnerSeatIdx !== null ? state.seats[state.winnerSeatIdx] : null;
   const reasonText = state.endReason === 'military' ? 'Military Supremacy'
-    : state.endReason === 'science' ? 'Scientific Supremacy'
+    : state.endReason === 'science' ? (winnerSeat ? 'Scientific Supremacy' : 'Both reached Scientific Supremacy')
+    : state.endReason === 'political' ? 'Political Supremacy'
     : winnerSeat ? 'Civilian Victory' : 'Shared victory';
   const reasonIcon = state.endReason === 'military' ? <ShieldIcon size={34} />
     : state.endReason === 'science' ? <ScienceIcon symbol="globe" size={34} />
+    : state.endReason === 'political' ? <CubeIconBig />
     : <LaurelIcon size={34} />;
   const head = (title: string, icon: ReactNode) => <th title={title}><span className="swd-th">{icon}</span></th>;
   const chip = (c: DuelCardColor) => <Icon size={22}><ChipGlyph color={c} /></Icon>;
+  const pantheon = !!state.pantheon;
+  const agora = !!state.agora;
   return (
     <div className="swd-game swd-game-over">
       <div className="swd-main">
@@ -871,11 +1136,13 @@ function GameOver({ state }: { state: DuelState }) {
                     {head('Civilian (blue cards)', chip('blue'))}
                     {head('Science (green cards)', chip('green'))}
                     {head('Commercial (yellow cards)', chip('yellow'))}
-                    {head('Guilds', chip('purple'))}
+                    {head(pantheon ? 'Grand Temples' : 'Guilds', chip('purple'))}
                     {head('Wonders', <Icon size={22}><WonderGlyph /></Icon>)}
                     {head('Progress tokens', <Icon size={22}><ProgressGlyph /></Icon>)}
                     {head('Treasury (1 VP per 3 coins)', <CoinIcon size={22} />)}
                     {head('Military', <ShieldIcon size={22} />)}
+                    {pantheon && head('Divinities (Aphrodite, Astarte)', <DivinityEmblem id="gate" mythology={null} size={22} />)}
+                    {agora && head('Senate (Chambers controlled)', <CubeIconBig size={22} />)}
                     {head('Total', <LaurelIcon value="VP" size={28} title="total VP" />)}
                   </tr>
                 </thead>
@@ -893,6 +1160,8 @@ function GameOver({ state }: { state: DuelState }) {
                         <td>{row.progress}</td>
                         <td>{row.treasury}</td>
                         <td>{row.military}</td>
+                        {pantheon && <td>{row.divinities}</td>}
+                        {agora && <td>{row.senate}</td>}
                         <td><strong>{row.total}</strong></td>
                       </tr>
                     );
@@ -903,12 +1172,23 @@ function GameOver({ state }: { state: DuelState }) {
           )}
           {state.endReason !== 'civilian' && <p className="swd-pick-sub">The VP above are for interest: a supremacy wins outright.</p>}
         </div>
-        <PlayerPanel state={state} seatIdx={1} />
+        {/* The match is over: every Conspiracy and Divinity is shown. */}
+        <PlayerPanel state={state} seatIdx={1} viewerSeatIdx={1} />
         <MilitaryTrack state={state} />
-        <PlayerPanel state={state} seatIdx={0} />
+        {(state.pantheon || state.agora) && (
+          <div className="swd-boards">
+            {state.pantheon && <PantheonBoard state={state} viewerSeatIdx={0} canInvoke={false} selectedSpace={null} onPickSpace={() => {}} />}
+            {state.agora && <SenateBoard state={state} />}
+          </div>
+        )}
+        <PlayerPanel state={state} seatIdx={0} viewerSeatIdx={0} />
       </div>
     </div>
   );
+}
+
+function CubeIconBig({ size = 34 }: { size?: number }) {
+  return <CubeIcon color="#e8c35a" size={size} title="Senate" />;
 }
 
 // ===================================================================

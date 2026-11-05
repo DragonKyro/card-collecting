@@ -47,7 +47,7 @@ describe('Leaders with two humans sharing the device', () => {
     for (let i = 0; i < 4; i++) {
       const pid = s.activePlayerId!;
       order.push(pid);
-      s = applyAction(s, { type: 'submitLeaderPlay', playerId: pid, pick: { kind: 'skip' } });
+      s = applyAction(s, { type: 'submitLeaderPlay', playerId: pid, pick: { kind: 'discard', cardId: s.players.find((p) => p.id === pid)!.leaderHand![0].id } });
     }
     expect(order).toEqual(['p1', 'p3', 'p0', 'p2']);
     expect(s.subPhase).toBe('picking');

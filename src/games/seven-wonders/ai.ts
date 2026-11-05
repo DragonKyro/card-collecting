@@ -1,18 +1,21 @@
-// 7 Wonders AI — one-ply heuristic for the base game.
+// 7 Wonders AI — one-ply heuristic.
 //
 // Every legal option this turn is valued in victory-point equivalents and the
 // best one is played:
 //   - build a card: at the cheapest payment plan, free through a chain, or
-//     with Olympia A's once-per-Age free build;
-//   - build the next wonder stage, tucking the hand's least useful card;
-//   - sell the least useful card for 3 coins.
+//     with a free build (Olympia A, Caligula, a Great Project token) — each
+//     also with a Great Project participation when the card's colour allows;
+//   - build the next wonder stage, tucking the hand's least useful card (paid,
+//     or with a free-stage token);
+//   - sell the least useful card for 3 coins;
+//   - an expansion's own use of a card (a Babel tile), valued by the expansion.
 // A card's value = the exact change in our score if it stood in our city now
-// (VP, science sets with wilds, yellow / guild counts as the table is now)
-// + what it is worth later (resources and trade discounts early on; shields
-// as the change in expected tokens from both neighbours at every Age end
-// still to come; chains into next-Age cards; science's room to grow; guild
-// counts still growing) − its price, coins converted at an Age-dependent rate.
-// A stage is valued the same way from its effects and wonder power.
+// (VP, science sets with wilds and masks, counts as the table is now, every
+// expansion column) + what it is worth later (resources and trade discounts
+// early on; shields as the change in expected tokens from both neighbours at
+// every Age end still to come; chains into next-Age cards; science's room to
+// grow; guild counts still growing) − its price, coins converted at an
+// Age-dependent rate. A stage is valued the same way from its effects.
 // Halicarnassus builds the discard card worth the most.
 //
 // The weights (MILITARY_WEIGHT, production's base value) were tuned in
@@ -27,11 +30,11 @@ import type {
 import { MANUFACTURED_RESOURCES, RAW_RESOURCES } from './types';
 import { wonderById } from './wonders';
 import {
-  canChainBuild, effectiveCostFor, neighborsOf, planPayment, productionFor,
+  canChainBuild, neighborsOf, planPayment, productionFor,
   sellableProductionFor, shieldsFor, sumCoinsOnPlay,
 } from './resources';
 import { coinsOnPlayForEndVp, copyableGuilds, scorePlayer } from './scoring';
-import { canBuildFree, discardBuildOptions } from './reducer';
+import { discardBuildOptions, freeBuildsFor, picksPerAge, pickCostFor } from './reducer';
 import { getActiveExpansions } from './expansions/registry';
 import { aggregateExtras } from './expansions/types';
 
@@ -39,27 +42,39 @@ const AGE_WIN_VP: Record<SwAge, number> = { 1: 1, 2: 3, 3: 5 };
 
 /** What a coin is worth in VP: more while it can still buy resources, a third
  *  of a VP (treasury) at the very end. */
-function coinValue(state: SwState): number {
+export function coinValue(state: SwState): number {
   if (state.age === 1) return 0.5;
   if (state.age === 2) return 0.45;
-  return state.ageRound >= 5 ? 1 / 3 : 0.38;
+  return state.ageRound >= picksPerAge(state) - 1 ? 1 / 3 : 0.38;
 }
 
 /** Picks left in this Age after the current one. */
-function picksLeft(state: SwState): number {
-  return Math.max(0, 6 - state.ageRound);
+export function picksLeft(state: SwState): number {
+  return Math.max(0, picksPerAge(state) - state.ageRound);
 }
 
-/** Current score of `p` (base + expansion extras), optionally as if `card`
- *  stood in its city or one more wonder stage were built. */
-function scoreIf(state: SwState, p: SwPlayer, change?: { card?: SwCard; stage?: boolean }): number {
+/** Ages still to be played after this one. */
+function agesAfter(state: SwState): number {
+  return 3 - state.age;
+}
+
+/** Current score of `virtual` in place of its city (base + expansion extras). */
+export function scoreOf(state: SwState, virtual: SwPlayer): number {
+  const s: SwState = { ...state, players: state.players.map((x) => (x.id === virtual.id ? virtual : x)) };
+  return scorePlayer(s, virtual).total + aggregateExtras(getActiveExpansions(state.config), s, virtual).total;
+}
+
+/** Current score of `p`, optionally as if `card` stood in its city, a leader
+ *  were recruited or one more wonder stage were built. */
+export function scoreIf(state: SwState, p: SwPlayer, change?: { card?: SwCard; leader?: SwCard; stage?: boolean; remove?: SwCard }): number {
   const virtual: SwPlayer = {
     ...p,
-    tableau: change?.card ? [...p.tableau, change.card] : p.tableau,
+    tableau: change?.card ? [...p.tableau, change.card]
+      : change?.remove ? p.tableau.filter((c) => c.id !== change.remove!.id) : p.tableau,
+    leaderTableau: change?.leader ? [...(p.leaderTableau ?? []), change.leader] : p.leaderTableau,
     wonderStagesBuilt: p.wonderStagesBuilt + (change?.stage ? 1 : 0),
   };
-  const s: SwState = { ...state, players: state.players.map((x) => (x.id === p.id ? virtual : x)) };
-  return scorePlayer(s, virtual).total + aggregateExtras(getActiveExpansions(state.config), s, virtual).total;
+  return scoreOf(state, virtual);
 }
 
 /** Standard normal CDF (Abramowitz–Stegun 7.1.26, |error| < 1.5e-7). */
@@ -80,12 +95,13 @@ function battleEv(d: number, sigma: number, ageVp: number): number {
  *  neighbours at every Age end still to come (shields keep counting), each
  *  battle the less certain the more picks stand between now and it. Scaled up
  *  because rivals answer an arms race rather than move at random. */
-function militaryValue(state: SwState, p: SwPlayer, shields: number): number {
+export function militaryValue(state: SwState, p: SwPlayer, shields: number): number {
   const my = shieldsFor(p);
   const { west, east } = neighborsOf(state, p.id);
+  const per = picksPerAge(state);
   let v = 0;
   for (let age = state.age; age <= 3; age++) {
-    const picks = 7 - state.ageRound + 6 * (age - state.age); // this one included
+    const picks = per + 1 - state.ageRound + per * (age - state.age); // this one included
     const sigma = 0.35 + 0.45 * picks;
     for (const n of [west, east]) {
       const d = my - shieldsFor(n);
@@ -106,7 +122,7 @@ function produceValue(state: SwState, p: SwPlayer, production: readonly SwProduc
   const { west, east } = neighborsOf(state, p.id);
   const westSells = sellableProductionFor(state, west);
   const eastSells = sellableProductionFor(state, east);
-  const have = (r: SwResource) => (own.fixed.get(r) ?? 0) + 0.5 * own.choices.filter((c) => c.includes(r)).length;
+  const have = (r: SwResource) => (own.unlimited.has(r) ? 9 : 0) + (own.fixed.get(r) ?? 0) + 0.5 * own.choices.filter((c) => c.includes(r)).length;
   const sold = (r: SwResource) => (westSells.fixed.get(r) ?? 0) + (eastSells.fixed.get(r) ?? 0)
     + westSells.choices.filter((c) => c.includes(r)).length + eastSells.choices.filter((c) => c.includes(r)).length;
   const need = (r: SwResource) => {
@@ -118,6 +134,7 @@ function produceValue(state: SwState, p: SwPlayer, production: readonly SwProduc
   };
   let v = 0;
   for (const opts of production) {
+    if (opts.length === 0) continue;
     const best = Math.max(...opts.map(need));
     v += base * (best + (opts.length > 1 ? 0.15 : 0));
   }
@@ -145,13 +162,18 @@ function tradeValue(state: SwState, p: SwPlayer, sides: readonly ('east' | 'west
 /** Forward-looking worth of the effects that the score delta doesn't see. */
 function effectsFutureValue(state: SwState, p: SwPlayer, effects: readonly SwCardEffect[], sellable: boolean): number {
   let v = 0;
+  const others = state.players.length - 1;
   for (const eff of effects) {
     switch (eff.kind) {
       case 'shields': v += militaryValue(state, p, eff.shields); break;
       case 'produce': v += produceValue(state, p, eff.production, sellable); break;
+      case 'produceOwned': case 'produceMissing':
+        v += state.age === 3 ? 0.3 : state.age === 1 ? 2.6 : 1.6;
+        break;
       case 'tradeDiscountRaw': v += tradeValue(state, p, eff.sides, RAW_RESOURCES); break;
       case 'tradeDiscountManufactured': v += tradeValue(state, p, eff.sides, MANUFACTURED_RESOURCES); break;
-      case 'science': case 'scienceWild':
+      case 'tradeRebate': v += tradeValue(state, p, [eff.side], [...RAW_RESOURCES, ...MANUFACTURED_RESOURCES]) * 0.8; break;
+      case 'science': case 'scienceWild': case 'mask':
         // A symbol is worth more than its points today: sets and squares grow.
         v += state.age === 1 ? 2 : state.age === 2 ? 1.2 : 0;
         break;
@@ -159,6 +181,20 @@ function effectsFutureValue(state: SwState, p: SwPlayer, effects: readonly SwCar
         // Counts that the neighbours can still raise this Age.
         if (eff.vpPer && eff.from !== 'self') v += 0.2 * eff.vpPer * picksLeft(state);
         break;
+      case 'diplomacy':
+        // Sitting a conflict out is worth what we'd lose in it.
+        v += 0.6 + Math.max(0, -militaryValue(state, p, -2) / MILITARY_WEIGHT);
+        break;
+      case 'freeWonderResources': {
+        const left = wonderById(p.wonderId).stages.length - p.wonderStagesBuilt;
+        v += 1.4 * Math.max(0, left);
+        break;
+      }
+      case 'coinLoss':
+        // What it costs the others is a little worth to us.
+        v += 0.12 * eff.amount * others * (eff.per ? 1.5 : 1);
+        break;
+      case 'neighborsGain': v -= 0.1 * eff.amount * 2; break;
       default: break;
     }
   }
@@ -189,26 +225,27 @@ export function cardValue(state: SwState, p: SwPlayer, card: SwCard): number {
 }
 
 /** What building the next stage is worth (effects + power), before its price. */
-function stageValue(state: SwState, p: SwPlayer, stage: SwWonderStage, stageIdx: number): number {
+export function stageValue(state: SwState, p: SwPlayer, stage: SwWonderStage, stageIdx: number): number {
   let v = scoreIf(state, p, { stage: true }) - scoreIf(state, p);
   v += sumCoinsOnPlay(stage.effects) * coinValue(state);
   v += effectsFutureValue(state, p, stage.effects, false);
-  const agesLeft = 3 - state.age; // after this one
+  const agesLeft = agesAfter(state);
   for (const eff of stage.effects) {
     switch (eff.kind) {
       case 'buildFromDiscard': {
         const best = Math.max(0, ...discardBuildOptions(state, p).map((c) => cardValue(state, p, c)));
-        v += Math.max(best, state.ageRound === 6 ? 2 : 1);
+        v += Math.max(best, state.ageRound >= picksPerAge(state) ? 2 : 1);
         break;
       }
-      case 'playLastCard': v += 2.5 * (agesLeft + (state.ageRound <= 6 ? 1 : 0)); break;
-      case 'freeBuildPerAge': v += 3 * (agesLeft + (state.ageRound < 6 ? 1 : 0)); break;
+      case 'playLastCard': v += 2.5 * (agesLeft + (state.ageRound <= picksPerAge(state) ? 1 : 0)); break;
+      case 'freeBuildPerAge': v += 3 * (agesLeft + (state.ageRound < picksPerAge(state) ? 1 : 0)); break;
       case 'copyGuild': {
-        // Scored at the end; until Age III's guilds show up, expect a decent one.
         const best = Math.max(0, ...copyableGuilds(state, p).map((g) => scoreIf(state, p, { card: g }) - scoreIf(state, p)));
         v += state.age === 3 ? Math.max(best, 2 * picksLeft(state) / 6 * 4) : 4;
         break;
       }
+      case 'drawLeaders': v += 1.2 * Math.min(eff.count, state.leaderDeck?.length ?? 0) * (agesLeft + 0.5) / 3; break;
+      case 'recruitNow': v += (p.leaderHand?.length ?? 0) > 0 ? 2.5 : 0; break;
       default: break;
     }
   }
@@ -217,33 +254,57 @@ function stageValue(state: SwState, p: SwPlayer, stage: SwWonderStage, stageIdx:
   return v;
 }
 
+// ---------------------------------------------------------------------------
+// Options
+
 interface Option { value: number; pick: SwPendingPick }
+
+const NO_PAYMENT = { fromWest: [], fromEast: [], coins: 0 };
+
+/** Price a pick: null if it can't be paid. */
+function price(state: SwState, p: SwPlayer, pick: SwPendingPick, card: SwCard): { pick: SwPendingPick; coins: number; trade: number } | null {
+  const cost = pickCostFor(state, p, pick, card);
+  if (!cost || ((cost.coins ?? 0) === 0 && (cost.resources?.length ?? 0) === 0)) return { pick, coins: 0, trade: 0 };
+  const plan = planPayment(state, p, cost);
+  if (!plan.ok) return null;
+  return { pick: { ...pick, payment: plan.payment } as SwPendingPick, coins: plan.totalCoins, trade: plan.toWest + plan.toEast };
+}
 
 /** Every way to play `card` as a build, with its net value. */
 function buildOptions(state: SwState, p: SwPlayer, card: SwCard, worth: number): Option[] {
   if (!Number.isFinite(worth)) return [];
   const cv = coinValue(state);
   const out: Option[] = [];
-  const noPayment = { fromWest: [], fromEast: [], coins: 0 };
-  let paidCoins: number | null = null;
-  if (canChainBuild(p, card)) {
-    out.push({ value: worth, pick: { kind: 'build', cardId: card.id, payment: noPayment } });
-    paidCoins = 0;
-  } else {
-    const plan = planPayment(state, p, effectiveCostFor(state, p, { kind: 'card', card }));
-    if (plan.ok) {
-      // Coins handed to a neighbour help them a little too.
-      const value = worth - plan.totalCoins * cv - (plan.toWest + plan.toEast) * 0.1;
-      out.push({ value, pick: { kind: 'build', cardId: card.id, payment: plan.payment } });
-      paidCoins = plan.totalCoins;
-    }
+  const exts = getActiveExpansions(state.config);
+  const canJoin = exts.some((e) => e.pickCost);
+  const variants: SwPendingPick[] = [{ kind: 'build', cardId: card.id, payment: NO_PAYMENT }];
+  const chain = canChainBuild(state, p, card);
+  for (const free of freeBuildsFor(state, p, card)) {
+    // Spend a free build on a card that would cost something.
+    if (chain) continue;
+    variants.push({ kind: 'build', cardId: card.id, payment: NO_PAYMENT, free });
   }
-  // Olympia A: worth spending on a card that costs something (or can't be paid).
-  if (canBuildFree(state, p) && paidCoins !== 0) {
-    const cost = effectiveCostFor(state, p, { kind: 'card', card });
-    if ((cost.resources?.length ?? 0) > 0 || (cost.coins ?? 0) > 0) {
-      const token = state.ageRound <= 4 ? 1.5 : state.ageRound === 5 ? 0.8 : 0;
-      out.push({ value: worth - token, pick: { kind: 'build', cardId: card.id, payment: noPayment, free: true } });
+  for (const base of variants) {
+    for (const participate of canJoin ? [false, true] : [false]) {
+      const pick: SwPendingPick = participate ? { ...base, participate: true } as SwPendingPick : base;
+      if (participate) {
+        try {
+          // Validation of the participation (colour, tokens, once a turn).
+          for (const ext of exts) ext.validatePick?.(state, p, pick, card);
+        } catch { continue; }
+      }
+      const priced = price(state, p, pick, card);
+      if (!priced) continue;
+      let value = worth - priced.coins * cv - priced.trade * 0.1;
+      for (const ext of exts) value += ext.aiPickValue?.(state, p, pick, card) ?? 0;
+      if (pick.kind === 'build' && pick.free) {
+        const kind = pick.free === true ? 'olympia' : pick.free;
+        const token = kind === 'olympia' ? (state.ageRound <= 4 ? 1.5 : state.ageRound === 5 ? 0.8 : 0)
+          : kind === 'token' ? (state.age === 3 && picksLeft(state) <= 1 ? 0 : 2.5)
+          : 0.5;
+        value -= token;
+      }
+      out.push({ value, pick: priced.pick });
     }
   }
   return out;
@@ -268,9 +329,7 @@ export function chooseAIAction(state: SwState, playerId: PlayerId): SwAction | n
       .sort((a, b) => b.v - a.v);
     return { type: 'buildFromDiscard', playerId, cardId: ranked[0]?.c.id ?? null };
   }
-  // Expansion-owned subphase (e.g., Leaders' draft/play, Solomon's pick) —
-  // delegate to whichever expansion owns it. Without this, AI seats freeze
-  // during the leader draft when Leaders is enabled.
+  // Expansion-owned subphase — delegate to whichever expansion owns it.
   if (state.subPhase !== 'picking') {
     for (const ext of getActiveExpansions(state.config)) {
       if (!ext.ownsSubPhase?.(state.subPhase) || !ext.chooseAIAction) continue;
@@ -301,16 +360,21 @@ export function chooseAIAction(state: SwState, playerId: PlayerId): SwAction | n
   const stageIdx = me.wonderStagesBuilt;
   if (stageIdx < wonder.stages.length) {
     const stage = wonder.stages[stageIdx];
-    const plan = planPayment(state, me, effectiveCostFor(state, me, { kind: 'wonderStage', stageIndex: stageIdx, stage }));
-    if (plan.ok) {
-      options.push({
-        value: stageValue(state, me, stage, stageIdx) - plan.totalCoins * cv - (plan.toWest + plan.toEast) * 0.1,
-        pick: { kind: 'wonder', cardId: spare.id, stageIndex: stageIdx, payment: plan.payment },
-      });
+    const worth = stageValue(state, me, stage, stageIdx);
+    const picks: SwPendingPick[] = [{ kind: 'wonder', cardId: spare.id, stageIndex: stageIdx, payment: NO_PAYMENT }];
+    if ((me.projectTokens?.freeStage ?? 0) > 0) picks.push({ kind: 'wonder', cardId: spare.id, stageIndex: stageIdx, payment: NO_PAYMENT, free: 'token' });
+    for (const pick of picks) {
+      const priced = price(state, me, pick, spare);
+      if (!priced) continue;
+      const token = pick.kind === 'wonder' && pick.free ? 2.5 : 0;
+      options.push({ value: worth - priced.coins * cv - priced.trade * 0.1 - token, pick: priced.pick });
     }
   }
 
   options.push({ value: 3 * cv, pick: { kind: 'discard', cardId: spare.id } });
+  for (const ext of getActiveExpansions(state.config)) {
+    for (const o of ext.extraPickOptions?.(state, me, spare.id) ?? []) options.push(o);
+  }
 
   let best = options[0];
   for (const o of options) if (o.value > best.value) best = o;

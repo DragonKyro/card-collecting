@@ -95,7 +95,53 @@ export const WONDERS: readonly DuelWonder[] = [
   },
 ];
 
-const BY_ID = new Map(WONDERS.map((w) => [w.id, w]));
+/** The expansions' wonders: Agora's two act when drafted as well as when built. */
+export const EXPANSION_WONDERS: readonly DuelWonder[] = [
+  {
+    id: 'curia-julia',
+    name: 'Curia Julia',
+    expansion: 'agora',
+    onSelect: 'conspire',
+    cost: { resources: ['papyrus', 'glass', 'clay', 'wood', 'stone'] },
+    effects: [{ kind: 'coins', amount: 6 }, { kind: 'playAgain' }, { kind: 'triggerUnprepared' }],
+    description: 'When drafted: Conspire. When built: take 6 coins, you may trigger one of your unprepared Conspiracies. Play again.',
+  },
+  {
+    id: 'knossos',
+    name: 'Knossos',
+    expansion: 'agora',
+    onSelect: 'placeInfluence',
+    cost: { resources: ['glass', 'glass', 'clay', 'wood', 'stone'] },
+    effects: [{ kind: 'placeInfluence' }, { kind: 'moveInfluence' }, { kind: 'vp', vp: 3 }],
+    description: 'When drafted: place an Influence cube. When built: place an Influence cube, then you may move one. 3 VP.',
+  },
+  {
+    id: 'sanctuary',
+    name: 'The Sanctuary',
+    expansion: 'pantheon',
+    cost: { resources: ['papyrus', 'glass', 'stone', 'stone'] },
+    effects: [{ kind: 'divinityDiscount', amount: 2 }, { kind: 'playAgain' }],
+    description: 'Invoking Divinities costs you 2 coins less. Play again.',
+  },
+  {
+    id: 'divine-theater',
+    name: 'The Divine Theater',
+    expansion: 'pantheon',
+    cost: { resources: ['papyrus', 'papyrus', 'glass', 'wood', 'wood'] },
+    effects: [{ kind: 'divineTheater' }, { kind: 'vp', vp: 2 }],
+    description: 'Look through a Mythology deck of your choice and invoke one of its Divinities for free. 2 VP.',
+  },
+];
+
+/** Every wonder, the expansions' included. */
+export const ALL_WONDERS: readonly DuelWonder[] = [...WONDERS, ...EXPANSION_WONDERS];
+
+/** The wonders a match drafts from (the base 12 first, in their printed order). */
+export function wonderPool(config: { pantheon?: boolean; agora?: boolean }): DuelWonder[] {
+  return ALL_WONDERS.filter((w) => !w.expansion || (w.expansion === 'agora' ? !!config.agora : !!config.pantheon));
+}
+
+const BY_ID = new Map(ALL_WONDERS.map((w) => [w.id, w]));
 
 export function wonderById(id: string): DuelWonder {
   const w = BY_ID.get(id);

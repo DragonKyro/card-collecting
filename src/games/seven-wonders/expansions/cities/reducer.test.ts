@@ -1,164 +1,160 @@
-// Cities expansion — reducer integration tests.
-//
-// Verifies that:
-//  - setupMatch initializes debt + diplomacy = 0 on every player
-//  - Cities cards are present in the dealt hand pool when Cities is active
-//  - A diplomacy-token-holding player auto-spends the token at age-end military
-//    and is excluded from comparison; their neighbors compare across the gap
-//  - Full AI vs AI match with Cities completes to gameOver
-//  - Match WITHOUT Cities still works (backward-compat)
+// Cities — coin losses and debt, diplomacy, masks, the docks, the warehouse
+// and the market, the Architect Cabinet, and the scoring columns.
 
-import { describe, it, expect } from 'vitest';
-import { sevenWondersModule } from '../../module';
+import { describe, expect, it } from 'vitest';
 import { applyAction, _internals } from '../../reducer';
-import { chooseAIAction as baseAI } from '../../ai';
+import { effectiveCostFor, planPayment, productionFor, tradeCoins } from '../../resources';
+import { scoreMatch } from '../../scoring';
 import type { SwState } from '../../types';
-import type { Seat } from '@/core/types';
+import { newMatch, playOut, producer, realCard, discardAll } from '../../testSupport';
+import { wonderById } from '../../wonders';
 
-function aiSeats(n: number): Seat[] {
-  const out: Seat[] = [];
-  for (let i = 0; i < n; i++) {
-    out.push({ id: `p${i}`, name: `AI${i}`, color: '#888', isAI: true, isLocal: true });
-  }
-  return out;
+const NO_PAY = { fromWest: [], fromEast: [], coins: 0 };
+
+function cities(n = 3, wonders = ['gizah-a', 'rhodes-a', 'ephesos-a', 'alexandria-a', 'olympia-a', 'babylon-a', 'halicarnassus-a']): SwState {
+  return newMatch(n, { expansions: ['cities'], wonders: wonders.slice(0, n), seed: 3 });
 }
 
-function makeState(n: number, seed = 7): SwState {
-  return sevenWondersModule.createInitialState(
-    { expansions: ['cities'], wonderAssignment: 'random', wonderSide: 'A' },
-    seed, aiSeats(n));
-}
-
-describe('Cities — reducer integration', () => {
-  it('setupMatch zero-inits debt + diplomacy on every player', () => {
-    const s = makeState(3);
-    for (const p of s.players) {
-      expect(p.debtTokens).toBe(0);
-      expect(p.diplomacyTokens).toBe(0);
-    }
+describe('Cities: coin losses and debt', () => {
+  it('a city with no coins takes debt; one with coins decides, the rest is debt', () => {
+    let s = cities(3);
+    const me = s.players[0];
+    me.hand[0] = realCard('Lair');
+    me.tableau.push(producer('wood', 'glass'));
+    s.players[1].coins = 0;
+    s.players[2].coins = 5;
+    s = applyAction(s, { type: 'submitPick', playerId: me.id, pick: { kind: 'build', cardId: me.hand[0].id, payment: NO_PAY } });
+    // p1 sells (3 coins — but losses are settled after the turn's income).
+    s = applyAction(s, { type: 'submitPick', playerId: 'p1', pick: { kind: 'discard', cardId: s.players[1].hand[0].id } });
+    s = applyAction(s, { type: 'submitPick', playerId: 'p2', pick: { kind: 'discard', cardId: s.players[2].hand[0].id } });
+    expect(s.subPhase).toBe('debt');
+    expect(s.pendingLosses).toEqual({ p1: 2, p2: 2 });
+    expect(() => applyAction(s, { type: 'settleDebt', playerId: 'p0', coins: 0 })).toThrow();
+    s = applyAction(s, { type: 'settleDebt', playerId: 'p1', coins: 1 });
+    s = applyAction(s, { type: 'settleDebt', playerId: 'p2', coins: 2 });
+    expect(s.subPhase).toBe('picking');
+    expect([s.players[1].coins, s.players[1].debtTokens]).toEqual([2, 1]);
+    expect([s.players[2].coins, s.players[2].debtTokens]).toEqual([6, 0]);
+    expect(s.players[0].debtTokens).toBe(0);
   });
 
-  it('deals black cards into the hand pool when Cities is active', () => {
-    const s = makeState(4, 13);
-    // Look across all players' hands for at least one black card.
-    const seen = new Set<string>();
-    for (const p of s.players) for (const c of p.hand) seen.add(c.color);
-    expect(seen.has('black')).toBe(true);
+  it('Sepulcher and Builders Union count victory tokens and wonder stages', () => {
+    let s = cities(3);
+    s.age = 2;
+    const me = s.players[0];
+    me.hand[0] = realCard('Sepulcher');
+    me.tableau.push(producer('ore', 'glass'));
+    s.players[1].militaryTokens = [1, 3, -1];
+    s.players[2].militaryTokens = [];
+    s = applyAction(s, { type: 'submitPick', playerId: me.id, pick: { kind: 'build', cardId: me.hand[0].id, payment: NO_PAY } });
+    s = discardAll(s);
+    expect(s.pendingLosses).toEqual({ p1: 2 });
   });
 
-  it('does NOT deal black cards when Cities is OFF', () => {
-    const s = sevenWondersModule.createInitialState(
-      { expansions: [], wonderAssignment: 'random', wonderSide: 'A' },
-      11, aiSeats(4));
-    for (const p of s.players) {
-      for (const c of p.hand) expect(c.color).not.toBe('black');
-    }
+  it('Gambling Den: 6 coins, each neighbour 1', () => {
+    let s = cities(3);
+    const me = s.players[0];
+    me.hand[0] = realCard('Gambling Den');
+    s = applyAction(s, { type: 'submitPick', playerId: me.id, pick: { kind: 'build', cardId: me.hand[0].id, payment: NO_PAY } });
+    s = discardAll(s);
+    expect(s.players.map((p) => p.coins)).toEqual([3 + 6, 3 + 3 + 1, 3 + 3 + 1]);
   });
 
-  it('diplomacy token: holder is excluded from military, neighbors fight across the gap', () => {
-    const s = makeState(3, 22);
-    // Set up shields: p0 has 5 shields, p1 has 0, p2 has 3 shields.
-    s.players[0].tableau.push({
-      id: 1000, name: 'TestRed1', age: 1, color: 'red', minPlayers: 3, maxPlayers: 99,
-      cost: {}, effects: [{ kind: 'shields', shields: 5 }],
-    });
-    s.players[2].tableau.push({
-      id: 1001, name: 'TestRed2', age: 1, color: 'red', minPlayers: 3, maxPlayers: 99,
-      cost: {}, effects: [{ kind: 'shields', shields: 3 }],
-    });
-    // p1 holds a diplomacy token.
-    s.players[1].diplomacyTokens = 1;
-    s.age = 1;
+  it('debt costs 1 VP each, black cards score in their own column', () => {
+    const s = cities(3);
+    const me = s.players[0];
+    me.debtTokens = 4;
+    me.tableau = [realCard('Capitol'), realCard('Secret Society'), realCard('Pigeon Loft')];
+    const row = scoreMatch(s).find((r) => r.playerId === me.id)!;
+    expect(row.extras).toMatchObject({ cities: 8 + 3, debt: -4 });
+  });
+});
+
+describe('Cities: diplomacy', () => {
+  it('a city with a token sits out; its neighbours fight across the gap', () => {
+    const s = cities(4);
+    s.players[0].diplomacyTokens = 1;
+    s.players[0].tableau = [realCard('Stockade')];
+    s.players[1].tableau = [realCard('Stockade'), realCard('Barracks')];
+    s.players[3].tableau = [];
     const summary = _internals.resolveMilitary(s);
-    // p1 is skipped: draws on both sides, no tokens.
-    const p1Row = summary.perPlayer.find((r) => r.playerId === s.players[1].id)!;
-    expect(p1Row.vsWest).toBe('draw');
-    expect(p1Row.vsEast).toBe('draw');
-    expect(p1Row.tokenGained).toBe(0);
-    // p0 vs p2 across the gap: 5 > 3 → p0 wins east. p0 vs p2 west: 5 > 3 → p0 wins west.
-    // Wait: there's only 3 players. With p1 skipped, p0's west = p2 and east = p2.
-    const p0Row = summary.perPlayer.find((r) => r.playerId === s.players[0].id)!;
-    // p0 (5) vs p2 (3) on both sides: win on both → +1+1 (age 1 = 1vp per win)
-    expect(p0Row.tokenGained).toBe(2);
-    // p2 (3) vs p0 (5): loss on both → -2.
-    const p2Row = summary.perPlayer.find((r) => r.playerId === s.players[2].id)!;
-    expect(p2Row.tokenGained).toBe(-2);
-    // Diplomacy token consumed.
-    expect(s.players[1].diplomacyTokens).toBe(0);
+    expect(s.players[0].militaryTokens).toEqual([]);
+    expect(s.players[0].diplomacyTokens).toBe(0);
+    expect(summary.perPlayer[0].diplomacy).toBe(true);
+    // p1 (2 shields) now faces p3 (0) on its west.
+    expect(s.players[1].militaryTokens).toContain(1);
+    expect(s.players[3].militaryTokens).toContain(-1);
   });
 
-  it('AI vs AI Cities match completes to gameOver', () => {
-    let s = makeState(3, 33);
-    let safety = 2000;
-    while (s.phase === 'playing' && safety-- > 0) {
-      let advanced = false;
-      if (s.subPhase === 'militaryEnd') {
-        s = applyAction(s, { type: 'continue' });
-        advanced = true;
-      } else if (s.subPhase === 'picking') {
-        for (const p of s.players) {
-          if (p.pendingPick !== null) continue;
-          const a = baseAI(s, p.id);
-          if (a) {
-            s = applyAction(s, a);
-            advanced = true;
-            break;
-          }
-        }
-      } else if (s.activePlayerId) {
-        // Any other step (e.g. Halicarnassus' discard build) waits on one seat.
-        const a = baseAI(s, s.activePlayerId);
-        if (a) {
-          s = applyAction(s, a);
-          advanced = true;
-        }
-      }
-      if (!advanced) break;
-    }
-    expect(s.phase).toBe('gameOver');
-    expect(s.finalScoringBreakdown).not.toBeNull();
-  }, 30000);
+  it('with only two cities left in a conflict they fight once', () => {
+    const s = cities(3);
+    s.players[0].diplomacyTokens = 1;
+    s.players[1].tableau = [realCard('Stockade')];
+    _internals.resolveMilitary(s);
+    expect(s.players[1].militaryTokens).toEqual([1]);
+    expect(s.players[2].militaryTokens).toEqual([-1]);
+  });
+});
 
-  it('debt tokens contribute -1 each in final scoring extras', () => {
-    let s = makeState(3, 99);
-    // Drive game to completion.
-    let safety = 2000;
-    while (s.phase === 'playing' && safety-- > 0) {
-      let advanced = false;
-      if (s.subPhase === 'militaryEnd') {
-        s = applyAction(s, { type: 'continue' });
-        advanced = true;
-      } else if (s.subPhase === 'picking') {
-        for (const p of s.players) {
-          if (p.pendingPick !== null) continue;
-          const a = baseAI(s, p.id);
-          if (a) {
-            s = applyAction(s, a);
-            advanced = true;
-            break;
-          }
-        }
-      } else if (s.activePlayerId) {
-        // Any other step (e.g. Halicarnassus' discard build) waits on one seat.
-        const a = baseAI(s, s.activePlayerId);
-        if (a) {
-          s = applyAction(s, a);
-          advanced = true;
-        }
-      }
-      if (!advanced) break;
+describe('Cities: card powers', () => {
+  it('masks copy the best of the neighbours\' green-card symbols', () => {
+    const s = cities(3);
+    const me = s.players[0];
+    me.tableau = [realCard('Apothecary'), realCard('Workshop'), realCard('Pigeon Loft'), realCard('Spy Ring')];
+    s.players[1].tableau = [realCard('Scriptorium')];
+    s.players[2].tableau = [realCard('Library')];
+    // compass + gear + 2 tablets copied: 1 + 1 + 4 + 7.
+    expect(scoreMatch(s).find((r) => r.playerId === me.id)!.science).toBe(13);
+  });
+
+  it('Clandestine Docks take 1 off the first unit bought from that side', () => {
+    const s = cities(3);
+    const me = s.players[0];
+    expect(tradeCoins(s, me, ['ore', 'ore'], [])).toEqual({ toWest: 4, toEast: 0 });
+    me.tableau.push(realCard('Clandestine Dock West'));
+    expect(tradeCoins(s, me, ['ore', 'ore'], [])).toEqual({ toWest: 3, toEast: 0 });
+    expect(tradeCoins(s, me, [], ['ore'])).toEqual({ toWest: 0, toEast: 2 });
+  });
+
+  it('Secret Warehouse adds one of what you make; Black Market one of what you don\'t', () => {
+    const s = cities(3);
+    const me = s.players[0]; // Gizah: stone
+    me.tableau.push(realCard('Secret Warehouse'));
+    let prod = productionFor(s, me);
+    expect(prod.choices).toContainEqual(['stone']);
+    me.tableau.push(realCard('Black Market'));
+    prod = productionFor(s, me);
+    expect(prod.choices.find((c) => c.length === 6)).toEqual(['wood', 'ore', 'clay', 'glass', 'papyrus', 'loom']);
+    // Neither is sold to the neighbours.
+    expect(planPayment(s, s.players[1], { resources: ['stone', 'stone'] }).ok).toBe(false);
+  });
+
+  it('the Architect Cabinet makes wonder stages free of resources', () => {
+    const s = cities(3);
+    const me = s.players[0];
+    const stage = wonderById(me.wonderId).stages[0];
+    expect(effectiveCostFor(s, me, { kind: 'wonderStage', stageIndex: 0, stage }).resources?.length).toBe(2);
+    me.tableau.push(realCard('Architect Cabinet'));
+    expect(effectiveCostFor(s, me, { kind: 'wonderStage', stageIndex: 0, stage }).resources).toEqual([]);
+  });
+
+  it('Petra B makes the others lose 2 coins; its 2nd stage costs 14 coins', () => {
+    let s = cities(3, ['petra-b', 'gizah-a', 'rhodes-a']);
+    const me = s.players[0];
+    me.tableau.push(producer('clay', 'ore', 'ore'));
+    s = applyAction(s, { type: 'submitPick', playerId: me.id, pick: { kind: 'wonder', cardId: me.hand[0].id, stageIndex: 0, payment: NO_PAY } });
+    s = discardAll(s);
+    expect(s.subPhase).toBe('debt');
+    expect(s.pendingLosses).toEqual({ p1: 2, p2: 2 });
+    expect(wonderById('petra-b').stages[1].cost).toEqual({ coins: 14 });
+  });
+});
+
+describe('Cities: AI', () => {
+  it('plays whole matches at 3–8 players', () => {
+    for (let n = 3; n <= 8; n++) {
+      const s = playOut(newMatch(n, { expansions: ['cities'], seed: 40 + n, side: 'random' }));
+      expect(s.phase).toBe('gameOver');
     }
-    expect(s.phase).toBe('gameOver');
-    // For any player with debt, expect a negative or zero 'cities' extras entry.
-    for (const row of s.finalScoringBreakdown ?? []) {
-      const player = s.players.find((p) => p.id === row.playerId)!;
-      const debt = player.debtTokens ?? 0;
-      if (debt > 0) {
-        // cities extras is total cities VP minus debt; we can't bound exactly
-        // since black cards contribute too, but verifying the field exists is
-        // sufficient.
-        expect(row.extras).toBeDefined();
-      }
-    }
-  }, 30000);
+  });
 });

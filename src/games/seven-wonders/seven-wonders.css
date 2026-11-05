@@ -625,3 +625,63 @@
   .sw-lobby .sw-preset-select { flex: 1 1 160px; }
   .sw-lobby .sw-expansion-row > .sw-wmini { margin-left: 86px; }
 }
+
+/* ---------- expansions: board power, table panels, tiles, projects ---------- */
+
+.sw-wboard-power {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  background: rgba(0, 0, 0, 0.28);
+  border-top: 1px solid rgba(255, 214, 150, 0.25);
+}
+
+.sw .sw-table-panels { display: flex; gap: 10px; flex-wrap: wrap; margin: 0 0 10px; }
+.sw .sw-tower,
+.sw .sw-project {
+  flex: 1 1 320px;
+  display: flex;
+  gap: 10px;
+  padding: 8px;
+  font-size: 12.5px;
+}
+.sw .sw-tower-art { flex: 0 0 96px; height: 64px; border-radius: 6px; overflow: hidden; border: 1px solid var(--panel-edge); }
+.sw .sw-tower-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.sw .sw-tower-body h4 { margin: 0; display: flex; align-items: center; gap: 6px; font-size: 13.5px; }
+.sw .sw-tower-spaces { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 4px; }
+.sw .sw-tower-space {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: 1px dashed rgba(255, 214, 150, 0.3);
+  font-size: 11.5px;
+  line-height: 1.25;
+}
+.sw .sw-tower-space.on { border-style: solid; background: rgba(227, 176, 110, 0.14); }
+.sw .sw-tower-space.next { box-shadow: inset 0 0 0 1px rgba(255, 214, 150, 0.55); }
+
+.sw .sw-tile-choices { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.sw .sw-tile-choice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 280px;
+  padding: 6px 8px;
+  text-align: left;
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--parchment);
+  border: 1px solid rgba(255, 214, 150, 0.3);
+}
+.sw .sw-tile-choice.on { background: var(--parchment); color: var(--ink); border-color: var(--gold); }
+
+.sw .sw-join { margin-top: 6px; gap: 6px; cursor: pointer; }
+.sw .sw-debt input { margin: 0 4px; }
+
+.sw-lobby .sw-expansion-block { flex-wrap: wrap; align-items: flex-start; }
+.sw-lobby .sw-expansion-block > .sw-expansion-desc { flex: 1 1 260px; }
+.sw-lobby .sw-expansion-block > p { flex-basis: 100%; }

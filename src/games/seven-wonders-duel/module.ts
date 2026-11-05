@@ -14,16 +14,22 @@ export const sevenWondersDuelModule: GameModule<DuelState, DuelAction, DuelConfi
   tagline: 'Standalone 2-player 7 Wonders. Pyramid draft, three paths to victory.',
   minPlayers: 2,
   maxPlayers: 2,
-  // Face-down pyramid cards are hidden from both players alike; everything
-  // else (cities, coins, wonders, tokens) is on the table.
-  hiddenInfo: false,
+  // Base game: face-down pyramid cards are hidden from both players alike;
+  // everything else (cities, coins, wonders, tokens) is on the table. The
+  // expansions add what only one player knows — Pantheon's Divinities placed
+  // face down in Age I, Agora's Conspiracies — so hot-seat play passes the
+  // device again.
+  hiddenInfo: (state) => !!(state.config.pantheon || state.config.agora),
 
   defaultConfig(_seats: Seat[]): DuelConfig {
     return { variant: 'base' };
   },
 
-  validateConfig(_config) {
-    return [];
+  validateConfig(config) {
+    const errors: string[] = [];
+    if (config.pantheon !== undefined && typeof config.pantheon !== 'boolean') errors.push('Pantheon must be on or off.');
+    if (config.agora !== undefined && typeof config.agora !== 'boolean') errors.push('Agora must be on or off.');
+    return errors;
   },
 
   createInitialState(config, seed, seats) {

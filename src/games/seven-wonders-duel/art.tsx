@@ -66,6 +66,7 @@ export const CARD_HEX: Record<DuelCardColor, string> = {
   red: '#c43c2f',
   green: '#3f9a4b',
   purple: '#7a4fa8',
+  senator: '#2e2a2f',
 };
 
 // ===========================================================================
@@ -895,6 +896,17 @@ function cardScene(name: string, color: DuelCardColor, symbol?: DuelScience): Re
     case 'Lighthouse': return <LighthouseScene />;
     case 'Pretorium': return <PretoriumScene />;
     case 'Arena': return <ArenaScene banner={GOLD} />;
+    // Pantheon: the Grand Temples
+    case 'Mesopotamian Grand Temple': return <ZigguratScene />;
+    case 'Phoenician Grand Temple': return <PhoenicianTempleScene />;
+    case 'Greek Grand Temple': return <GreekTempleScene />;
+    case 'Egyptian Grand Temple': return <PylonScene />;
+    case 'Roman Grand Temple': return <RomanTempleScene />;
+    // Agora: the Senators
+    case 'Politician (left)': return <SenateHallScene section={1} />;
+    case 'Politician (centre)': return <SenateHallScene section={2} />;
+    case 'Politician (right)': return <SenateHallScene section={3} />;
+    case 'Conspirator': return <ConspiratorScene />;
   }
   if (color === 'purple') return <GuildHallScene name={name} />;
   if (color === 'green') return <AcademyScene symbol={symbol ?? 'globe'} />;
@@ -2120,6 +2132,149 @@ function GuildHallScene({ name }: { name: string }) {
   );
 }
 
+// ---- Pantheon: Grand Temples ------------------------------------------------
+
+function ZigguratScene() {
+  return (
+    <g>
+      <Sky color={SKY_WARM} />
+      <Sun x={80} y={18} r={8} />
+      <Ground y={82} fill={SAND} />
+      <Palm x={10} y={84} h={30} />
+      <Palm x={92} y={84} h={24} s={0.9} />
+      <Box x={14} y={66} w={72} h={16} fill={SAND_D} />
+      <Box x={24} y={52} w={52} h={14} fill={SAND} />
+      <Box x={33} y={40} w={34} h={12} fill={SAND_D} />
+      <Box x={41} y={30} w={18} h={10} fill="#3f8a4c" />
+      <Shape d="M46 82 L46 30 L54 30 L54 82 Z" fill={DIRT} thin />
+      <path d="M46 70 h8 M46 58 h8 M46 46 h8" {...line(SHADOW, 0.7)} />
+      <Shape d="M44 30 L50 22 L56 30 Z" fill={GOLD} thin />
+    </g>
+  );
+}
+
+function PhoenicianTempleScene() {
+  return (
+    <g>
+      <Sky color="#d7e8ef" />
+      <rect x={0} y={70} width={100} height={30} fill={WATER} />
+      <Waves y={80} />
+      <Waves y={90} x0={10} />
+      <Ship x={78} y={78} s={0.75} sail="#8e3d8f" />
+      <Box x={10} y={44} w={48} h={30} fill={STONE} />
+      <Box x={6} y={38} w={56} h={6} fill="#d29a22" />
+      <Shape d="M6 38 L34 22 L62 38 Z" fill={STONE_D} />
+      <ArchHole x={26} w={16} top={52} bottom={74} />
+      <Column x={12} y={44} h={30} w={4} fill="#e8d2a0" />
+      <Column x={52} y={44} h={30} w={4} fill="#e8d2a0" />
+      <circle cx={34} cy={31} r={3} fill={GOLD} {...THIN} />
+    </g>
+  );
+}
+
+function GreekTempleScene() {
+  return (
+    <g>
+      <Sky />
+      <Cloud x={76} y={14} />
+      <Hills y={62} fill={GRASS_D} />
+      <Ground y={84} />
+      <Tree x={10} y={84} s={0.8} />
+      <Tree x={90} y={84} s={0.7} />
+      <Steps x={12} y={78} w={76} n={3} />
+      <Colonnade x0={16} x1={84} y={46} h={30} n={8} w={4} fill={WHITE} />
+      <Box x={12} y={40} w={76} h={6} fill={MARBLE} />
+      <Pediment x={12} y={24} w={76} h={16} fill={WHITE} />
+      <circle cx={50} cy={33} r={3} fill="#3d70b0" {...THIN} />
+    </g>
+  );
+}
+
+function PylonScene() {
+  return (
+    <g>
+      <Sky color={SKY_WARM} />
+      <Sun x={50} y={20} r={9} color="#ffd866" />
+      <Ground y={80} fill={SAND} />
+      <rect x={0} y={88} width={100} height={12} fill={WATER} />
+      <Shape d="M8 80 L14 34 L40 34 L44 80 Z" fill={STONE} />
+      <Shape d="M56 80 L60 34 L86 34 L92 80 Z" fill={STONE} />
+      <Box x={40} y={50} w={20} h={30} fill={STONE_D} />
+      <ArchHole x={44} w={12} top={56} bottom={80} fill={DARKWOOD} />
+      <path d="M18 44 h18 M18 52 h20 M64 44 h18 M62 52 h20" {...line('#7d848a', 1.2)} />
+      <Poly points="4,80 6,46 8,80" fill={MARBLE} />
+      <Poly points="92,80 94,46 96,80" fill={MARBLE} />
+      <circle cx={27} cy={62} r={3.4} fill={GOLD} {...THIN} />
+      <circle cx={73} cy={62} r={3.4} fill={GOLD} {...THIN} />
+    </g>
+  );
+}
+
+function RomanTempleScene() {
+  return (
+    <g>
+      <Sky />
+      <Ground y={84} fill={STONE} />
+      <Shape d="M40 46 A26 24 0 0 1 92 46 Z" fill={STONE_D} />
+      <Box x={40} y={46} w={52} h={36} fill={STONE} />
+      <Box x={6} y={50} w={42} h={4} fill={MARBLE} />
+      <Pediment x={6} y={38} w={42} h={12} />
+      <Colonnade x0={9} x1={45} y={54} h={26} n={4} w={4} />
+      <Steps x={6} y={82} w={42} n={2} dy={2} />
+      <Banner x={64} y={52} w={8} h={18} color="#b23c32" />
+      <Banner x={78} y={52} w={8} h={18} color="#b23c32" />
+      <Shape d="M62 40 l4 -6 l4 6 Z" fill={GOLD} thin />
+    </g>
+  );
+}
+
+// ---- Agora: Senators -----------------------------------------------------------
+
+/** The Senate's hemicycle, the Politician's section highlighted, an orator at the rostrum. */
+function SenateHallScene({ section }: { section: 1 | 2 | 3 }) {
+  const sector = (i: 1 | 2 | 3) => {
+    const a0 = Math.PI - ((i - 1) * Math.PI) / 3;
+    const a1 = Math.PI - (i * Math.PI) / 3;
+    const p = (a: number, r: number) => `${50 + Math.cos(a) * r} ${78 - Math.sin(a) * r}`;
+    return (
+      <path
+        key={i}
+        d={`M${p(a0, 18)} L${p(a0, 42)} A42 42 0 0 1 ${p(a1, 42)} L${p(a1, 18)} A18 18 0 0 0 ${p(a0, 18)} Z`}
+        fill={i === section ? '#d8b25a' : STONE}
+        {...LINE}
+      />
+    );
+  };
+  return (
+    <g>
+      <Sky color="#e7dcc7" />
+      <Box x={0} y={78} w={100} h={22} fill={STONE_D} />
+      {([1, 2, 3] as const).map(sector)}
+      <path d="M22 68 A30 30 0 0 1 78 68" {...line(SHADOW, 0.8)} />
+      <Box x={44} y={70} w={12} h={10} fill={MARBLE} />
+      <Figure x={50} y={70} robe={WHITE} s={1.1} armUp />
+    </g>
+  );
+}
+
+function ConspiratorScene() {
+  return (
+    <g>
+      <Sky color="#283246" />
+      <circle cx={76} cy={22} r={9} fill="#f2e6b8" />
+      <circle cx={80} cy={19} r={8} fill="#283246" />
+      <Ground y={82} fill="#3a3a44" />
+      <Box x={6} y={34} w={26} h={48} fill="#4a4652" />
+      <Crenels x={6} y={34} w={26} n={3} fill="#4a4652" />
+      <Shape d="M42 82 L46 50 Q54 36 62 50 L66 82 Z" fill="#1d1a22" />
+      <circle cx={54} cy={48} r={6} fill="#1d1a22" {...THIN} />
+      <path d="M50 49 h8" {...line('#f2e6b8', 1)} />
+      <path d="M64 62 L76 52" {...line('#cfd6dc', 2)} />
+      <path d="M63 63 l3 -1" {...line(GOLD, 2.4)} />
+    </g>
+  );
+}
+
 // ===========================================================================
 // Wonder illustrations (160 × 90)
 
@@ -2145,8 +2300,88 @@ function wonderScene(id: string): ReactNode {
     case 'piraeus': return <PiraeusWonder />;
     case 'sphinx': return <SphinxWonder />;
     case 'appian-way': return <AppianWonder />;
+    case 'curia-julia': return <CuriaWonder />;
+    case 'knossos': return <KnossosWonder />;
+    case 'sanctuary': return <SanctuaryWonder />;
+    case 'divine-theater': return <DivineTheaterWonder />;
   }
   return <PyramidsWonder />;
+}
+
+function CuriaWonder() {
+  return (
+    <g>
+      <Sky w={160} h={90} />
+      <Cloud x={24} y={16} />
+      <Ground y={78} w={160} h={90} fill={STONE} />
+      <Box x={46} y={26} w={68} h={52} fill="#c27a52" />
+      <Shape d="M42 26 L80 8 L118 26 Z" fill="#a8603e" />
+      <Box x={70} y={50} w={20} h={28} fill={BRONZE} />
+      <path d="M80 50 v28 M70 64 h20" {...line(DARKWOOD, 0.9)} />
+      <Box x={58} y={34} w={10} h={8} fill={SHADOW} />
+      <Box x={92} y={34} w={10} h={8} fill={SHADOW} />
+      <Colonnade x0={20} x1={46} y={78} h={30} n={3} w={4} />
+      <Colonnade x0={114} x1={140} y={78} h={30} n={3} w={4} />
+      <Box x={18} y={44} w={30} h={4} fill={MARBLE} />
+      <Box x={112} y={44} w={30} h={4} fill={MARBLE} />
+      <Steps x={60} y={84} w={40} n={2} dy={3} />
+    </g>
+  );
+}
+
+function KnossosWonder() {
+  const col = (x: number) => <Shape key={x} d={`M${x - 3} 40 h6 l-1.4 34 h-3.2 Z`} fill="#b8352b" thin />;
+  return (
+    <g>
+      <Sky color="#bfe0ee" w={160} h={90} />
+      <Hills y={50} fill={GRASS_D} w={160} />
+      <Ground y={76} w={160} h={90} fill={SAND} />
+      <Box x={24} y={30} w={112} h={10} fill="#e8d2a0" />
+      <Box x={24} y={40} w={112} h={34} fill={CREAM} />
+      {[34, 54, 74, 94, 114].map(col)}
+      <Box x={24} y={24} w={112} h={6} fill="#2f5d8c" />
+      <Shape d="M60 24 q-2 -8 4 -10 q-2 6 2 10 Z M100 24 q2 -8 -4 -10 q2 6 -2 10 Z" fill={WHITE} thin />
+      <Shape d="M126 56 q6 -6 4 -12 q4 4 2 12 Z" fill="#b8352b" thin />
+      <path d="M40 60 q10 -6 20 0 q-4 6 -10 4" {...line('#b8352b', 1.4)} />
+    </g>
+  );
+}
+
+function SanctuaryWonder() {
+  return (
+    <g>
+      <Sky color="#cfe2ea" w={160} h={90} />
+      <Shape d="M0 90 L40 40 L70 56 L110 24 L160 70 L160 90 Z" fill={GRASS_D} />
+      <Shape d="M60 90 L100 40 L140 90 Z" fill={STONE_D} />
+      <path d="M84 88 L92 70 L98 58 L104 46" {...line(MARBLE, 2.4)} />
+      <Box x={94} y={30} w={22} h={14} fill={MARBLE} />
+      <Pediment x={92} y={22} w={26} h={8} />
+      <Shape d="M105 18 C110 12 108 6 105 2 C102 8 99 12 105 18 Z" fill={FIRE} />
+      <Cypress x={30} y={70} h={22} />
+      <Cypress x={44} y={64} h={18} />
+    </g>
+  );
+}
+
+function DivineTheaterWonder() {
+  const rays = [-60, -30, 0, 30, 60].map((d) => {
+    const a = ((d - 90) * Math.PI) / 180;
+    return <line key={d} x1={80} y1={46} x2={80 + Math.cos(a) * 60} y2={46 + Math.sin(a) * 60} {...line('#fff3b0', 2)} />;
+  });
+  return (
+    <g>
+      <Sky color="#f0d6a8" w={160} h={90} />
+      {rays}
+      <Shape d="M20 86 A60 54 0 0 1 140 86 Z" fill={STONE_D} />
+      <Shape d="M34 86 A46 40 0 0 1 126 86 Z" fill={STONE} />
+      <Shape d="M50 86 A30 26 0 0 1 110 86 Z" fill={STONE_D} />
+      <Box x={56} y={74} w={48} h={12} fill={MARBLE} />
+      <Shape d="M66 62 q6 -8 12 0 q-6 10 -12 0 Z" fill={GOLD} thin />
+      <Shape d="M82 62 q6 -8 12 0 q-6 -4 -12 0 Z" fill="#7a4fa8" thin />
+      <circle cx={70} cy={61} r={0.9} fill={INK} />
+      <circle cx={88} cy={61} r={0.9} fill={INK} />
+    </g>
+  );
 }
 
 function Pyramid({ x, base, h, light = '#e7c584', dark = '#c49a58' }: { x: number; base: number; h: number; light?: string; dark?: string }) {
@@ -2631,6 +2866,57 @@ function tokenEmblem(id: DuelProgressTokenId): ReactNode {
           <path d="M7.6 31 H32.4" {...tline(TOKEN_INK, 1.6)} />
         </g>
       );
+    // Agora
+    case 'corruption':
+      return (
+        <g>
+          <path d="M9 24 q4 -6 10 -4 l6 2 q2 1 0 3 l-6 -1" fill="#e9c9a0" {...TL} />
+          <path d="M31 16 q-4 6 -10 4 l-6 -2 q-2 -1 0 -3 l6 1" fill="#e9c9a0" {...TL} />
+          <circle cx={20} cy={20} r={4.2} fill={TOKEN_GOLD} {...TL} />
+          <path d="M20 17.6 v4.8" {...tline(TOKEN_INK, 0.9)} />
+        </g>
+      );
+    case 'organizedCrime':
+      return (
+        <g>
+          <path d="M11 29 L27 11 M13 11 L29 29" {...tline(TOKEN_INK, 3)} />
+          <path d="M11 29 L27 11 M13 11 L29 29" {...tline('#dfe4e8', 1.5)} />
+          <path d="M14.4 22 l3.4 3.2 M25.6 22 l-3.4 3.2" {...tline(TOKEN_GOLD, 2.4)} />
+          <circle cx={20} cy={20} r={2} fill={TOKEN_GOLD} {...TL} />
+        </g>
+      );
+    // Pantheon
+    case 'mysticism':
+      return (
+        <g>
+          <path d="M8 20 Q20 8 32 20 Q20 32 8 20 Z" fill={TOKEN_GOLD} {...TL} />
+          <circle cx={20} cy={20} r={4.6} fill="#2f5d8c" {...TL} />
+          <circle cx={20} cy={20} r={1.8} fill={TOKEN_INK} />
+          <path d="M20 6.6 v3 M20 30.4 v3 M9 9 l2 2 M31 9 l-2 2" {...tline(TOKEN_GOLD, 1.4)} />
+        </g>
+      );
+    case 'poliorcetics':
+      return (
+        <g>
+          <rect x={13} y={13} width={10} height={17} fill="#a86a33" {...TL} />
+          <path d="M13 13 h10 v-3 h-2.5 v1.5 h-2.5 v-1.5 h-2.5 v1.5 h-2.5 Z" fill="#a86a33" {...TL} />
+          <path d="M13 19 h10 M13 25 h10" {...tline(TOKEN_INK, 0.8)} />
+          <path d="M23 22 h8.6" {...tline(TOKEN_INK, 2.6)} />
+          <path d="M23 22 h8.6" {...tline(TOKEN_GOLD, 1.2)} />
+          <circle cx={15.5} cy={31} r={2.2} fill={TOKEN_GOLD} {...TL} />
+          <circle cx={21} cy={31} r={2.2} fill={TOKEN_GOLD} {...TL} />
+        </g>
+      );
+    case 'engineering':
+      return (
+        <g>
+          <path d="M12 31 L20 9 L28 31" {...tline(TOKEN_INK, 2.6)} />
+          <path d="M12 31 L20 9 L28 31" {...tline(TOKEN_GOLD, 1.3)} />
+          <path d="M15 24 Q20 27 25 24" {...tline(TOKEN_GOLD, 1.3)} />
+          <circle cx={20} cy={9.6} r={2.2} fill={TOKEN_GOLD} {...TL} />
+          <path d="M28 18 h4 v4 h-4" {...tline(TOKEN_INK, 1.1)} />
+        </g>
+      );
   }
 }
 
@@ -2642,10 +2928,18 @@ const BACKS = {
   2: { bg: '#2f5d8c', deep: '#21456a', rim: '#cfe0f0' },
   3: { bg: '#8e3550', deep: '#6c2338', rim: '#f6c8d2' },
   guild: { bg: '#3e2358', deep: '#28143c', rim: '#e8c35a' },
+  temple: { bg: '#323a86', deep: '#222866', rim: '#f2d27a' },
+  senator: { bg: '#2a262c', deep: '#141216', rim: '#d9c08a' },
 } as const;
 
-export function CardBackArt({ age, guild = false }: { age: 1 | 2 | 3; guild?: boolean }) {
-  const p = guild ? BACKS.guild : BACKS[age];
+/** The back a face-down card shows: its age's, or the Guilds' / Grand
+ *  Temples' / Senators' own back (the one identity a back gives away). */
+export type CardBackKind = 'age' | 'guild' | 'temple' | 'senator';
+
+export function CardBackArt({ age, guild = false, kind }: { age: 1 | 2 | 3; guild?: boolean; kind?: CardBackKind }) {
+  const k: CardBackKind = kind ?? (guild ? 'guild' : 'age');
+  if (k === 'temple' || k === 'senator') return <SpecialBackArt kind={k} />;
+  const p = k === 'guild' ? BACKS.guild : BACKS[age];
   const dots: ReactNode[] = [];
   for (let gx = 0; gx < 6; gx++) {
     for (let gy = 0; gy < 10; gy++) {
@@ -2663,7 +2957,7 @@ export function CardBackArt({ age, guild = false }: { age: 1 | 2 | 3; guild?: bo
       {dots}
       <circle cx={40} cy={60} r={21} fill={p.deep} stroke={p.rim} strokeWidth={1.6} />
       <circle cx={40} cy={60} r={17.6} fill="none" stroke={p.rim} strokeWidth={0.6} opacity={0.7} />
-      {guild ? (
+      {k === 'guild' ? (
         <g>
           <path d="M27 54 L40 45 L53 54 Z" fill={p.rim} stroke={INK} strokeWidth={0.8} />
           {[30, 36.7, 43.3, 50].map((x) => <rect key={x} x={x - 1.6} y={55} width={3.2} height={11} fill={p.rim} />)}
@@ -2679,17 +2973,51 @@ export function CardBackArt({ age, guild = false }: { age: 1 | 2 | 3; guild?: bo
   );
 }
 
+/** Pantheon's Grand Temple back and Agora's Senator back. */
+function SpecialBackArt({ kind }: { kind: 'temple' | 'senator' }) {
+  const p = BACKS[kind];
+  return (
+    <svg viewBox="0 0 80 120" width="100%" height="100%" preserveAspectRatio="none" aria-hidden="true">
+      <rect x={0.8} y={0.8} width={78.4} height={118.4} rx={6} fill={p.bg} stroke={INK} strokeWidth={1.6} />
+      <rect x={5.5} y={5.5} width={69} height={109} rx={4} fill="none" stroke={p.rim} strokeWidth={1.3} />
+      {kind === 'temple' ? (
+        <g>
+          {[0, 1, 2, 3, 4].map((i) => <circle key={i} cx={16 + i * 12} cy={18} r={2.2} fill={p.rim} opacity={0.5} />)}
+          <path d="M22 58 L40 44 L58 58 Z" fill={p.rim} stroke={INK} strokeWidth={0.8} />
+          {[26, 33, 40, 47, 54].map((x) => <rect key={x} x={x - 1.6} y={59} width={3.2} height={14} fill={p.rim} />)}
+          <rect x={20} y={73} width={40} height={3.4} fill={p.rim} />
+          <text x={40} y={88} textAnchor="middle" fontFamily={SERIF} fontSize={6.2} fontWeight={700} letterSpacing={1.2} fill={p.rim}>TEMPLE</text>
+        </g>
+      ) : (
+        <g>
+          <path d="M18 72 A22 22 0 0 1 62 72" fill="none" stroke={p.rim} strokeWidth={3} />
+          <path d="M26 72 A14 14 0 0 1 54 72" fill="none" stroke={p.rim} strokeWidth={2} />
+          <rect x={36} y={58} width={8} height={14} fill={p.rim} />
+          <circle cx={40} cy={54} r={3.4} fill={p.rim} />
+          <text x={40} y={88} textAnchor="middle" fontFamily={SERIF} fontSize={6.2} fontWeight={700} letterSpacing={1.2} fill={p.rim}>SENATE</text>
+        </g>
+      )}
+      <path d="M33 22 L40 12 L47 22 Z" fill={p.rim} opacity={0.85} />
+      <path d="M33 98 L40 108 L47 98 Z" fill={p.rim} opacity={0.85} />
+    </svg>
+  );
+}
+
 // ===========================================================================
 // Military track (760 × 92)
 
 /** The conflict track. Seat 0's capital is on the left (−9), seat 1's on the
  *  right (+9); positive pawn positions push toward seat 1. Laurels above each
- *  zone give its end-game VP; the looting tokens below sit there until claimed. */
-export function MilitaryTrackArt({ pawn, awards, leftColor, rightColor }: {
+ *  zone give its end-game VP; the military tokens below sit there until
+ *  claimed (with Agora they give Senate actions: a cube, not coins).
+ *  Pantheon's Minerva pawn, when placed, stands on its space. */
+export function MilitaryTrackArt({ pawn, awards, leftColor, rightColor, minerva = null, agora = false }: {
   pawn: number;
   awards: { p1At3: boolean; p1At6: boolean; p2At3: boolean; p2At6: boolean };
   leftColor: string;
   rightColor: string;
+  minerva?: number | null;
+  agora?: boolean;
 }) {
   const xOf = (pos: number) => 20 + (pos + 9) * 38;
   const spaces: ReactNode[] = [];
@@ -2708,8 +3036,16 @@ export function MilitaryTrackArt({ pawn, awards, leftColor, rightColor }: {
   // A claimed token stays in the DOM, faded out, so it can fade (CSS) instead of popping.
   const loot = (pos: number, v: number, show: boolean) => (
     <g key={`t${pos}`} className={`swd-loot${show ? '' : ' taken'}`} transform={`translate(${xOf(pos) + 19 - 14} 79)`} aria-hidden={!show}>
-      <rect x={0} y={0} width={28} height={22} rx={4} fill="#9b2f22" {...LINE} />
-      <g transform="translate(4.4 1.4) scale(0.8)"><CoinGlyph value={v} negative /></g>
+      <rect x={0} y={0} width={28} height={22} rx={4} fill={agora ? '#3f3a4a' : '#9b2f22'} {...LINE} />
+      {agora ? (
+        <g>
+          <path d="M7 8 l7 -3.4 l7 3.4 v7 l-7 3.4 l-7 -3.4 Z" fill="#e8c35a" {...LINE} strokeWidth={0.8} />
+          <path d="M7 8 l7 3.4 l7 -3.4 M14 11.4 v7" fill="none" {...LINE} strokeWidth={0.8} />
+          {v === 5 && <path d="M3 4 l3 3 M3 7 l3 -3" {...line('#ffffff', 1.2)} />}
+        </g>
+      ) : (
+        <g transform="translate(4.4 1.4) scale(0.8)"><CoinGlyph value={v} negative /></g>
+      )}
     </g>
   );
   const px = xOf(Math.max(-9, Math.min(9, pawn))) + 19;
@@ -2730,6 +3066,15 @@ export function MilitaryTrackArt({ pawn, awards, leftColor, rightColor }: {
       {loot(4, 2, !awards.p1At3)}
       {loot(7, 5, !awards.p1At6)}
       <line x1={xOf(0) + 19} y1={43} x2={xOf(0) + 19} y2={71} {...line('#b9a06a', 1)} strokeDasharray="2 2" />
+      {minerva !== null && (
+        <g className="swd-minerva" transform={`translate(${xOf(minerva) + 19} 0)`} aria-label="Minerva">
+          <ellipse cx={0} cy={74} rx={8} ry={2.4} fill="rgba(0,0,0,0.25)" />
+          <path d="M-6 72 L-4 48 H4 L6 72 Z" fill="#c9ced3" {...LINE} />
+          <circle cx={0} cy={44} r={5} fill="#c9ced3" {...LINE} />
+          <path d="M-5 41 Q0 32 5 41" fill="#b23c32" {...LINE} />
+          <path d="M-4 56 H4" {...line(INK, 1)} />
+        </g>
+      )}
       {/* Positioned with a CSS transform so it slides (swd-pawn's transition). */}
       <g className="swd-pawn" style={{ transform: `translate(${px}px, 0px)` }}>
         <ellipse cx={0} cy={77} rx={10} ry={3} fill="rgba(0,0,0,0.3)" />

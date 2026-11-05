@@ -158,6 +158,41 @@ const GUILDS: DuelCardTemplate[] = [
   { name: 'Tacticians Guild', color: 'purple', cost: res('stone', 'stone', 'clay', 'papyrus'), effects: [guild(colors('red'), 1, 1)] },
 ];
 
+// =====================================================================
+// PANTHEON — 5 Grand Temples, three shuffled into Age III instead of Guilds
+// =====================================================================
+//
+// Free with a Mythology token of the temple's type (the symbol under its
+// cost); scored together: 5 / 12 / 21 VP for 1 / 2 / 3 temples.
+
+const TEMPLES: DuelCardTemplate[] = [
+  { name: 'Mesopotamian Grand Temple', color: 'purple', cost: res('wood', 'wood', 'wood', 'glass', 'papyrus'), effects: [{ kind: 'grandTemple', mythology: 'mesopotamian' }] },
+  { name: 'Phoenician Grand Temple', color: 'purple', cost: res('wood', 'stone', 'glass', 'papyrus', 'papyrus'), effects: [{ kind: 'grandTemple', mythology: 'phoenician' }] },
+  { name: 'Greek Grand Temple', color: 'purple', cost: res('stone', 'stone', 'stone', 'glass', 'papyrus'), effects: [{ kind: 'grandTemple', mythology: 'greek' }] },
+  { name: 'Egyptian Grand Temple', color: 'purple', cost: res('clay', 'clay', 'clay', 'glass', 'papyrus'), effects: [{ kind: 'grandTemple', mythology: 'egyptian' }] },
+  { name: 'Roman Grand Temple', color: 'purple', cost: res('clay', 'stone', 'glass', 'glass', 'papyrus'), effects: [{ kind: 'grandTemple', mythology: 'roman' }] },
+];
+
+// =====================================================================
+// AGORA — 13 Senators: 7 Politicians (2 left, 3 centre, 2 right) and 6
+// Conspirators, shuffled into the ages 5 / 5 / 3
+// =====================================================================
+//
+// A Senator costs a coin per Senator already in your city (nothing with
+// Corruption); the age it is dealt into is set when it is dealt.
+
+const politician = (section: 1 | 2 | 3): DuelCardTemplate => ({
+  name: `Politician (${section === 1 ? 'left' : section === 2 ? 'centre' : 'right'})`,
+  color: 'senator',
+  effects: [{ kind: 'politician', section }],
+});
+const SENATORS: DuelCardTemplate[] = [
+  politician(1), politician(1),
+  politician(2), politician(2), politician(2),
+  politician(3), politician(3),
+  ...Array.from({ length: 6 }, (): DuelCardTemplate => ({ name: 'Conspirator', color: 'senator', effects: [{ kind: 'conspirator' }] })),
+];
+
 function instantiate(t: DuelCardTemplate, age: DuelAge, id: number): DuelCard {
   const card: DuelCard = { id, name: t.name, age, color: t.color, cost: t.cost ?? {}, effects: t.effects };
   if (t.chainCost) { card.chainCost = t.chainCost[0]; card.chainFrom = t.chainCost[1]; }
@@ -171,6 +206,8 @@ const DECKS: Record<DuelAge, DuelCard[]> = {
   3: AGE_III.map((t, i) => instantiate(t, 3, 300 + i)),
 };
 const GUILD_CARDS: DuelCard[] = GUILDS.map((t, i) => instantiate(t, 3, 400 + i));
+const TEMPLE_CARDS: DuelCard[] = TEMPLES.map((t, i) => instantiate(t, 3, 420 + i));
+const SENATOR_CARDS: DuelCard[] = SENATORS.map((t, i) => instantiate(t, 1, 500 + i));
 
 /** Every card of an age as printed (Age III without the guilds). Read-only. */
 export function ageCards(age: DuelAge): readonly DuelCard[] {
@@ -182,20 +219,58 @@ export function guildCards(): readonly DuelCard[] {
   return GUILD_CARDS;
 }
 
-/** Every card in the game, Guilds included. */
+/** Pantheon's five Grand Temples. Read-only. */
+export function templeCards(): readonly DuelCard[] {
+  return TEMPLE_CARDS;
+}
+
+/** Agora's thirteen Senators (age 1 here; a dealt copy carries its age). Read-only. */
+export function senatorCards(): readonly DuelCard[] {
+  return SENATOR_CARDS;
+}
+
+/** Every card of the base game, Guilds included. */
 export function allCards(): readonly DuelCard[] {
   return [...DECKS[1], ...DECKS[2], ...DECKS[3], ...GUILD_CARDS];
 }
 
+/** The expansions' cards: Grand Temples, then Senators. */
+export function expansionCards(): readonly DuelCard[] {
+  return [...TEMPLE_CARDS, ...SENATOR_CARDS];
+}
+
 const copy = (c: DuelCard): DuelCard => JSON.parse(JSON.stringify(c));
+
+export interface DealOptions {
+  /** Pantheon: Grand Temples take the Guilds' place in Age III. */
+  temples?: boolean;
+  /** Agora: the Senators shuffled into this age. */
+  senators?: readonly DuelCard[];
+}
+
+/** An age's cards, shuffled for the pyramid, and the 3 that go back to the
+ *  box unseen. Age III shuffles in 3 of the 7 Guilds (or 3 of the 5 Grand
+ *  Temples); Agora adds its Senators. Without expansions the draws are the
+ *  same as they always were. */
+export function dealAgeFull(age: DuelAge, rng: RngState, opts: DealOptions = {}): { deck: DuelCard[]; boxed: DuelCard[] } {
+  const shuffled = shuffle(rng, DECKS[age]);
+  const keep = DECKS[age].length - 3;
+  let cards = shuffled.slice(0, keep);
+  if (age === 3) cards = cards.concat(shuffle(rng, opts.temples ? TEMPLE_CARDS : GUILD_CARDS).slice(0, 3));
+  if (opts.senators?.length) cards = cards.concat(opts.senators.map((c) => ({ ...copy(c), age })));
+  return { deck: shuffle(rng, cards).map(copy), boxed: shuffled.slice(keep).map(copy) };
+}
 
 /** The 20 cards an age deals, shuffled for the pyramid: 3 of the age's cards
  *  go back to the box unseen; Age III shuffles in 3 of the 7 Guilds. */
 export function dealAge(age: DuelAge, rng: RngState): DuelCard[] {
-  const kept = shuffle(rng, DECKS[age]).slice(0, DECKS[age].length - 3);
-  const withGuilds = age === 3 ? kept.concat(shuffle(rng, GUILD_CARDS).slice(0, 3)) : kept;
-  return shuffle(rng, withGuilds).map(copy);
+  return dealAgeFull(age, rng).deck;
 }
+
+/** True for Agora's Politicians and Conspirators. */
+export const isSenator = (c: DuelCard): boolean => c.color === 'senator';
 
 export const DUEL_AGE_COUNTS: Record<DuelAge, number> = { 1: AGE_I.length, 2: AGE_II.length, 3: AGE_III.length };
 export const DUEL_GUILD_COUNT = GUILDS.length;
+/** Senators shuffled into each age with Agora. */
+export const SENATORS_PER_AGE: Record<DuelAge, number> = { 1: 5, 2: 5, 3: 3 };

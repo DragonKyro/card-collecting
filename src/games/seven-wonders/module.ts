@@ -6,7 +6,7 @@ import { createRng, shuffle, rngInt } from '@/core/rng';
 import type { SwState, SwAction, SwConfig, SwPlayer } from './types';
 import { applyAction, setupNewMatch } from './reducer';
 import { chooseAIAction } from './ai';
-import { WONDERS } from './wonders';
+import { WONDERS, availableWonders } from './wonders';
 import { MIN_PLAYERS, MAX_PLAYERS } from './cards';
 import { SevenWondersThumbnail } from './Thumbnail';
 
@@ -27,6 +27,13 @@ export const sevenWondersModule: GameModule<SwState, SwAction, SwConfig> = {
 
   validateConfig(config, seats) {
     const errors: string[] = [];
+    if ((seats?.length ?? 0) > 7 && !config.expansions.includes('cities')) {
+      errors.push('8 players need the Cities expansion.');
+    }
+    const pool = availableWonders(config.expansions);
+    for (const id of (config.presetWonders ?? []).slice(0, seats?.length)) {
+      if (id && !pool.some((w) => w.id === id)) errors.push(`${WONDERS.find((w) => w.id === id)?.name ?? id} needs its expansion.`);
+    }
     if (config.wonderAssignment === 'preset') {
       const names = (config.presetWonders ?? []).slice(0, seats?.length)
         .filter((id) => WONDERS.some((w) => w.id === id))
@@ -80,15 +87,16 @@ export const sevenWondersModule: GameModule<SwState, SwAction, SwConfig> = {
  *  rest are dealt from the wonders nobody picked, sided per `wonderSide`. */
 function assignWonders(state: SwState, seats: Seat[]): string[] {
   const cfg = state.config;
+  const pool = availableWonders(cfg.expansions);
   const byName = new Map<string, { a: string; b: string }>();
-  for (const w of WONDERS) {
+  for (const w of pool) {
     const slot = byName.get(w.name) ?? { a: '', b: '' };
     if (w.side === 'A') slot.a = w.id; else slot.b = w.id;
     byName.set(w.name, slot);
   }
   const preset = seats.map((_, i) => {
     const id = cfg.wonderAssignment === 'preset' ? cfg.presetWonders?.[i] : undefined;
-    return WONDERS.find((w) => w.id === id) ?? null;
+    return pool.find((w) => w.id === id) ?? null;
   });
   const taken = new Set(preset.filter((w) => w !== null).map((w) => w!.name));
   // Random: shuffle the wonders nobody picked, then pick a side per config.
@@ -119,12 +127,6 @@ export function attachSeatsAndStart(state: SwState, seats: Seat[]): SwState {
     militaryTokens: [],
     pendingPick: null,
     freeBuildUsedAge: null,
-    leaderHand: [],
-    leaderTableau: [],
-    leaderDraftPick: null,
-    leaderPlayPick: null,
-    bilkisUsedThisTick: false,
-    transientResources: [],
   }));
   setupNewMatch(state);
   return state;

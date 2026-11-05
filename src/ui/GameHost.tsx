@@ -150,9 +150,10 @@ export function GameHost({ onExit, onReturnToLobby }: Props) {
   // gate when there are 2+ human seats (otherwise there's no one to pass to
   // — single-human-vs-AI matches don't need a hand-off), and only for games
   // with something to hide.
+  const hiddenInfo = typeof module.hiddenInfo === 'function' ? module.hiddenInfo(state) : module.hiddenInfo !== false;
   const needsPassGate =
     role === 'solo'
-    && module.hiddenInfo !== false
+    && hiddenInfo
     && state.phase === 'playing'
     && humanSeatCount >= 2
     && hotSeatLocal !== null

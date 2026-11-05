@@ -7,8 +7,8 @@ A multi-game web app for **card-collecting games** where the objective is to max
 Shipping targets:
 - **Sushi Go! Party** (incl. menu builder, not just the base set)
 - **Sea Salt & Paper**
-- **7 Wonders** (with all 5 expansions: Leaders, Cities, Babel, Armada, Edifice)
-- **7 Wonders Duel** (standalone 2-player variant — pyramid draft + three supremacy paths)
+- **7 Wonders** (with Leaders, Cities and Babel — the Tower of Babel and the Great Projects)
+- **7 Wonders Duel** (standalone 2-player variant — pyramid draft + three supremacy paths; with Pantheon and Agora)
 - **Air, Land & Sea** (Revised Edition + Spies, Lies & Supplies — mixed theaters and Epic Mode; heuristic AI)
 - **Set** (all 16 variants: Junior, Set-Chain, UltraSet, GhostSet, 4Set, MegaSet, Puzzle, Shuffle, Memory, …)
 - **Machi Koro** (Machi Koro 2 by default, incl. the landmark promo pack; the original base game as an edition option, with its Harbor and Millionaire's Row expansions)
@@ -38,8 +38,8 @@ src/
     registry.ts                 List of all GameModules.
     sushi-go/                   Sushi Go! Party.
     sea-salt-paper/             Sea Salt & Paper (+ Extra Salt + Extra Pepper).
-    seven-wonders/              7 Wonders + 5 expansions (Leaders, Cities, Babel, Armada, Edifice).
-    seven-wonders-duel/         7 Wonders Duel (standalone two-player).
+    seven-wonders/              7 Wonders + Leaders, Cities, Babel (Tower + Great Projects).
+    seven-wonders-duel/         7 Wonders Duel (standalone two-player) + Pantheon, Agora.
     air-land-sea/               Air, Land & Sea + Spies, Lies & Supplies (mixed theaters, Epic Mode).
     set/                        Set — cards as vectors, 16 modes off one rule engine.
     machi-koro/                 Machi Koro 2 + the original Machi Koro (+ Harbor, Millionaire's Row), one dice engine.
@@ -124,26 +124,20 @@ npx firebase-tools deploy --only database                            # deploy da
 
 ### 7 Wonders
 
-- [x] Base game: 3 Ages, 3–7 players, simultaneous picks, hands pass left / right / left, exact rulebook deck per player count
+- [x] Base game: 3 Ages, 3–7 players (8 with Cities), simultaneous picks, hands pass left / right / left, exact rulebook deck per player count
 - [x] Building: costs, chains, no duplicates, trading (a neighbour's wonder resource + brown / gray cards; trading-post and Marketplace discounts), cheapest payment found for you
 - [x] Military (one token per battle) and final scoring: 7 categories, wild science symbols, ties to the most coins
 - [x] All 14 wonder boards with every power: Babylon's science symbol and 7th card, Halicarnassus' build from the discard, Olympia's free build per Age and guild copy
 - [x] Heuristic AI scoring every build / stage / sale (beats the previous heuristic in ~80% of games)
 - [x] Hand-drawn art for every card and wonder board; each neighbour's last turn shown, new cards pop in
 - [x] Hot-seat and online
-- [x] Expansion: Leaders: draft of 4, one leader per Age (play / bury / discard / skip), Bilkis, Solomon; 35 of 36 leaders
-- [ ] Leaders: Tomyris (defeat tokens go to the victor) needs a hook into military resolution
-- [ ] Leaders: burying a leader under a stage skips the stage's power (Halicarnassus) and the Edifice contribution
-- [ ] Leaders: multi-human hot-seat (see Platform)
-- [x] Expansion: Cities: 27 black cards, debt tokens, diplomacy, Tourist Office and Gambling Hall scoring
-- [ ] Cities: Pigeon Loft, Spy Ring (second ability), Black Market and Slave Market abilities are placeholders (need the rulebook text)
-- [ ] Cities: check the hand size against the rulebook (black cards are cut into a 7-card deal here; the box rules may deal 8 per Age)
-- [ ] Cities: the 3-player "ghost city" variant
-- [x] Expansion: Edifice: 3 projects (one per Age), contributing by building a wonder stage, rewards and penalties at the end
-- [x] Expansion: Babel, partial: 15 orange cards and 3 scoring rules, written without the rulebook
-- [ ] Babel: the Tower of Babel (law tiles) and the Great Projects; Tower Workers and Great Project Worksite are placeholders
-- [x] Expansion: Armada, partial: 15 navy cards and 3 scoring rules, written without the rulebook
-- [ ] Armada: shipyards, naval combat, islands and the pirate track; Shipyard, Lighthouse Beacon and Naval Yard are placeholders
+- [x] Expansion: Leaders (rebuilt 2026-11-05 from the printed card list): 36 leaders at their printed costs, 6 starting coins, the draft (pass right), the Recruitment phase (recruit / build a stage / 3 coins / a Babel tile), Rome A and B, the 4 Leaders guilds (Gamers', Courtesans', Diplomats', Architects'); Tomyris, Semiramis, Bilkis, Solomon, the one-resource-less leaders (your choice of resource)
+- [x] Expansion: Cities (rebuilt from the printed card list): the 27 real black cards, 3 guilds, Petra and Byzantium, hands of 8, coin losses paid or taken as debt (your choice), diplomacy (neighbours fight across the gap), masks, Clandestine Docks, Secret Warehouse / Black Market, Architect Cabinet; the 6 Cities leaders with Leaders; 8 players
+- [ ] Cities: the team variant and the 3-player ghost city
+- [x] Expansion: Babel — Tower of Babel: all 24 tiles, the tile draft, building a tile instead of building or selling (also with a leader), the tower (3 / 4 spaces, tiles covering the oldest), 2 / 5 / 10 VP
+- [x] Expansion: Babel — Great Projects: all 15 projects, participation (free builds and Halicarnassus / Solomon too), rewards per token, penalties and penalty tokens
+- [ ] Expansion: Armada — rules known, card data missing (dockyard boards, Armada cards, islands)
+- [ ] Expansion: Edifice — rules known, card data missing (the 15 Edifice cards, Ur, Carthage)
 - [ ] Expansion: Wonder Pack (Great Wall, Stonehenge, Abu Simbel, Manneken Pis), not started
 
 ### 7 Wonders Duel
@@ -152,8 +146,10 @@ npx firebase-tools deploy --only database                            # deploy da
 - [x] Heuristic AI (gain minus the best card it leaves the opponent)
 - [x] Hand-drawn art and card / wonder / token flights
 - [x] Hot-seat and online
-- [ ] Expansion: Pantheon, not started
-- [ ] Expansion: Agora, not started
+- [x] Expansion: Pantheon (per Board Game Arena's adaptation): the Pantheon board, 15 Divinities + the Gate, Mythology and Offering tokens, Grand Temples, the Sanctuary, the Divine Theater, Mysticism / Poliorcetics / Engineering
+- [x] Expansion: Agora (per Board Game Arena's adaptation): the Senate with 6 Chambers, Influence cubes and 16 Decrees, Politicians and Conspirators, 16 Conspiracies, Curia Julia, Knossos, Corruption / Organized Crime, Political Supremacy
+- [x] Pantheon and Agora together; hidden Conspiracies and Divinities stay hidden (hot-seat pass screen with either expansion), AI for every new decision, online play
+- [ ] BGA's automatic last wonder pick (the draft still asks for it)
 
 ### Air, Land & Sea
 

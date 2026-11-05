@@ -1,14 +1,11 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/react';
 import type { Seat } from '@/core/types';
-import { createRng } from '@/core/rng';
 import type { SwCard, SwConfig, SwState } from './types';
 import { sevenWondersModule } from './module';
-import { buildAgeDeck, buildAgeIIIDeck } from './cards';
-import { buildLeaderDeck } from './expansions/leaders/cards';
-import { buildCitiesDeck } from './expansions/cities/cards';
-import { buildBabelDeck } from './expansions/babel/cards';
-import { buildArmadaDeck } from './expansions/armada/cards';
+import { baseGuilds, buildAgeDeck } from './cards';
+import { buildLeaderDeck, leadersGuilds } from './expansions/leaders/cards';
+import { blackCards, citiesGuilds } from './expansions/cities/cards';
 import { WONDERS } from './wonders';
 import { CardBand, CardFace, WonderBoard } from './Card';
 import { bundle } from './ui';
@@ -145,7 +142,7 @@ describe('7 wonders game view', () => {
     fireEvent.click(t.q('.sw-hand .sw-cardface')[0]);
     fireEvent.click(t.button(/Build free/));
     fireEvent.click(t.button(/^Confirm$/));
-    expect(t.dispatch.mock.calls[0][0]).toMatchObject({ type: 'submitPick', pick: { kind: 'build', free: true, cardId: s.players[0].hand[0].id } });
+    expect(t.dispatch.mock.calls[0][0]).toMatchObject({ type: 'submitPick', pick: { kind: 'build', free: 'olympia', cardId: s.players[0].hand[0].id } });
   });
 
   it('hides a locked-in hand when two humans share the table, and says what the others did', () => {
@@ -174,9 +171,9 @@ describe('7 wonders game view', () => {
 
   it('draws every card of every deck and every wonder board', () => {
     const all: SwCard[] = [
-      ...buildAgeDeck(1, 7), ...buildAgeDeck(2, 7), ...buildAgeIIIDeck(createRng(1), 8),
-      ...[1, 2, 3].flatMap((a) => [...buildCitiesDeck(a as 1, 7), ...buildBabelDeck(a as 1, 7), ...buildArmadaDeck(a as 1, 7)]),
-      ...buildLeaderDeck(),
+      ...buildAgeDeck(1, 7), ...buildAgeDeck(2, 7), ...buildAgeDeck(3, 7), ...baseGuilds(),
+      ...[1, 2, 3].flatMap((a) => blackCards(a as 1)), ...citiesGuilds(), ...leadersGuilds(),
+      ...buildLeaderDeck(true),
     ];
     const view = render(
       <div>

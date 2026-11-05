@@ -1,281 +1,116 @@
-// 7 Wonders Cities expansion — black (Cities) cards by age.
+// 7 Wonders Cities — the 27 black cards (9 per Age) and the 3 Cities guilds.
 //
-// Cities adds ~27 black cards (9 per age) shuffled into the existing age decks.
-// Each is added one-per-player to the deck (the rulebook says "add the cards
-// matching your player count"). We use the same per-player-count approach as
-// the base game's `appearances`.
-//
-// Card text from the rulebook is not fully in hand at the time of writing.
-// We model the SHAPE and STRENGTH of each card faithfully (cost / color / VP /
-// shields / production / discount / endgame), and where a card needs a novel
-// trigger we use the new effect kinds defined in types.ts
-// (citiesDebtToNeighbors, citiesGainDiplomacy, citiesScoreExtra).
-//
-// Cards whose abilities are uncertain are given empty effects + a description
-// marked "Not fully modeled in v1" — this matches the SLS pattern used in ALS.
-// The cards are still dealt and played; they just don't contribute extras.
+// Costs and effects are the printed ones, read off scans of the first-edition
+// cards (the card database's text had Brotherhood's and Capitol's costs
+// swapped and Slave Market one ore too many; the rulebook transcript said
+// Hideout costs the others 1 coin — the card says 2):
+//   - Pigeon Loft, Spy Ring, Torture Chamber: a mask — at the end, copy the
+//     science symbol of a green card in a neighbouring city.
+//   - Militia, Mercenaries, Contingent: 2 / 3 / 5 shields.
+//   - Hideout, Lair, Brotherhood: VP, and every other city loses 2 / 2 / 3 coins.
+//   - Residence, Consulate, Embassy: VP and a diplomacy token.
+//   - Gambling Den / House: 6 / 9 coins, each neighbour 1 / 2.
+//   - Clandestine Dock West / East: the first resource bought each turn from
+//     that neighbour costs 1 coin less.
+//   - Sepulcher, Cenotaph: VP, and every other city loses 1 coin per victory token.
+//   - Builders' Union: VP, and every other city loses 1 coin per wonder stage.
+//   - Architect Cabinet: VP, and wonder stages cost no resources from now on.
+//   - Secret Warehouse / Black Market: one resource a turn that the city
+//     already produces / doesn't produce (brown, gray cards and its board).
+//   - Secret Society / Slave Market: 1 coin now and 1 VP at the end per black
+//     card / victory token of yours.
+// A coin loss is settled at the end of the turn: coins to the bank or a debt
+// token (−1 VP) per coin not paid.
 
-import type {
-  SwAge, SwCard, SwCardColor, SwCardEffect, SwCost, SwResource,
-} from '../../types';
-import { type RngState } from '@/core/rng';
+import { shuffle, type RngState } from '@/core/rng';
+import type { SwAge, SwCard, SwCardEffect, SwCost, SwResource } from '../../types';
 
 interface CityTemplate {
   name: string;
-  age: SwAge;
-  color: SwCardColor;          // most are 'black'; rulebook also adds a few of OTHER colors
-  appearances: Array<{ minPlayers: number; maxPlayers?: number }>;
-  cost?: SwCost;
-  chainFrom?: string[];
-  chainTo?: string[];
+  cost: SwCost;
   effects: SwCardEffect[];
-  description: string;
-  /** True when this card's modeled effects fully match its rulebook text. */
-  modeled: boolean;
 }
 
-const free: SwCost = {};
-const cost = (...resources: SwResource[]): SwCost => ({ resources });
-const costCoins = (n: number): SwCost => ({ coins: n });
+const cost = (coins: number, ...resources: SwResource[]): SwCost =>
+  ({ ...(coins ? { coins } : {}), ...(resources.length ? { resources } : {}) });
 const vp = (n: number): SwCardEffect => ({ kind: 'vp', vp: n });
 const shields = (n: number): SwCardEffect => ({ kind: 'shields', shields: n });
-const coins = (n: number): SwCardEffect => ({ kind: 'coins', amount: n });
-const produce = (...prods: SwResource[][]): SwCardEffect =>
-  ({ kind: 'produce', production: prods });
-const debtToNeighbors = (amount: number): SwCardEffect =>
-  ({ kind: 'citiesDebtToNeighbors', amount });
-const gainDiplomacy = (amount: number): SwCardEffect =>
-  ({ kind: 'citiesGainDiplomacy', amount });
+const loss = (amount: number, per?: 'victoryToken' | 'wonderStage'): SwCardEffect =>
+  ({ kind: 'coinLoss', amount, ...(per ? { per } : {}) });
+const diplomacy: SwCardEffect = { kind: 'diplomacy' };
+const mask: SwCardEffect = { kind: 'mask' };
 
-// ----- Age I cities (9 cards) -----
-const AGE_I_CITIES: CityTemplate[] = [
-  // Tavern (Cities variant): +6 coins.
-  { name: 'Saloon', age: 1, color: 'black',
-    appearances: [{ minPlayers: 3, maxPlayers: 5 }, { minPlayers: 6 }],
-    cost: free, effects: [coins(4)],
-    description: 'Gain 4 coins.', modeled: true },
-
-  // Mercenary: shields.
-  { name: 'Militia', age: 1, color: 'black',
-    appearances: [{ minPlayers: 3 }, { minPlayers: 6 }],
-    cost: cost('clay'),
-    effects: [shields(1)],
-    description: '+1 shield.', modeled: true },
-
-  // Lair / secret base — produces a manufactured resource.
-  { name: 'Secret Warehouse', age: 1, color: 'black',
-    appearances: [{ minPlayers: 3 }, { minPlayers: 5 }],
-    cost: free,
-    effects: [produce(['glass', 'papyrus', 'loom'])],
-    description: 'Produces 1 of (glass / papyrus / loom).', modeled: true },
-
-  // A black card that hands debt to neighbors on play (Diplomatic Embargo type).
-  { name: 'Gambling Den', age: 1, color: 'black',
-    appearances: [{ minPlayers: 4 }, { minPlayers: 6 }],
-    cost: free,
-    effects: [coins(6), debtToNeighbors(1)],
-    description: 'Gain 6 coins. Each neighbor gains 1 debt token.',
-    modeled: true },
-
-  // Diplomacy granter — Embassy
-  { name: 'Embassy', age: 1, color: 'black',
-    appearances: [{ minPlayers: 3 }, { minPlayers: 5 }],
-    cost: cost('papyrus'),
-    effects: [vp(2), gainDiplomacy(1)],
-    description: '+2 VP, gain 1 diplomacy token.',
-    modeled: true },
-
-  { name: 'Pigeon Loft', age: 1, color: 'black',
-    appearances: [{ minPlayers: 3 }, { minPlayers: 7 }],
-    cost: cost('stone'),
-    effects: [],
-    description: 'Cities ability not modeled in v1.', modeled: false },
-
-  { name: 'Spy Ring', age: 1, color: 'black',
-    appearances: [{ minPlayers: 4 }],
-    cost: cost('clay', 'clay'),
-    effects: [shields(1)],
-    description: '+1 shield. Other ability not modeled in v1.', modeled: false },
-
-  { name: 'Bottling Plant', age: 1, color: 'black',
-    appearances: [{ minPlayers: 3 }, { minPlayers: 6 }],
-    cost: free,
-    effects: [coins(3)],
-    description: 'Gain 3 coins.', modeled: true },
-
-  { name: 'Cenotaph', age: 1, color: 'black',
-    appearances: [{ minPlayers: 5 }],
-    cost: cost('wood'),
-    effects: [vp(2)],
-    description: '+2 VP.', modeled: true },
+const AGE_I: CityTemplate[] = [
+  { name: 'Residence', cost: cost(0, 'clay'), effects: [vp(1), diplomacy] },
+  { name: 'Hideout', cost: cost(0), effects: [vp(2), loss(2)] },
+  { name: 'Gates of the City', cost: cost(1, 'wood'), effects: [vp(4)] },
+  { name: 'Militia', cost: cost(3), effects: [shields(2)] },
+  { name: 'Gambling Den', cost: cost(0), effects: [{ kind: 'coins', amount: 6 }, { kind: 'neighborsGain', amount: 1 }] },
+  { name: 'Clandestine Dock West', cost: cost(1), effects: [{ kind: 'tradeRebate', side: 'west' }] },
+  { name: 'Clandestine Dock East', cost: cost(1), effects: [{ kind: 'tradeRebate', side: 'east' }] },
+  { name: 'Pigeon Loft', cost: cost(1, 'ore'), effects: [mask] },
+  { name: 'Secret Warehouse', cost: cost(2), effects: [{ kind: 'produceOwned' }] },
 ];
 
-// ----- Age II cities (9 cards) -----
-const AGE_II_CITIES: CityTemplate[] = [
-  { name: 'Lighthouse', age: 2, color: 'black',
-    appearances: [{ minPlayers: 3 }, { minPlayers: 6 }],
-    cost: cost('stone', 'glass'),
-    effects: [shields(2)],
-    description: '+2 shields.', modeled: true },
-
-  { name: 'Mercenaries', age: 2, color: 'black',
-    appearances: [{ minPlayers: 3 }, { minPlayers: 5 }],
-    cost: cost('ore', 'ore', 'wood'),
-    effects: [shields(2), debtToNeighbors(1)],
-    description: '+2 shields. Each neighbor gains 1 debt token.', modeled: true },
-
-  { name: 'Hideout', age: 2, color: 'black',
-    appearances: [{ minPlayers: 3 }, { minPlayers: 7 }],
-    cost: cost('clay'),
-    effects: [coins(5)],
-    description: 'Gain 5 coins.', modeled: true },
-
-  { name: 'Black Market', age: 2, color: 'black',
-    appearances: [{ minPlayers: 4 }, { minPlayers: 6 }],
-    cost: cost('clay', 'clay'),
-    effects: [],
-    description: 'Cities ability not modeled in v1.', modeled: false },
-
-  { name: 'Sepulcher', age: 2, color: 'black',
-    appearances: [{ minPlayers: 3 }, { minPlayers: 6 }],
-    cost: cost('stone', 'stone'),
-    effects: [vp(3)],
-    description: '+3 VP.', modeled: true },
-
-  { name: 'Consulate', age: 2, color: 'black',
-    appearances: [{ minPlayers: 4 }, { minPlayers: 7 }],
-    cost: cost('wood', 'wood', 'glass'),
-    effects: [vp(2), gainDiplomacy(1)],
-    description: '+2 VP, gain 1 diplomacy token.', modeled: true },
-
-  { name: 'Cereals Tower', age: 2, color: 'black',
-    appearances: [{ minPlayers: 3 }, { minPlayers: 5 }],
-    cost: costCoins(3),
-    effects: [produce(['wood', 'clay', 'ore', 'stone'])],
-    description: 'Produces 1 of (wood / clay / ore / stone).', modeled: true },
-
-  { name: 'Tabularium', age: 2, color: 'black',
-    appearances: [{ minPlayers: 3 }, { minPlayers: 7 }],
-    cost: cost('stone', 'loom'),
-    effects: [vp(2)],
-    description: '+2 VP.', modeled: true },
-
-  { name: 'Residence', age: 2, color: 'black',
-    appearances: [{ minPlayers: 5 }],
-    cost: cost('wood', 'clay'),
-    effects: [vp(3)],
-    description: '+3 VP.', modeled: true },
+const AGE_II: CityTemplate[] = [
+  { name: 'Architect Cabinet', cost: cost(1, 'papyrus'), effects: [vp(2), { kind: 'freeWonderResources' }] },
+  { name: 'Black Market', cost: cost(0, 'ore', 'loom'), effects: [{ kind: 'produceMissing' }] },
+  { name: 'Consulate', cost: cost(0, 'clay', 'papyrus'), effects: [vp(2), diplomacy] },
+  { name: 'Gambling House', cost: cost(1), effects: [{ kind: 'coins', amount: 9 }, { kind: 'neighborsGain', amount: 2 }] },
+  { name: 'Lair', cost: cost(0, 'wood', 'glass'), effects: [vp(3), loss(2)] },
+  { name: 'Mercenaries', cost: cost(4, 'papyrus'), effects: [shields(3)] },
+  { name: 'Sepulcher', cost: cost(0, 'ore', 'glass'), effects: [vp(3), loss(1, 'victoryToken')] },
+  { name: 'Spy Ring', cost: cost(2, 'stone', 'clay'), effects: [mask] },
+  { name: 'Tabularium', cost: cost(2, 'ore', 'wood', 'loom'), effects: [vp(6)] },
 ];
 
-// ----- Age III cities (9 cards) -----
-const AGE_III_CITIES: CityTemplate[] = [
-  { name: 'Capitol', age: 3, color: 'black',
-    appearances: [{ minPlayers: 3 }, { minPlayers: 6 }],
-    cost: cost('stone', 'stone', 'papyrus'),
-    effects: [vp(8)],
-    description: '+8 VP.', modeled: true },
-
-  { name: 'Smugglers Cache', age: 3, color: 'black',
-    appearances: [{ minPlayers: 4 }, { minPlayers: 6 }],
-    cost: cost('clay', 'clay', 'clay'),
-    effects: [vp(5)],
-    description: '+5 VP.', modeled: true },
-
-  { name: 'Cenotaph III', age: 3, color: 'black',
-    appearances: [{ minPlayers: 4 }],
-    cost: cost('clay', 'stone', 'glass'),
-    effects: [vp(4)],
-    description: '+4 VP.', modeled: true },
-
-  // Plato-like "1 of each color" scoring.
-  { name: 'Tourist Office', age: 3, color: 'black',
-    appearances: [{ minPlayers: 3 }, { minPlayers: 6 }],
-    cost: cost('papyrus', 'papyrus', 'clay'),
-    effects: [{
-      kind: 'citiesScoreExtra',
-      rule: { type: 'completeAllColorsSet', vpPerSet: 7 },
-    }],
-    description: '+7 VP per set of 1 of each card color (b/g/B/Y/R/G/P).',
-    modeled: true },
-
-  { name: 'Torture Chamber', age: 3, color: 'black',
-    appearances: [{ minPlayers: 3 }, { minPlayers: 6 }],
-    cost: cost('clay', 'glass'),
-    effects: [vp(3), debtToNeighbors(2)],
-    description: '+3 VP. Each neighbor gains 2 debt tokens.', modeled: true },
-
-  { name: 'Embassy', age: 3, color: 'black',
-    appearances: [{ minPlayers: 4 }],
-    cost: cost('wood', 'wood', 'glass'),
-    effects: [vp(3), gainDiplomacy(1)],
-    description: '+3 VP, gain 1 diplomacy token.', modeled: true },
-
-  { name: 'Mercenaries Guild', age: 3, color: 'black',
-    appearances: [{ minPlayers: 3 }],
-    cost: cost('ore', 'ore', 'clay', 'glass'),
-    effects: [shields(3)],
-    description: '+3 shields.', modeled: true },
-
-  { name: 'Slave Market', age: 3, color: 'black',
-    appearances: [{ minPlayers: 5 }],
-    cost: cost('wood', 'glass'),
-    effects: [],
-    description: 'Cities ability not modeled in v1.', modeled: false },
-
-  // "VP per debt token total across all players"
-  { name: 'Gambling Hall', age: 3, color: 'black',
-    appearances: [{ minPlayers: 3 }, { minPlayers: 7 }],
-    cost: cost('clay', 'clay', 'glass'),
-    effects: [{
-      kind: 'citiesScoreExtra',
-      rule: { type: 'vpPerDebtTotal', vpPer: 1 },
-    }],
-    description: '+1 VP per debt token held by any player (including yourself).',
-    modeled: true },
+const AGE_III: CityTemplate[] = [
+  { name: 'Brotherhood', cost: cost(0, 'wood', 'wood', 'ore', 'loom'), effects: [vp(4), loss(3)] },
+  { name: 'Builders Union', cost: cost(0, 'clay', 'wood', 'papyrus', 'glass'), effects: [vp(4), loss(1, 'wonderStage')] },
+  { name: 'Capitol', cost: cost(2, 'clay', 'clay', 'stone', 'stone', 'glass', 'papyrus'), effects: [vp(8)] },
+  { name: 'Cenotaph', cost: cost(0, 'clay', 'clay', 'stone', 'loom', 'glass'), effects: [vp(5), loss(1, 'victoryToken')] },
+  { name: 'Contingent', cost: cost(5, 'loom'), effects: [shields(5)] },
+  { name: 'Embassy', cost: cost(0, 'stone', 'loom', 'papyrus'), effects: [vp(3), diplomacy] },
+  { name: 'Secret Society', cost: cost(0, 'stone', 'papyrus'),
+    effects: [{ kind: 'endVp', from: 'self', countWhat: { kind: 'cardColor', color: 'black' }, coinsPerOnPlay: 1, vpPer: 1 }] },
+  { name: 'Slave Market', cost: cost(0, 'ore', 'ore', 'wood', 'wood'),
+    effects: [{ kind: 'endVp', from: 'self', countWhat: { kind: 'victoryTokens' }, coinsPerOnPlay: 1, vpPer: 1 }] },
+  { name: 'Torture Chamber', cost: cost(3, 'ore', 'ore', 'glass'), effects: [mask] },
 ];
 
-const ALL_CITY_TEMPLATES: CityTemplate[] = [...AGE_I_CITIES, ...AGE_II_CITIES, ...AGE_III_CITIES];
+const GUILDS: CityTemplate[] = [
+  { name: 'Counterfeiters Guild', cost: cost(0, 'ore', 'ore', 'ore', 'glass', 'loom'), effects: [vp(5), loss(3)] },
+  { name: 'Guild of Shadows', cost: cost(0, 'stone', 'stone', 'wood', 'papyrus'),
+    effects: [{ kind: 'endVp', from: 'neighbors', countWhat: { kind: 'cardColor', color: 'black' }, vpPer: 1 }] },
+  { name: 'Mourners Guild', cost: cost(0, 'clay', 'clay', 'wood', 'glass', 'loom'),
+    effects: [{ kind: 'endVp', from: 'neighbors', countWhat: { kind: 'victoryTokens' }, vpPer: 1 }] },
+];
 
-let _nextId = 20000;
-export function resetCitiesCardIdCounter(start: number): void {
-  _nextId = start;
+const TEMPLATES: Record<SwAge, CityTemplate[]> = { 1: AGE_I, 2: AGE_II, 3: AGE_III };
+
+/** Every black card of an Age (ids Age × 1000 + 500 + position). */
+export function blackCards(age: SwAge): SwCard[] {
+  return TEMPLATES[age].map((t, i) => ({
+    id: age * 1000 + 500 + i, name: t.name, age, color: 'black', minPlayers: 3, maxPlayers: 99,
+    cost: t.cost, effects: t.effects, expansion: 'cities',
+  }));
 }
 
-function instantiate(t: CityTemplate, app: { minPlayers: number; maxPlayers?: number }): SwCard {
-  return {
-    id: _nextId++,
-    name: t.name,
-    age: t.age,
-    color: t.color,
-    minPlayers: app.minPlayers,
-    maxPlayers: app.maxPlayers ?? 99,
-    cost: t.cost ?? {},
-    chainFrom: t.chainFrom,
-    chainTo: t.chainTo,
-    effects: t.effects,
-  };
+/** The black cards added to an Age's deck: as many as there are players
+ *  (7 at 8 players), drawn at random; the rest stay unseen. */
+export function citiesDeckCards(age: SwAge, playerCount: number, rng: RngState): SwCard[] {
+  return shuffle(rng, blackCards(age)).slice(0, Math.min(playerCount, 7));
 }
 
-/** Build the Cities deck contribution for a given age. */
-export function buildCitiesDeck(age: SwAge, playerCount: number): SwCard[] {
-  const pool = age === 1 ? AGE_I_CITIES : age === 2 ? AGE_II_CITIES : AGE_III_CITIES;
-  const out: SwCard[] = [];
-  for (const t of pool) {
-    for (const app of t.appearances) {
-      if (playerCount >= app.minPlayers && playerCount <= (app.maxPlayers ?? 99)) {
-        out.push(instantiate(t, app));
-      }
-    }
-  }
-  return out;
+/** The Cities guilds (added to the Age III guild pool). */
+export function citiesGuilds(): SwCard[] {
+  return GUILDS.map((t, i) => ({
+    id: 3450 + i, name: t.name, age: 3, color: 'purple', minPlayers: 3, maxPlayers: 99,
+    cost: t.cost, effects: t.effects, expansion: 'cities',
+  }));
 }
 
-/** Used in tests + lobby summary. */
-export const CITIES_CARD_TEMPLATES = ALL_CITY_TEMPLATES;
-export const CITIES_AGE_I_NAMES = AGE_I_CITIES.map((t) => t.name);
-export const CITIES_AGE_II_NAMES = AGE_II_CITIES.map((t) => t.name);
-export const CITIES_AGE_III_NAMES = AGE_III_CITIES.map((t) => t.name);
-
-/** `rng` is currently unused (deck is deterministic by player count) but the
- *  hook receives it for parity with `buildAgeIIIDeck`. */
-export function _useRng(rng: RngState): void { void rng; }
+export const CITIES_CARD_NAMES: Record<SwAge, string[]> = {
+  1: AGE_I.map((t) => t.name), 2: AGE_II.map((t) => t.name), 3: AGE_III.map((t) => t.name),
+};
+export const CITIES_GUILD_NAMES = GUILDS.map((t) => t.name);

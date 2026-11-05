@@ -58,7 +58,7 @@ afterEach(() => {
 /** A screen the AI leaves for a human to click through when humans are seated. */
 type ClickThrough = (state: GameStateShape) => unknown;
 
-const CASES: { gameId: string; aiSeats: number; maxMoves: number; clickThrough?: ClickThrough }[] = [
+const CASES: { gameId: string; aiSeats: number; maxMoves: number; clickThrough?: ClickThrough; config?: unknown; label?: string }[] = [
   { gameId: 'machi-koro', aiSeats: 1, maxMoves: 600 },
   {
     gameId: 'seven-wonders',
@@ -67,13 +67,24 @@ const CASES: { gameId: string; aiSeats: number; maxMoves: number; clickThrough?:
     // The military summary waits for a human's Continue.
     clickThrough: (s) => ((s as unknown as { subPhase: string }).subPhase === 'militaryEnd' ? { type: 'continue' } : null),
   },
+  {
+    gameId: 'seven-wonders',
+    label: ' (Leaders, Cities, Babel)',
+    aiSeats: 1,
+    maxMoves: 900,
+    config: { expansions: ['leaders', 'cities', 'babelTower', 'babelProjects'], wonderAssignment: 'random', wonderSide: 'random' },
+    // The military summary waits for a human's Continue.
+    clickThrough: (s) => ((s as unknown as { subPhase: string }).subPhase === 'militaryEnd' ? { type: 'continue' } : null),
+  },
   { gameId: 'seven-wonders-duel', aiSeats: 0, maxMoves: 400 },
+  // Both expansions: hidden Conspiracies and Divinities, decisions for either seat.
+  { gameId: 'seven-wonders-duel', aiSeats: 0, maxMoves: 900, config: { variant: 'base', pantheon: true, agora: true }, label: ' (Pantheon + Agora)' },
   { gameId: 'air-land-sea', aiSeats: 0, maxMoves: 600 },
 ];
 
 describe('real games online', () => {
-  for (const { gameId, aiSeats, maxMoves, clickThrough } of CASES) {
-    it(`${gameId}: host + guest${aiSeats ? ` + ${aiSeats} AI` : ''} stay in step to the end; a late joiner rebuilds the match`, async () => {
+  for (const { gameId, aiSeats, maxMoves, clickThrough, config, label = '' } of CASES) {
+    it(`${gameId}${label}: host + guest${aiSeats ? ` + ${aiSeats} AI` : ''} stay in step to the end; a late joiner rebuilds the match`, async () => {
       const host = await device('host-uuid');
       await host.net().createRoom(gameId, 'Hana');
       await flush();
@@ -85,11 +96,17 @@ describe('real games online', () => {
         host.net().hostAddAISeat();
         await flush();
       }
+      if (config) {
+        host.net().hostSetConfig(config);
+        await flush();
+      }
       expect(await host.net().hostStartMatch()).toBeNull();
       await flush();
       const devices: Device[] = [host, guest];
       expect(guest.net().connection).toBe('in-game');
       expect(guest.state()).toEqual(host.state());
+      // The room really started with the options asked for.
+      if (config) expect((host.state() as unknown as { config: unknown }).config).toEqual(config);
 
       // Every seat plays its own AI move on the device that owns it.
       let moves = 0;

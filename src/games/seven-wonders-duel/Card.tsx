@@ -13,11 +13,13 @@ import type {
   DuelWonderEffect,
 } from './types';
 import { progressTokenById } from './progress';
+import { mythologyInfo } from './pantheon';
 import {
   CARD_HEX, CardArt, CardBackArt, ChainSymbolIcon, ChipGlyph, CoinGlyph, CoinIcon, DestroyGlyph, DiscardPickGlyph,
   ExtraTurnGlyph, Icon, LaurelIcon, ProgressGlyph, ProgressTokenArt, ResourceIcon, SCIENCE_NAMES, ScienceIcon,
-  ShieldIcon, TradeGlyph, WonderArt, WonderGlyph,
+  ShieldIcon, TradeGlyph, WonderArt, WonderGlyph, type CardBackKind,
 } from './art';
+import { ConspiracyBackArt, CubeIcon, DivinityEmblem, MythologyGlyph } from './artExpansions';
 
 export type CardSize = 'lg' | 'md' | 'sm';
 
@@ -123,6 +125,26 @@ export function CardEffects({ effects, size }: { effects: DuelCardEffect[]; size
           </span>,
         );
         break;
+      case 'politician':
+        out.push(
+          <span key={i} className="swd-per" title={effectText(eff)}>
+            <CubeIcon color="#e8c35a" size={size} />
+            <span className="swd-slash">{['◀', '▲', '▶'][eff.section - 1]}</span>
+          </span>,
+        );
+        break;
+      case 'conspirator':
+        out.push(
+          <span key={i} className="swd-per" title={effectText(eff)}>
+            <CubeIcon color="#e8c35a" size={size * 0.85} />
+            <span className="swd-slash">/</span>
+            <ConspiracyBackArt size={size} />
+          </span>,
+        );
+        break;
+      case 'grandTemple':
+        out.push(<span key={i} title={effectText(eff)}><MythologyGlyph mythology={eff.mythology} size={size} /></span>);
+        break;
     }
   });
   return <>{out}</>;
@@ -142,6 +164,11 @@ export function WonderEffects({ effects, size }: { effects: DuelWonderEffect[]; 
       case 'destroy': out.push(<Icon key={i} size={size} title={`Discard a ${eff.color} card of your opponent's`}><DestroyGlyph color={eff.color} /></Icon>); break;
       case 'buildFromDiscard': out.push(<Icon key={i} size={size} title="Build a discarded card for free"><DiscardPickGlyph /></Icon>); break;
       case 'progressFromBox': out.push(<Icon key={i} size={size} title="Keep 1 of 3 Progress tokens from the box"><ProgressGlyph /></Icon>); break;
+      case 'placeInfluence': out.push(<span key={i} title="Place an Influence cube"><CubeIcon color="#e8c35a" size={size} /></span>); break;
+      case 'moveInfluence': out.push(<span key={i} className="swd-per" title="You may move an Influence cube"><CubeIcon color="#e8c35a" size={size * 0.8} /><span className="swd-slash">↔</span></span>); break;
+      case 'triggerUnprepared': out.push(<span key={i} title="You may trigger an unprepared Conspiracy"><ConspiracyBackArt size={size} /></span>); break;
+      case 'divinityDiscount': out.push(<span key={i} className="swd-per" title={`Divinities cost you ${eff.amount} coins less`}><CoinIcon value={-eff.amount} size={size} /><DivinityEmblem id="gate" mythology={null} size={size} /></span>); break;
+      case 'divineTheater': out.push(<span key={i} title="Invoke a Divinity from a Mythology deck of your choice, for free"><DivinityEmblem id="gate" mythology={null} size={size} /></span>); break;
     }
   });
   return <>{out}</>;
@@ -181,6 +208,11 @@ export function effectText(eff: DuelCardEffect): string {
       const parts = [eff.coinsPer ? `Take ${eff.coinsPer} coin per` : '', `${eff.vpPer} VP per`].filter(Boolean).join(' and ');
       return `${parts} ${countText(eff.what)} in the city that has the most`;
     }
+    case 'politician':
+      return `Senate actions in the ${['left', 'centre', 'right'][eff.section - 1]} section: 1 with 0–1 blue cards, 2 with 2–3, 3 with 4+ (place a cube there or move one)`;
+    case 'conspirator': return 'Place an Influence cube in any Chamber, or Conspire';
+    case 'grandTemple':
+      return `Free with a ${mythologyInfo(eff.mythology).name} Mythology token. Grand Temples: 5 / 12 / 21 VP for 1 / 2 / 3`;
   }
 }
 
@@ -256,18 +288,32 @@ export function CardFace({ card, size = 'md', onClick, title, className = '', st
   );
 }
 
-export function CardBack({ age, guild = false, size = 'md', onClick, title, className = '', style, nodeRef }: Clickable & {
-  age: 1 | 2 | 3; guild?: boolean; size?: CardSize;
+const BACK_TITLE: Record<CardBackKind, string> = {
+  age: '', guild: 'Face-down guild card', temple: 'Face-down Grand Temple', senator: 'Face-down Senator',
+};
+
+/** Which back a face-down card shows (Guilds, Grand Temples and Senators have their own). */
+export function backKindOf(card: DuelCard | undefined): CardBackKind {
+  if (!card) return 'age';
+  if (card.color === 'senator') return 'senator';
+  if (card.color === 'purple') return card.effects.some((e) => e.kind === 'grandTemple') ? 'temple' : 'guild';
+  return 'age';
+}
+
+export function CardBack({ age, guild = false, kind, size = 'md', onClick, title, className = '', style, nodeRef, children }: Clickable & {
+  age: 1 | 2 | 3; guild?: boolean; kind?: CardBackKind; size?: CardSize; children?: ReactNode;
 }) {
+  const k: CardBackKind = kind ?? (guild ? 'guild' : 'age');
   return (
     <div
       ref={nodeRef}
-      className={`swd-card swd-card-${size} swd-card-back ${className}`}
+      className={`swd-card swd-card-${size} swd-card-back ${onClick ? 'clickable' : ''} ${className}`}
       style={style}
-      title={title ?? (guild ? 'Face-down guild card' : `Face-down Age ${age} card`)}
+      title={title ?? (BACK_TITLE[k] || `Face-down Age ${age} card`)}
       {...clickProps(onClick)}
     >
-      <CardBackArt age={age} guild={guild} />
+      <CardBackArt age={age} kind={k} />
+      {children}
     </div>
   );
 }

@@ -470,11 +470,12 @@ const GUILDS: CardTemplate[] = [
     effects: [endVp({ from: 'all', countWhat: { kind: 'wonderStages' }, vpPer: 1 })] },
 ];
 
-let _nextId = 1;
-/** Convert a template to a card with a fresh id, scoped to the player-count appearance. */
-function instantiate(t: CardTemplate, app: { minPlayers: number; maxPlayers?: number }): SwCard {
+/** Card ids are fixed by where a card sits in its deck — Age × 1000 plus its
+ *  position (guilds from 3300, expansion guilds from `idBase`) — so building a
+ *  deck anywhere (a rule book, a test) never shifts the ids a match deals. */
+function instantiate(t: CardTemplate, app: { minPlayers: number; maxPlayers?: number }, id: number): SwCard {
   return {
-    id: _nextId++,
+    id,
     name: t.name,
     age: t.age,
     color: t.color,
@@ -487,46 +488,47 @@ function instantiate(t: CardTemplate, app: { minPlayers: number; maxPlayers?: nu
   };
 }
 
+/** The base game's decks go up to 7 players; 8 (Cities) uses the 7-player deck. */
+export function deckPlayerCount(playerCount: number): number {
+  return Math.min(playerCount, 7);
+}
+
 /** Build the deck for one age and the given player count. Returns an unshuffled list. */
 export function buildAgeDeck(age: SwAge, playerCount: number): SwCard[] {
+  const n = deckPlayerCount(playerCount);
   const pool = age === 1 ? AGE_I : age === 2 ? AGE_II : AGE_III;
   const out: SwCard[] = [];
+  let next = age * 1000;
   for (const t of pool) {
     for (const app of t.appearances) {
-      if (playerCount >= app.minPlayers && playerCount <= (app.maxPlayers ?? 99)) {
-        out.push(instantiate(t, app));
+      if (n >= app.minPlayers && n <= (app.maxPlayers ?? 99)) {
+        out.push(instantiate(t, app, next++));
       }
     }
   }
   return out;
 }
 
-/** Build the Age III deck including (playerCount + 2) randomly drawn guilds. */
-export function buildAgeIIIDeck(rng: RngState, playerCount: number): SwCard[] {
+/** The base game's ten guilds (ids 3300+). */
+export function baseGuilds(): SwCard[] {
+  return GUILDS.map((t, i) => instantiate(t, { minPlayers: 3 }, 3300 + i));
+}
+
+/** Build the Age III deck including (players + 2) guilds drawn at random from
+ *  the base guilds and any `extraGuilds` (expansions'). */
+export function buildAgeIIIDeck(rng: RngState, playerCount: number, extraGuilds: readonly SwCard[] = []): SwCard[] {
   const base = buildAgeDeck(3, playerCount);
-  // Pad with guilds.
-  const guildPool: SwCard[] = GUILDS.map((t) => instantiate(t, { minPlayers: 3 }));
-  const shuffled = shuffle(rng, guildPool);
-  const drawn = shuffled.slice(0, playerCount + 2);
-  return base.concat(drawn);
+  const shuffled = shuffle(rng, [...baseGuilds(), ...extraGuilds]);
+  return base.concat(shuffled.slice(0, deckPlayerCount(playerCount) + 2));
 }
 
-/** Per the rulebook: each Age dealt 7 cards per player. */
-export function ageDeckTargetSize(playerCount: number): number {
-  return playerCount * 7;
-}
-
-/** Player-count range allowed by the deck construction (3–7 per rulebook). */
+/** Player-count range allowed by the deck construction (3–7 per rulebook;
+ *  8 with Cities, `validateConfig`). */
 export const MIN_PLAYERS = 3;
-export const MAX_PLAYERS = 7;
+export const MAX_PLAYERS = 8;
 
 /** All card name → template, for lookup. */
 export const CARD_NAMES_AGE_1 = AGE_I.map((t) => t.name);
 export const CARD_NAMES_AGE_2 = AGE_II.map((t) => t.name);
 export const CARD_NAMES_AGE_3 = AGE_III.map((t) => t.name);
 export const GUILD_NAMES = GUILDS.map((t) => t.name);
-
-/** Reset the id counter (called by createInitialState so deck ids are stable per match). */
-export function resetCardIdCounter(start: number): void {
-  _nextId = start;
-}

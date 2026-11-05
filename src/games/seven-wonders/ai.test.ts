@@ -53,7 +53,7 @@ describe('7 wonders AI', () => {
     me.coins = 0;
     me.hand = [realCard('Palace'), realCard('Lumber Yard')];
     const a = chooseAIAction(s, 'p0');
-    expect(a).toMatchObject({ type: 'submitPick', pick: { kind: 'build', cardId: me.hand[0].id, free: true } });
+    expect(a).toMatchObject({ type: 'submitPick', pick: { kind: 'build', cardId: me.hand[0].id, free: 'olympia' } });
 
     // Age II: the Aqueduct is free through the Baths; the Statue costs coins.
     s = newMatch(3, { wonders: ['rhodes-a', 'gizah-a', 'olympia-a'] });

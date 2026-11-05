@@ -2,11 +2,12 @@
 // injected cards, and an AI driver that plays every seat. Test-only.
 
 import type { Seat } from '@/core/types';
-import { createRng } from '@/core/rng';
 import { sevenWondersModule } from './module';
 import { applyAction } from './reducer';
 import { chooseAIAction } from './ai';
-import { buildAgeDeck, buildAgeIIIDeck } from './cards';
+import { baseGuilds, buildAgeDeck } from './cards';
+import { blackCards, citiesGuilds } from './expansions/cities/cards';
+import { buildLeaderDeck, leadersGuilds } from './expansions/leaders/cards';
 import type { SwCard, SwCardEffect, SwConfig, SwResource, SwState } from './types';
 
 export function seats(n: number, humans: number[] = []): Seat[] {
@@ -17,10 +18,10 @@ export function seats(n: number, humans: number[] = []): Seat[] {
 
 export function newMatch(
   n: number,
-  opts: { seed?: number; wonders?: string[]; side?: 'A' | 'B' | 'random'; humans?: number[] } = {},
+  opts: { seed?: number; wonders?: string[]; side?: 'A' | 'B' | 'random'; humans?: number[]; expansions?: SwConfig['expansions'] } = {},
 ): SwState {
   const config: SwConfig = {
-    expansions: [],
+    expansions: opts.expansions ?? [],
     wonderAssignment: opts.wonders ? 'preset' : 'random',
     wonderSide: opts.side ?? 'A',
     presetWonders: opts.wonders,
@@ -40,10 +41,13 @@ export function producer(...units: SwResource[]): SwCard {
   return testCard(`Test ${units.join('+')}`, 'brown', [{ kind: 'produce', production: units.map((u) => [u]) }]);
 }
 
-/** A copy of a real card by name (fresh id). Guilds included. */
+/** A copy of a real card by name (fresh id): every Age card, guild, black
+ *  card and leader. */
 export function realCard(name: string): SwCard {
   const all = [
-    ...buildAgeDeck(1, 7), ...buildAgeDeck(2, 7), ...buildAgeIIIDeck(createRng(1), 8),
+    ...buildAgeDeck(1, 7), ...buildAgeDeck(2, 7), ...buildAgeDeck(3, 7), ...baseGuilds(),
+    ...blackCards(1), ...blackCards(2), ...blackCards(3), ...citiesGuilds(),
+    ...leadersGuilds(), ...buildLeaderDeck(true),
   ];
   const c = all.find((x) => x.name === name);
   if (!c) throw new Error(`no card ${name}`);
@@ -68,7 +72,7 @@ export function playOut(s: SwState, stop?: (s: SwState) => boolean): SwState {
       s = applyAction(s, { type: 'continue' });
       continue;
     }
-    const pid = s.activePlayerId ?? s.players.find((p) => p.pendingPick === null && p.hand.length > 0)?.id;
+    const pid = s.activePlayerId;
     if (!pid) throw new Error(`stalled in ${s.subPhase}`);
     const a = chooseAIAction(s, pid);
     if (!a) throw new Error(`AI has no move for ${pid} in ${s.subPhase}`);

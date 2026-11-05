@@ -2,16 +2,20 @@ import { describe, expect, it, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { useState } from 'react';
 import type { Seat } from '@/core/types';
-import type { DuelAction, DuelState } from './types';
+import type { DuelAction, DuelConfig, DuelState } from './types';
 import { bundle } from './ui';
 import { sevenWondersDuelModule as duel } from './module';
 import { applyAction } from './reducer';
 import { chooseAIAction } from './ai';
 import { availableSlots } from './pyramid';
-import { allCards } from './cards';
-import { WONDERS } from './wonders';
-import { ALL_PROGRESS_TOKENS } from './progress';
+import { allCards, expansionCards } from './cards';
+import { EXPANSION_WONDERS, WONDERS } from './wonders';
+import { ALL_PROGRESS_TOKENS, EXPANSION_PROGRESS_TOKENS } from './progress';
 import { CardFace, ProgressToken, WonderCard } from './Card';
+import { ConspiracyTile, DivinityTile } from './ExpansionViews';
+import { DecreeArt } from './artExpansions';
+import { DIVINITIES } from './pantheon';
+import { CONSPIRACIES, DECREES } from './agora';
 import { giveCard } from './testSupport';
 
 afterEach(cleanup);
@@ -221,5 +225,211 @@ describe('7 Wonders Duel game view', () => {
     // Chain symbols show on both ends of every chain.
     expect(container.querySelectorAll('.swd-card-chainto')).toHaveLength(17);
     expect(container.querySelectorAll('.swd-card-chainfrom')).toHaveLength(17);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Expansions
+
+const expansionMatch = (seed: number, config: DuelConfig): DuelState => duel.createInitialState(config, seed, SEATS);
+
+/** Click the enabled panel button whose label (its first span) is exactly `label`. */
+function clickLabel(label: string): boolean {
+  const btn = screen.queryAllByRole('button').find((b) => b.querySelector('span')?.textContent === label && !(b as HTMLButtonElement).disabled);
+  if (!btn) return false;
+  fireEvent.click(btn);
+  return true;
+}
+
+const CHOICES = '.swd-pick-panel [data-choice], .swd-pick-panel .swd-card.pickable, .swd-pick-panel .swd-wonder.pickable';
+
+/** The first thing to click in the decision panel (a choice, a card or a wonder). */
+function firstChoice(container: HTMLElement): HTMLElement | null {
+  return container.querySelector<HTMLElement>(CHOICES);
+}
+
+/** The n-th (mod the count) thing to click in the decision panel. */
+function nthChoice(container: HTMLElement, n: number): HTMLElement | null {
+  const all = container.querySelectorAll<HTMLElement>(CHOICES);
+  return all.length ? all[n % all.length] : null;
+}
+
+describe('7 Wonders Duel expansions in the game view', () => {
+  it('the lobby toggles Pantheon and Agora (read-only for a guest)', () => {
+    let config: DuelConfig = { variant: 'base' };
+    const { rerender } = render(<bundle.LobbyConfig config={config} seats={SEATS} onChange={(c) => { config = c; }} />);
+    fireEvent.click(screen.getByLabelText(/Pantheon/));
+    expect(config).toEqual({ variant: 'base', pantheon: true });
+    rerender(<bundle.LobbyConfig config={config} seats={SEATS} onChange={(c) => { config = c; }} />);
+    fireEvent.click(screen.getByLabelText(/Agora/));
+    expect(config).toEqual({ variant: 'base', pantheon: true, agora: true });
+    rerender(<bundle.LobbyConfig config={config} seats={SEATS} onChange={(c) => { config = c; }} />);
+    fireEvent.click(screen.getByLabelText(/Pantheon/));
+    expect(config).toEqual({ variant: 'base', agora: true });
+    rerender(<bundle.LobbyConfig config={config} seats={SEATS} onChange={() => {}} readOnly />);
+    expect((screen.getByLabelText(/Agora/) as HTMLInputElement).disabled).toBe(true);
+  });
+
+  for (const [label, config] of [['Pantheon', { pantheon: true }], ['Agora', { agora: true }], ['both', { pantheon: true, agora: true }]] as const) {
+    it(`a human plays whole matches with ${label} through every decision`, () => {
+      const seen = new Set<string>();
+      for (const seed of [31, 32]) {
+        const api = { state: expansionMatch(seed, config), dispatch: (_a: DuelAction) => {} };
+        const { container } = render(<Harness initial={api.state} api={api} />);
+        for (let i = 0; i < 1600 && api.state.phase !== 'gameOver'; i++) {
+          const s = api.state;
+          if (s.activePlayerId === 'bot') {
+            act(() => api.dispatch(chooseAIAction(s, 'bot')!));
+            continue;
+          }
+          seen.add(s.subPhase);
+          const before = api.state;
+          switch (s.subPhase) {
+            case 'wonderDraft':
+              fireEvent.click(container.querySelector('.swd-wonder.pickable')!);
+              break;
+            case 'turn': {
+              const trigger = container.querySelector<HTMLElement>('.swd-trigger [data-choice]');
+              if (trigger && i % 2 === 0) { fireEvent.click(trigger); break; }
+              const space = container.querySelector<HTMLElement>('.swd-space.pickable');
+              if (space && i % 3 === 1) {
+                fireEvent.click(space);
+                if (clickButton(/^Invoke/)) break;
+                clickButton(/^Cancel$/);
+              }
+              const cards = container.querySelectorAll('.swd-slot.pickable .swd-card');
+              expect(cards.length).toBeGreaterThan(0);
+              fireEvent.click(cards[i % cards.length]);
+              if (i % 4 === 2 && clickLabel('Prepare a Conspiracy with it')) {
+                fireEvent.click(firstChoice(container)!);
+                break;
+              }
+              expect((i % 5 !== 4 && clickLabel('Build')) || clickLabel('Discard for coins')).toBe(true);
+              break;
+            }
+            case 'progressPick':
+            case 'libraryPick':
+              fireEvent.click(container.querySelector('.swd-token-choices .swd-progress-choice')!);
+              break;
+            case 'chooseStarter':
+              expect(clickButton(/^I start$/)).toBe(true);
+              break;
+            case 'zeus':
+            case 'discardAvailable':
+              fireEvent.click(container.querySelector('.swd-slot.pickable .swd-card')!);
+              break;
+            default: {
+              const choice = nthChoice(container, i);
+              expect(choice, `nothing to click in ${s.subPhase}`).not.toBeNull();
+              fireEvent.click(choice!);
+            }
+          }
+          // A two-step decision may need a second click before anything changes.
+          if (api.state === before) {
+            const again = firstChoice(container);
+            if (again) fireEvent.click(again);
+          }
+        }
+        expect(api.state.phase).toBe('gameOver');
+        expect(container.querySelector('.swd-gameover-banner')?.textContent).toMatch(/wins|Draw/);
+        cleanup();
+      }
+      expect(seen.has('turn')).toBe(true);
+      if ('pantheon' in config) expect(seen.has('placeDivinity')).toBe(true);
+      if ('agora' in config) expect(seen.has('senate') || seen.has('conspirator')).toBe(true);
+    }, 120_000);
+  }
+
+  it("never shows the opponent's face-down Conspiracies or Divinities, or what they drew", () => {
+    const s = expansionMatch(41, { pantheon: true, agora: true });
+    let t = advance(s, (x) => x.subPhase === 'turn' && x.activePlayerId === 'me');
+    t = JSON.parse(JSON.stringify(t));
+    t.players[0].agora!.conspiracies = [{ id: 'coup', preparedWith: null, triggered: false }];
+    t.players[1].agora!.conspiracies = [
+      { id: 'sabotage', preparedWith: null, triggered: false },
+      { id: 'treason', preparedWith: 100, triggered: false },
+    ];
+    t.pantheon!.revealed = false;
+    t.pantheon!.spaces = [{ divinity: 'aphrodite', placedBy: 1 }, { divinity: 'mars', placedBy: 0 }, null, null, null, null];
+    const { container } = render(<bundle.GameView state={t} localPlayerId="me" dispatch={() => {}} />);
+    const html = container.innerHTML;
+    expect(container.textContent).toContain('Coup');
+    expect(container.textContent).toContain('Mars');
+    for (const hidden of ['Sabotage', 'Treason', 'Aphrodite']) expect(html).not.toContain(hidden);
+    expect(container.querySelectorAll('.swd-conspiracy.face-down')).toHaveLength(2);
+    cleanup();
+
+    // While the opponent conspires, their two cards stay theirs.
+    const u: DuelState = JSON.parse(JSON.stringify(t));
+    u.subPhase = 'conspire';
+    u.activeSeatIdx = 1;
+    u.activePlayerId = 'bot';
+    u.pending = [{ kind: 'conspire', seatIdx: 1, options: ['espionage', 'blackmail'] }];
+    const v = render(<bundle.GameView state={u} localPlayerId="me" dispatch={() => {}} />);
+    expect(v.container.innerHTML).not.toMatch(/Espionage|Blackmail/);
+    expect(v.container.textContent).toMatch(/conspiring/);
+  });
+
+  it('places a Divinity in two clicks, then invokes one from the Pantheon in Age II', () => {
+    let s = expansionMatch(43, { pantheon: true });
+    s = advance(s, (x) => x.subPhase === 'turn' && x.activePlayerId === 'me');
+    s.subPhase = 'placeDivinity';
+    s.pending = [{ kind: 'placeDivinity', seatIdx: 0, mythology: 'phoenician', options: ['tanit', 'baal'] }];
+    const api = { state: s, dispatch: (_a: DuelAction) => {} };
+    const { container, unmount } = render(<Harness initial={s} api={api} />);
+    fireEvent.click(screen.getByText('Tanit').closest('[data-choice]')!);
+    expect(clickButton(/^Space 4/)).toBe(true);
+    expect(api.state.pantheon!.spaces[3]).toEqual({ divinity: 'tanit', placedBy: 0 });
+    unmount();
+
+    const t = JSON.parse(JSON.stringify(api.state)) as DuelState;
+    t.subPhase = 'turn';
+    t.activeSeatIdx = 0;
+    t.activePlayerId = 'me';
+    t.pantheon!.revealed = true;
+    t.players[0].coins = 20;
+    const api2 = { state: t, dispatch: (_a: DuelAction) => {} };
+    const r = render(<Harness initial={t} api={api2} />);
+    fireEvent.click(r.container.querySelector('.swd-space.pickable')!);
+    expect(clickButton(/^Invoke/)).toBe(true);
+    expect(api2.state.players[0].pantheon!.divinities).toHaveLength(1);
+    void container;
+  });
+
+  it('works the Senate: a Politician\'s actions, then done', () => {
+    let s = expansionMatch(44, { agora: true });
+    s = advance(s, (x) => x.subPhase === 'turn' && x.activePlayerId === 'me');
+    s.subPhase = 'senate';
+    s.pending = [{ kind: 'senate', seatIdx: 0, section: 2, left: 2 }];
+    const api = { state: s, dispatch: (_a: DuelAction) => {} };
+    const { container } = render(<Harness initial={s} api={api} />);
+    expect(container.querySelectorAll('.swd-chamber.highlight')).toHaveLength(2);
+    expect(clickButton(/^Chamber 3$/)).toBe(true);
+    expect(api.state.agora!.chambers[2][0]).toBe(1);
+    expect(api.state.subPhase).toBe('senate');
+    expect(clickButton(/^Done$/)).toBe(true);
+    expect(api.state.subPhase).toBe('turn');
+  });
+
+  it('draws every Grand Temple, Senator, new wonder, Progress token, Divinity, Conspiracy and Decree', () => {
+    const { container } = render(
+      <div>
+        {expansionCards().map((c) => <CardFace key={c.id} card={c} size="md" />)}
+        {EXPANSION_WONDERS.map((w) => <WonderCard key={w.id} wonder={w} />)}
+        {EXPANSION_PROGRESS_TOKENS.map((t) => <ProgressToken key={t.id} id={t.id} />)}
+        {DIVINITIES.map((d) => <DivinityTile key={d.id} id={d.id} />)}
+        {CONSPIRACIES.map((c) => <ConspiracyTile key={c.id} id={c.id} />)}
+        {DECREES.map((d) => <DecreeArt key={d.id} id={d.id} />)}
+      </div>,
+    );
+    expect(container.querySelectorAll('.swd-card')).toHaveLength(5 + 13);
+    expect(container.querySelectorAll('.swd-wonder')).toHaveLength(4);
+    expect(container.querySelectorAll('.swd-token')).toHaveLength(5);
+    expect(container.querySelectorAll('.swd-divinity')).toHaveLength(16);
+    expect(container.querySelectorAll('.swd-conspiracy-tile')).toHaveLength(16);
+    // Every emblem is drawn differently.
+    const svgs = (sel: string) => new Set([...container.querySelectorAll(sel)].map((n) => n.querySelector('svg')!.innerHTML));
+    expect(svgs('.swd-divinity').size).toBe(16);
+    expect(svgs('.swd-conspiracy-tile').size).toBe(16);
   });
 });

@@ -61,8 +61,10 @@ export interface GameModule<
   readonly replayInLobby?: boolean;
   /** Set false for games with no hidden information (every card and coin is
    *  public): hot-seat play then skips the "pass the device" screen between
-   *  human turns. Defaults to true. */
-  readonly hiddenInfo?: boolean;
+   *  human turns. Defaults to true. A function decides per match (it is
+   *  handed the match state), for games whose options add hidden
+   *  information. */
+  readonly hiddenInfo?: boolean | ((state: S) => boolean);
 
   /** Strengths an AI seat can play at, easiest first. With two or more, the
    *  lobby gives every AI seat its own picker and stores the choice in

@@ -49,8 +49,6 @@ export const CARD_COLOR_HEX: Record<SwCardColor, string> = {
   purple: '#7c55b0',
   leader: '#e8dcc0',
   black: '#34302e',
-  orange: '#dc7a2a',
-  navy: '#1f3f73',
 };
 
 export const CARD_COLOR_LABEL: Record<SwCardColor, string> = {
@@ -63,8 +61,6 @@ export const CARD_COLOR_LABEL: Record<SwCardColor, string> = {
   purple: 'Guilds',
   leader: 'Leaders',
   black: 'Cities',
-  orange: 'Babel',
-  navy: 'Armada',
 };
 
 // ===========================================================================
@@ -384,6 +380,68 @@ export function DiplomacyIcon({ size = 18 }: { size?: number }) {
   );
 }
 
+/** Cities' coin loss: a coin with a bite out of it. */
+export function LossIcon({ n = 1, size = 18 }: { n?: number; size?: number }) {
+  return (
+    <Icon size={size} title={`Others lose ${n} coin${n === 1 ? '' : 's'}`}>
+      <path d="M10 1.4 A8.6 8.6 0 1 0 18.4 8 L14.6 9.4 L16.4 5.4 L12.6 6.2 L13.6 2.2 Z" fill="#c9962a" stroke={INK} strokeWidth={1.1} strokeLinejoin="round" />
+      <Num n={`−${n}`} x={9.2} y={11} fill="#3b2508" size={8} />
+    </Icon>
+  );
+}
+
+/** Cities' mask (espionage: copy a neighbour's science symbol). */
+export function MaskIcon({ size = 18 }: { size?: number }) {
+  return (
+    <Icon size={size} title="Mask: copy a neighbour's science symbol">
+      <circle cx={10} cy={10} r={8.8} fill="#e8dfcf" stroke={INK} strokeWidth={1} />
+      <path d="M3.4 8.4 Q10 5.4 16.6 8.4 Q16.4 14 12 13.4 Q10 11.4 8 13.4 Q3.6 14 3.4 8.4 Z" fill="#2c2826" />
+      <ellipse cx={6.8} cy={9.6} rx={1.6} ry={1} fill="#e8dfcf" />
+      <ellipse cx={13.2} cy={9.6} rx={1.6} ry={1} fill="#e8dfcf" />
+    </Icon>
+  );
+}
+
+/** A Tower of Babel tile with its number. */
+export function TileIcon({ n, size = 18 }: { n?: number; size?: number }) {
+  return (
+    <Icon size={size} title={n ? `Babel tile ${n}` : 'Babel tile'}>
+      <path d="M10 1.2 L18.8 10 L10 18.8 L1.2 10 Z" fill="#e3b06e" stroke={INK} strokeWidth={1.1} strokeLinejoin="round" />
+      <path d="M10 4 L16 10 L10 16 L4 10 Z" fill="#f3cd92" stroke="#8a5a2b" strokeWidth={0.6} />
+      {n ? <Num n={n} fill="#5a3410" size={n > 9 ? 7 : 8.6} /> : null}
+    </Icon>
+  );
+}
+
+/** A Great Project participation token. */
+export function ParticipationIcon({ size = 18 }: { size?: number }) {
+  return (
+    <Icon size={size} title="Participation token">
+      <circle cx={10} cy={10} r={8.6} fill="#d9a35f" stroke={INK} strokeWidth={1.1} />
+      <path d="M5 14 H15 L13.4 11 H6.6 Z M7.4 11 L8.4 7.4 H11.6 L12.6 11 M8.8 7.4 L9.4 5 H10.6 L11.2 7.4" fill="#f3cd92" stroke="#6c4220" strokeWidth={0.7} strokeLinejoin="round" />
+    </Icon>
+  );
+}
+
+/** A Great Project penalty token (−1 / −2 / −3). */
+export function PenaltyIcon({ n = 1, size = 18 }: { n?: number; size?: number }) {
+  return (
+    <Icon size={size} title={`Penalty token −${n} VP`}>
+      <path d="M10 1.4 L18 6 V14 L10 18.6 L2 14 V6 Z" fill="#5a3a5e" stroke={INK} strokeWidth={1.1} strokeLinejoin="round" />
+      <Num n={`−${n}`} fill="#f3e3f4" size={8.4} />
+    </Icon>
+  );
+}
+
+/** Art for the Tower of Babel (table panel) and a Great Project card. */
+export function BabelArt({ kind }: { kind: 'tower' | 'project' }) {
+  return (
+    <svg viewBox="0 0 120 80" width="100%" height="100%" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+      {kind === 'tower' ? <TowerOfBabel /> : <ZigguratScene />}
+    </svg>
+  );
+}
+
 const ROMAN = ['', 'I', 'II', 'III'] as const;
 export const AGE_HEX = ['', '#a8582a', '#3b689a', '#76489a'] as const;
 
@@ -472,8 +530,6 @@ function cardScene(card: Pick<SwCard, 'name' | 'color' | 'effects'>): JSX.Elemen
     case 'purple': return <GuildHall emblem={guildEmblem(card.name)} />;
     case 'leader': return <LeaderBust name={card.name} />;
     case 'black': return <NightCity emblem={cityEmblem(card.name)} />;
-    case 'orange': return <ZigguratScene />;
-    case 'navy': return <ShipScene />;
   }
 }
 
@@ -1757,6 +1813,8 @@ const LEADER_LOOK: Record<string, { hat: Headwear; beard?: boolean; skin?: strin
   Cleopatra: { hat: 'nemes', skin: '#b07a52' }, Nefertiti: { hat: 'nemes', skin: '#9a6a44' }, Ramses: { hat: 'nemes', skin: '#9a6a44' },
   Hatshepsut: { hat: 'nemes', skin: '#9a6a44' }, Imhotep: { hat: 'none', skin: '#9a6a44' },
   Sappho: { hat: 'laurel' }, Hypatia: { hat: 'veil' },
+  Aspasia: { hat: 'veil' }, Berenice: { hat: 'crown', skin: '#b07a52' }, Caligula: { hat: 'laurel' },
+  Darius: { hat: 'crown', beard: true, skin: '#b07a52' }, Diocletian: { hat: 'laurel', beard: true }, Semiramis: { hat: 'crown', skin: '#b07a52' },
   Euclid: { hat: 'none', beard: true }, Ptolemy: { hat: 'none', beard: true }, Pythagoras: { hat: 'none', beard: true },
   Aristotle: { hat: 'none', beard: true }, Plato: { hat: 'none', beard: true }, Archimedes: { hat: 'none', beard: true },
   Varro: { hat: 'none', beard: true }, Vitruvius: { hat: 'none', beard: true }, Phidias: { hat: 'none', beard: true }, Praxiteles: { hat: 'none', beard: true },
@@ -1818,12 +1876,12 @@ function LeaderBust({ name }: { name: string }) {
 type CityEmblem = 'mask' | 'coins' | 'flag' | 'dagger' | 'urn' | 'bird' | 'bottle';
 
 function cityEmblem(name: string): CityEmblem {
-  if (/Spy|Hideout|Black Market|Smugglers|Secret/.test(name)) return 'mask';
-  if (/Saloon|Gambling|Tabularium|Cereals|Slave/.test(name)) return 'coins';
-  if (/Embassy|Consulate|Capitol|Residence|Tourist/.test(name)) return 'flag';
-  if (/Militia|Mercenaries|Torture/.test(name)) return 'dagger';
+  if (/Spy Ring|Hideout|Lair|Brotherhood|Secret Society/.test(name)) return 'mask';
+  if (/Gambling|Secret Warehouse|Slave Market/.test(name)) return 'coins';
+  if (/Embassy|Consulate/.test(name)) return 'flag';
+  if (/Militia|Mercenaries|Contingent|Torture/.test(name)) return 'dagger';
   if (/Pigeon/.test(name)) return 'bird';
-  if (/Bottling/.test(name)) return 'bottle';
+  if (/Dock/.test(name)) return 'bottle';
   return 'urn';
 }
 
@@ -2049,28 +2107,16 @@ const NAMED_SCENES: Record<string, () => JSX.Element> = {
   Academy: () => <Academy />,
   Lodge: () => <ScienceDesk symbol="compass" />,
   Study: () => <ScienceDesk symbol="gear" />,
-  // Babel
-  Ziggurat: () => <ZigguratScene />,
-  'Ziggurat of Etemenanki': () => <ZigguratScene />,
-  'Mason Workshop': () => <ResourceLand resources={['stone', 'clay']} />,
-  'Cuneiform Tablet': () => <ScienceDesk symbol="tablet" />,
-  'Babel Garrison': () => <WallsScene />,
-  'Babel Library': () => <Library />,
-  'Tower of Babel': () => <TowerOfBabel />,
-  'Tower Workers': () => <TowerOfBabel />,
-  'Ishtar Gate': () => <IshtarGate />,
-  'Hanging Gardens': () => <TerraceGardens />,
-  'Hanging Gardens (small)': () => <TerraceGardens />,
-  // Armada
-  Shipyard: () => <Shipyard />,
-  Dockyard: () => <Shipyard />,
-  'Naval Yard': () => <Shipyard />,
-  'Naval Charts': () => <ChartScene />,
-  Cartographer: () => <ChartScene />,
-  'Lighthouse Beacon': () => <LighthouseScene night />,
-  Pier: () => <Harbor />,
-  'Trading Fleet': () => <Harbor />,
-  'Pirates Cove': () => <Harbor />,
+  // Cities
+  'Gates of the City': () => <IshtarGate />,
+  'Clandestine Dock West': () => <ShipScene />,
+  'Clandestine Dock East': () => <ShipScene />,
+  'Architect Cabinet': () => <ChartScene />,
+  'Builders Union': () => <Shipyard />,
+  Residence: () => <TerraceGardens />,
+  Capitol: () => <Palace />,
+  Tabularium: () => <Library />,
+  'Black Market': () => <Harbor />,
 };
 
 // ===========================================================================
@@ -2283,6 +2329,58 @@ function wonderScene(base: string, night: boolean): JSX.Element {
           <Tree x={180} y={18} kind="palm" s={1.1} />
           <Tree x={30} y={102} kind="palm" s={1.4} />
           <Tree x={334} y={102} kind="palm" s={1.3} />
+        </g>
+      );
+    case 'petra':
+      return (
+        <g>
+          <WSky night={night} fill="#f3c9a0" ground={night ? '#8a5a4a' : '#d99a76'} />
+          {/* the cliff, with the treasury cut into it */}
+          <Shape d="M-2 100 V20 Q40 6 90 18 Q130 4 180 14 Q230 2 280 16 Q320 8 362 20 V100 Z" fill={night ? '#9a5a4e' : '#d47f5e'} />
+          <Shape d="M110 100 V32 H250 V100 Z" fill={night ? '#b06a58' : '#e8987a'} />
+          <Shape d="M120 32 L180 14 L240 32 Z" fill={night ? '#c07a66' : '#f0a888'} />
+          <Box x={166} y={18} w={28} h={24} fill={night ? '#c07a66' : '#f0a888'} />
+          <Dome cx={180} y={18} r={14} fill={night ? '#c07a66' : '#f0a888'} />
+          {[124, 144, 206, 226].map((x) => <Box key={x} x={x} y={34} w={8} h={58} fill={night ? '#c98a74' : '#f6b89a'} thin />)}
+          <path d="M162 100 V62 Q180 50 198 62 V100 Z" fill={night ? '#2a1a1a' : '#5a2e22'} {...LINE} />
+          <Box x={112} y={60} w={136} h={4} fill={night ? '#c98a74' : '#f6b89a'} thin />
+          <Camel x={60} y={112} s={1.1} />
+          <Camel x={300} y={112} s={0.9} />
+        </g>
+      );
+    case 'byzantium':
+      return (
+        <g>
+          <WSky night={night} ground={night ? '#7a8a62' : GRASS} />
+          <Box x={110} y={60} w={140} h={40} fill={night ? '#c9a678' : '#e8c27c'} />
+          <Dome cx={180} y={60} r={46} fill={night ? '#a8865a' : '#c99a55'} />
+          <Box x={128} y={44} w={104} h={16} fill={night ? '#c9a678' : '#e8c27c'} />
+          <Dome cx={140} y={60} r={18} fill={night ? '#b8966a' : '#dcb46e'} />
+          <Dome cx={220} y={60} r={18} fill={night ? '#b8966a' : '#dcb46e'} />
+          <path d="M180 14 V6 M176 9 H184" {...line(GOLD, 1.6)} />
+          {[[86, 20], [274, 20]].map(([x, top]) => (
+            <g key={x}>
+              <Box x={x - 4} y={top} w={8} h={80} fill={MARBLE} />
+              <Shape d={`M${x - 5} ${top} L${x} ${top - 16} L${x + 5} ${top} Z`} fill={night ? '#5a6a8a' : '#4a6a9a'} />
+            </g>
+          ))}
+          {[150, 170, 190, 210].map((x) => <path key={x} d={`M${x} 100 V84 Q${x + 5} 78 ${x + 10} 84 V100`} fill={night ? '#3a2a20' : '#6a4a38'} />)}
+          <Tree x={40} y={102} kind="cypress" s={1.4} />
+          <Tree x={326} y={102} kind="cypress" s={1.3} />
+        </g>
+      );
+    case 'rome':
+      return (
+        <g>
+          <WSky night={night} ground={night ? '#8a7a62' : SAND} />
+          {/* the Colosseum: three tiers of arches */}
+          <Shape d="M60 100 V40 Q180 18 300 40 V100 Z" fill={night ? '#b8a07a' : '#e6d3a8'} />
+          <Arches x={70} y={100} w={220} n={11} h={20} fill={night ? '#c9b28a' : '#f0dfb8'} />
+          <Arches x={74} y={78} w={212} n={11} h={18} fill={night ? '#c9b28a' : '#f0dfb8'} />
+          <Arches x={78} y={58} w={204} n={10} h={16} fill={night ? '#c9b28a' : '#f0dfb8'} />
+          <Shape d="M240 40 Q270 44 300 40 V100 H286 V50 Q262 46 240 48 Z" fill={night ? '#8a7656' : '#c9b28a'} />
+          <Figure x={34} y={104} s={1.2} robe="#9b3d38" />
+          <Tree x={334} y={102} kind="cypress" s={1.5} />
         </g>
       );
     default:

@@ -2,10 +2,12 @@
 
 import { lazy } from 'react';
 import type { SwExpansion } from '../types';
-import { setupLeaders, beforeAgeStart, applyAction, nextAIPicker } from './reducer';
+import {
+  setupLeaders, pregameLeaders, beforeAgeStart, applyAction, nextAIPicker,
+  onEventLeaders, LEADERS_TURN_END_STEPS,
+} from './reducer';
+import { leadersGuilds } from './cards';
 import { chooseAIAction } from './ai';
-import { modifyCostLeaders } from './costs';
-import { onEventLeaders } from './triggers';
 import { scoreExtrasLeaders } from './scoring';
 import { LeadersLobbySection } from './lobby';
 
@@ -13,49 +15,27 @@ import { LeadersLobbySection } from './lobby';
 // loaded game-view chunk — so load it lazily too (GameView wraps it in Suspense).
 const LeadersOverlay = lazy(() => import('./ui').then((m) => ({ default: m.LeadersOverlay })));
 
-const OWNED_SUBPHASES = new Set(['leaderDraft', 'leaderPlay', 'solomonAwaitPick']);
+const OWNED_SUBPHASES = new Set(['leaderDraft', 'leaderPlay', 'solomonAwaitPick', 'courtesan', 'romeRecruit']);
 
 export const leadersExpansion: SwExpansion = {
   id: 'leaders',
   label: 'Leaders',
 
-  setupMatch(state) {
-    setupLeaders(state);
-  },
+  guilds: leadersGuilds,
+  setupMatch: setupLeaders,
+  pregame: pregameLeaders,
+  beforeAgeStart: (state) => beforeAgeStart(state),
 
-  beforeAgeStart(state, age) {
-    return beforeAgeStart(state, age);
-  },
+  applyAction,
+  ownsSubPhase: (subPhase) => OWNED_SUBPHASES.has(subPhase),
+  nextAIPicker,
+  chooseAIAction,
 
-  applyAction(state, action) {
-    return applyAction(state, action);
-  },
+  onEvent: onEventLeaders,
+  turnEndSteps: LEADERS_TURN_END_STEPS,
 
-  nextAIPicker(state) {
-    return nextAIPicker(state);
-  },
-
-  chooseAIAction(state, playerId) {
-    return chooseAIAction(state, playerId);
-  },
-
-  modifyCost(state, player, target, cost) {
-    return modifyCostLeaders(state, player, target, cost);
-  },
-
-  onEvent(state, event) {
-    onEventLeaders(state, event);
-  },
-
-  scoreExtras(state, player) {
-    return scoreExtrasLeaders(state, player);
-  },
-
+  scoreExtras: scoreExtrasLeaders,
   scoreCategories: ['leaders'],
-
-  ownsSubPhase(subPhase) {
-    return OWNED_SUBPHASES.has(subPhase);
-  },
 
   GameOverlay: LeadersOverlay,
   LobbySection: LeadersLobbySection,

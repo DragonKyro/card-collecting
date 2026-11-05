@@ -80,6 +80,42 @@ describe('hot-seat with two humans and an AI', () => {
   });
 });
 
+describe('hot-seat pass screen decided per match', () => {
+  it('a module whose hiddenInfo is a function of the match shows the pass screen only when it says so', async () => {
+    const { GameHost } = await import('./GameHost');
+    const { useGameStore } = await import('@/store/gameStore');
+    const seats: Seat[] = [
+      { id: 'h1', name: 'Ann', color: '#e64a4a', isAI: false, isLocal: true },
+      { id: 'h2', name: 'Bob', color: '#3a6ec9', isAI: false, isLocal: true },
+    ];
+    for (const secret of [false, true]) {
+      const asked: number[] = [];
+      const module = {
+        ...withView(tally),
+        // Decided from the match itself (here: its target, which stands in for an expansion option).
+        hiddenInfo: (s: TallyState) => { asked.push(s.target); return secret; },
+      } as unknown as AnyGameModule;
+      act(() => useGameStore.getState().loadGame(module, module.createInitialState({ target: 9 }, 1, seats), 'h1'));
+      render(<GameHost onExit={() => {}} onReturnToLobby={() => {}} />);
+      if (secret) {
+        await screen.findByText('Pass the device');
+        fireEvent.click(screen.getByText("I'm ready →"));
+        expect((await screen.findByTestId('view')).textContent).toBe('h1');
+      } else {
+        expect((await screen.findByTestId('view')).textContent).toBe('h1');
+        expect(screen.queryByText('Pass the device')).toBeNull();
+        act(() => useGameStore.getState().dispatch({ type: 'add', by: 'h1', n: 1 } satisfies TallyAction));
+        // Nothing to hide: the next human plays straight on.
+        expect(screen.getByTestId('view').textContent).toBe('h2');
+        expect(screen.queryByText('Pass the device')).toBeNull();
+      }
+      expect(asked.length).toBeGreaterThan(0);
+      expect(asked.every((t) => t === 9)).toBe(true);
+      cleanup();
+    }
+  });
+});
+
 describe('local lobby: per-seat AI difficulty', () => {
   it('every AI seat has its own level picker (default level shown), and the match starts with them', async () => {
     const { GameLobby } = await import('./GameLobby');
