@@ -12,8 +12,9 @@
 // Not imported by production code.
 
 import {
+  DAY_MS,
   ROOM_LIFETIME_MS,
-  SWEEP_BATCH,
+  SWEEP_DAYS,
   ServerUnreachableError,
   decodeAction,
   encodeAction,
@@ -227,13 +228,18 @@ export function createFakeTransport(): RoomTransport & { warmUp: () => void } {
         watchers: new Map(),
       };
       server.rooms.set(code, room);
-      // Like the real transport: the new room's host clears week-old rooms nobody is in.
+      // Like the real transport: the new room's host looks at the SWEEP_DAYS
+      // oldest days of rooms and, in those that ended over a week ago, clears
+      // the rooms nobody is in.
+      const day = (t: number) => Math.floor(t / DAY_MS);
       const cutoff = Date.now() - ROOM_LIFETIME_MS;
-      [...server.rooms.entries()]
-        .filter(([, r]) => r.meta.createdAt < cutoff)
-        .sort((a, b) => a[1].meta.createdAt - b[1].meta.createdAt)
-        .slice(0, SWEEP_BATCH)
-        .forEach(([c, r]) => r.listeners.size === 0 && server.rooms.delete(c));
+      const stale = [...new Set([...server.rooms.values()].map((r) => day(r.meta.createdAt)))]
+        .sort((a, b) => a - b)
+        .slice(0, SWEEP_DAYS)
+        .filter((d) => (d + 1) * DAY_MS <= cutoff);
+      for (const [c, r] of [...server.rooms]) {
+        if (stale.includes(day(r.meta.createdAt)) && r.listeners.size === 0) server.rooms.delete(c);
+      }
       return open(code, room, me, events);
     },
     joinRoom: async (code, me, events) => {

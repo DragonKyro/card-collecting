@@ -17,7 +17,8 @@
     "sgp:eval": "npm run sgp:build && node training/sgp/dist/sgp-eval.mjs",
     "sgp:analyze": "npm run sgp:build && node training/sgp/dist/sgp-analyze.mjs",
     "jaipur:build": "vite build --config training/jaipur/vite.config.ts",
-    "jaipur:eval": "npm run jaipur:build && node training/jaipur/dist/jaipur-eval.mjs"
+    "jaipur:eval": "npm run jaipur:build && node training/jaipur/dist/jaipur-eval.mjs",
+    "deploy:rules": "npx -y firebase-tools@latest deploy --only database"
   },
   "dependencies": {
     "firebase": "^12.19.0",

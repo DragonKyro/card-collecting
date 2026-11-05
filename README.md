@@ -22,7 +22,7 @@ Shipping targets:
 | Build | Vite + TypeScript |
 | UI | React 19 |
 | State | Zustand |
-| Multiplayer | Firebase Realtime Database + anonymous Auth (project `card-collecting-4772c`; security rules only, no server code) |
+| Multiplayer | Firebase Realtime Database + anonymous Auth (project `github-games-e7c7d`, shared with other apps — data under `/card-collecting`; security rules only, no server code) |
 | Tests | Vitest |
 | Hosting | GitHub Pages (static) |
 
@@ -50,12 +50,12 @@ Each game lives in its own folder behind the `GameModule<S, A, C>` contract from
 
 ## Multiplayer model
 
-- **Firebase Realtime Database** (instance `card-collecting-4772c-default-rtdb`), reached with the Firebase JS SDK over one WebSocket on port 443, so it works on cellular and locked-down networks. It replaced peer-to-peer WebRTC (Trystero), which never connected reliably: strict NAT with no TURN server, flaky trackers, phones dropping sockets in the background. The SDK loads as its own chunk (~77 KB gzip) only when someone goes online; solo and hot-seat play never download it or hold a connection.
+- **Firebase Realtime Database** (instance `github-games-e7c7d-default-rtdb`, shared with other web apps; everything this app stores is under `/card-collecting`), reached with the Firebase JS SDK over one WebSocket on port 443, so it works on cellular and locked-down networks. It replaced peer-to-peer WebRTC (Trystero), which never connected reliably: strict NAT with no TURN server, flaky trackers, phones dropping sockets in the background. The SDK loads as its own chunk (~77 KB gzip) only when someone goes online; solo and hot-seat play never download it or hold a connection.
 - **Identity**: each device signs in to Firebase **anonymously and silently** (no account, no prompt) only so the security rules can tie writes to a device. Seats belong to the device's `localStorage` UUID; `?fresh` moves the UUID and the sign-in to `sessionStorage` for two-window local testing.
 - **A room** (`rooms/{CODE}`) holds its `meta`, a `lobby` (seats, game, options — edited by transaction), one entry per match under `matches/` (a write-once `start` record + a write-once `actions` log), `chat` and `presence`. The start record carries `createInitialState`'s inputs (game, options, seed, seats), not the state, so it's a few hundred bytes.
 - **The action log is the source of truth.** Every device builds the opening state from the start record and applies the logged moves in slot order, so all devices reduce identically (randomness is in `state.rngState` or in the action). Your own moves show at once; if another device's move takes the log slot first (two players acting at the same moment), your device rolls back, applies theirs, and replays yours on top — or drops it with a message if it's no longer legal.
 - **Rejoin and spectate for free**: a device that reloads or loses signal replays the current match from the log and is back in its seat; anyone else who joins mid-match watches. The room code rides in the URL (`?room=ABCD`), so a reload or an invite link rejoins.
-- Security rules are in `database.rules.json` (deploy with `npx firebase-tools deploy --only database`). Rooms are swept a week after they're made.
+- Security rules are in `database.rules.json`, covering only the `card-collecting` key. Deploy with `npm run deploy:rules`: the predeploy hook (`scripts/merge-db-rules.mjs`) merges them into the database's live rules so the other apps' rules stay as they are. Rooms are swept a week after the day they were made.
 - No accounts, no matchmaking, no anti-cheat — friends-only.
 
 ### Online flow
@@ -75,10 +75,10 @@ npm run typecheck   # tsc no-emit
 npm run test        # vitest watch
 npm run test:run    # vitest single run
 FIREBASE_LIVE=1 npx vitest run src/store/networkStore.live.test.ts   # online play against the real Firebase project
-npx firebase-tools deploy --only database                            # deploy database.rules.json
+npm run deploy:rules                                                # deploy database.rules.json (merged into the shared live rules)
 ```
 
-`npm run test:run` covers online play against an in-memory server (`src/net/fakeTransport.ts`), including whole matches of the heuristic-AI games. The live test prints the room codes it used; remove them with `MSYS_NO_PATHCONV=1 npx firebase-tools database:remove /rooms/<CODE> --force` (Git Bash needs `MSYS_NO_PATHCONV=1` for database paths).
+`npm run test:run` covers online play against an in-memory server (`src/net/fakeTransport.ts`), including whole matches of the heuristic-AI games. The live test prints the room codes it used; remove them with `MSYS_NO_PATHCONV=1 npx firebase-tools database:remove /card-collecting/rooms/<CODE> --force` (Git Bash needs `MSYS_NO_PATHCONV=1` for database paths).
 
 ## Deployment
 

@@ -1,6 +1,7 @@
 // @vitest-environment node
 //
-// Online play against the real Firebase project (card-collecting-4772c), each
+// Online play against the real Firebase project (github-games-e7c7d, shared
+// with other apps; everything here lives under /card-collecting), each
 // "device" with its own Firebase app and anonymous sign-in. Skipped unless
 // FIREBASE_LIVE=1:
 //
@@ -8,12 +9,20 @@
 //
 // The rules don't let clients delete fresh rooms, so it prints the room codes
 // it used; remove them afterwards with
-// `MSYS_NO_PATHCONV=1 npx firebase-tools database:remove /rooms/<CODE> --force`
-// (and `/roomIndex/<CODE>`). Each run also leaves a few anonymous users in
-// Firebase Auth (harmless). Games come from the stand-in registry
-// (src/store/testGames.ts).
+// `MSYS_NO_PATHCONV=1 npx firebase-tools database:remove /card-collecting/rooms/<CODE> --force`
+// (their index entries go a week later, with the next sweep of their day).
+// Each run also leaves a few anonymous users in Firebase Auth (harmless). The
+// sweep test plants week-old rooms with the Firebase CLI (logged in as an
+// admin). Games come from the stand-in registry (src/store/testGames.ts).
 
 import { afterAll, describe, expect, it, vi } from 'vitest';
+import { initializeApp } from 'firebase/app';
+import { initializeAuth, inMemoryPersistence, signInAnonymously } from 'firebase/auth';
+import { get, getDatabase, ref, remove, set } from 'firebase/database';
+import { execSync } from 'node:child_process';
+import { unlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { TallyAction, TallyState } from './testGames';
 
 const LIVE = process.env.FIREBASE_LIVE === '1';
@@ -187,4 +196,65 @@ describe.skipIf(!LIVE)('online play on the real Firebase project', () => {
     ca.leave();
     cb.leave();
   }, 60000);
+
+  it('week-old rooms are swept unless someone is still in them; younger codes stay private', async () => {
+    const real = await vi.importActual<typeof import('@/net/firebaseRoom')>('@/net/firebaseRoom');
+    const app = initializeApp(real.FIREBASE_CONFIG, `sweep-raw-${run}`);
+    const auth = initializeAuth(app, { persistence: inMemoryPersistence });
+    const uid = (await signInAnonymously(auth)).user.uid;
+    const db = getDatabase(app);
+    const at = (path: string) => ref(db, `${real.DB_ROOT}/${path}`);
+    const DAY = 24 * 60 * 60 * 1000;
+    const tag = run.slice(-3).toUpperCase().replace(/[^A-Z0-9]/g, 'X');
+    const [idle, busy, code] = [`O${tag}`, `P${tag}`, `S${tag}`];
+    rooms.push(code);
+    // Clients can't plant an old day (that's the point), so plant it as admin
+    // with the CLI (paths relative to DB_ROOT).
+    const oldDay = Math.floor(Date.now() / DAY) - 9;
+    const room = { meta: { hostUuid: 'raw', hostUid: uid, createdAt: oldDay * DAY + 3_600_000, build: 'live-test', v: 2 }, lobby: '{}' };
+    const plant = {
+      [`roomDays/${oldDay}`]: (oldDay + 1) * DAY,
+      [`roomIndex/${oldDay}/${idle}`]: true,
+      [`roomIndex/${oldDay}/${busy}`]: true,
+      [`rooms/${idle}`]: room,
+      [`rooms/${busy}`]: { ...room, presence: { raw: { uid, uuid: 'raw', name: 'Still here' } } },
+    };
+    const file = join(tmpdir(), `card-collecting-plant-${run}.json`);
+    writeFileSync(file, JSON.stringify(plant));
+    try {
+      execSync(
+        `npx -y firebase-tools@latest database:update /${real.DB_ROOT} "${file}" --project ${real.FIREBASE_CONFIG.projectId} --force`,
+        { stdio: 'ignore', env: { ...process.env, MSYS_NO_PATHCONV: '1' } },
+      );
+    } finally {
+      unlinkSync(file);
+    }
+
+    // Anyone can see which days have rooms, but not a recent day's codes.
+    expect((await get(at(`roomDays/${oldDay}`))).val()).toBe((oldDay + 1) * DAY);
+    // Making a room sweeps: the idle week-old room goes, the busy one (and its day) stay.
+    const host = real.createFirebaseTransport({ appName: `sweep-host-${run}`, persistence: 'memory' });
+    const noop = { lobby: () => {}, chat: () => {}, presence: () => {}, connected: () => {} };
+    const lobby = { hostUuid: 'h', gameId: 'tally', configJson: '{}', seats: [], match: null, matchCount: 0 };
+    const c = await host.createRoom(code, { hostUuid: 'h', createdAt: Date.now(), build: 'live-test' }, lobby, { uuid: 'h', name: 'H' }, noop);
+    expect(c).not.toBeNull();
+    await vi.waitFor(async () => expect((await get(at(`rooms/${idle}/meta`))).exists()).toBe(false), { timeout: 15000 });
+    expect((await get(at(`rooms/${busy}/meta`))).exists()).toBe(true);
+    expect((await get(at(`roomDays/${oldDay}`))).exists()).toBe(true);
+    await expect(get(at(`roomIndex/${Math.floor(Date.now() / DAY)}`))).rejects.toThrow(/permission/i);
+    await expect(get(at('roomIndex'))).rejects.toThrow(/permission/i);
+    // A fresh day can't be backdated to expose its codes, nor a fresh room deleted.
+    await expect(set(at(`roomDays/${Math.floor(Date.now() / DAY)}`), Date.now() - 8 * DAY)).rejects.toThrow(/permission/i);
+    await expect(remove(at(`rooms/${code}`))).rejects.toThrow(/permission/i);
+    // Nothing outside this app's key is open to it (other apps share the database).
+    await expect(get(ref(db, `notCardCollecting${tag}`))).rejects.toThrow(/permission/i);
+    await expect(set(ref(db, `notCardCollecting${tag}`), 1)).rejects.toThrow(/permission/i);
+
+    // Once the last device leaves, the next sweep clears it and its day.
+    await remove(at(`rooms/${busy}/presence/raw`));
+    expect(await real.sweepStaleRooms(db)).toContain(busy);
+    expect((await get(at(`rooms/${busy}/meta`))).exists()).toBe(false);
+    expect((await get(at(`roomDays/${oldDay}`))).exists()).toBe(false);
+    c!.leave();
+  }, 90000);
 });

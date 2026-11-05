@@ -67,10 +67,11 @@ export class ServerUnreachableError extends Error {
   }
 }
 
-/** Rooms are deleted this long after they're made (database.rules.json uses the same number). */
-export const ROOM_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
-/** Stale rooms each new room's host deletes. More than one, so a backlog can't build up. */
-export const SWEEP_BATCH = 10;
+export const DAY_MS = 24 * 60 * 60 * 1000;
+/** Rooms are deleted this long after the (UTC) day they were made ends (database.rules.json uses the same number). */
+export const ROOM_LIFETIME_MS = 7 * DAY_MS;
+/** Oldest days of rooms each new room's host looks at. More than one, so a backlog can't build up. */
+export const SWEEP_DAYS = 5;
 
 /** Match slot keys: `m0`, `m1`, … (not bare numbers, which the database would read as array indexes). */
 export function matchKey(match: number): string {
