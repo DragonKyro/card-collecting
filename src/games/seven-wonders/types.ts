@@ -3,10 +3,14 @@
 // Turn structure (pure deterministic state machine):
 //   - Each Age (I, II, III) every player is dealt 7 cards.
 //   - 6 picks per Age: each player submits a pick (build / wonder-stage / discard),
-//     reducer reveals + applies in batch, hands rotate (CW in I/III, CCW in II).
-//   - After the 6th pick the last card is discarded (base 7W).
+//     reducer reveals + applies in batch, hands pass left = west in I/III
+//     ('cw') and right = east in II ('ccw').
+//   - After the 6th pick the last card is discarded — Babylon B plays it
+//     instead (ageRound 7, only that city picks).
+//   - A Halicarnassus stage built this turn → subPhase 'discardBuild' at the
+//     end of the turn (after the 7th cards are discarded on the 6th pick).
 //   - End of Age: military resolution against L+R neighbors (-1/+1/+3/+5 tokens).
-//   - End of Age III: final scoring across 7 categories.
+//   - End of Age III: final scoring across 7 categories; ties go to the most coins.
 //
 // Expansion hooks: see expansions/<id>/ directories. Each expansion contributes
 // extra decks and post-action hooks via a module — no `if (expansion === ...)`
@@ -83,6 +87,19 @@ export type SwCardEffect =
       coinsPerOnPlay?: number;            // immediate coins per match (Haven, Lighthouse, Chamber of Commerce)
       vpPer?: number;                     // end-of-game VPs per match
     }
+  // A science symbol of the owner's choice, picked at scoring (Scientists
+  // Guild, Babylon A stage 2 / B stage 3).
+  | { kind: 'scienceWild' }
+  // ---------- Wonder powers (base game) ----------
+  // Halicarnassus: at the end of the turn the stage is built, build one card
+  // from the discard pile for free.
+  | { kind: 'buildFromDiscard' }
+  // Babylon B: play the 7th card of each Age instead of discarding it.
+  | { kind: 'playLastCard' }
+  // Olympia A: once per Age, build one card for free.
+  | { kind: 'freeBuildPerAge' }
+  // Olympia B: at the end of the game, copy one guild built by a neighbour.
+  | { kind: 'copyGuild' }
   // ---------- Expansion-owned effect kinds ----------
   // The base reducer ignores these; the relevant expansion's hooks read them.
 
@@ -202,6 +219,8 @@ export interface SwPlayer {
   militaryTokens: number[];
   /** Submitted card pick for the current tick, applied on reveal. null if no submission. */
   pendingPick: SwPendingPick | null;
+  /** Olympia A: the Age whose free build was last used. */
+  freeBuildUsedAge?: SwAge | null;
 
   // ---------- Leaders expansion fields (only set when Leaders is active) ----------
 
@@ -228,7 +247,8 @@ export interface SwPlayer {
 
 /** What a player has chosen to do with the picked card this tick. */
 export type SwPendingPick =
-  | { kind: 'build'; cardId: number; payment: SwPayment }
+  /** `free`: Olympia A's once-per-Age free build (payment ignored). */
+  | { kind: 'build'; cardId: number; payment: SwPayment; free?: boolean }
   | { kind: 'wonder'; cardId: number; stageIndex: number; payment: SwPayment }
   | { kind: 'discard'; cardId: number };
 
@@ -260,6 +280,7 @@ export interface SwConfig {
 
 export type SwSubPhase =
   | 'picking'           // each player submits a pick this tick
+  | 'discardBuild'      // Halicarnassus: discardBuildQueue[0] builds a card from the discard
   | 'militaryEnd'       // post-age military resolution shown briefly
   | 'finalScoring'      // game over; finalScores populated
   | 'leaderDraft'       // Leaders: initial pass-pick of 4 leaders
@@ -285,14 +306,18 @@ export interface SwState {
 
   config: SwConfig;
   age: SwAge;
-  /** Within an Age, which pick — 1 through 6. */
+  /** Within an Age, which pick — 1 through 6; 7 while Babylon B plays its last card. */
   ageRound: number;
   subPhase: SwSubPhase;
   players: SwPlayer[];
   /** Discard pile (visible across all ages). */
   discard: SwCard[];
-  /** Pass direction this age — 'cw' in I/III, 'ccw' in II. */
+  /** Pass direction this age — 'cw' (to the west / left neighbour) in I/III,
+   *  'ccw' (east / right) in II. */
   passDirection: 'cw' | 'ccw';
+  /** Halicarnassus: cities owed a free build from the discard pile at the end
+   *  of this turn. The head picks while subPhase is 'discardBuild'. */
+  discardBuildQueue?: PlayerId[];
 
   /** Summary of last military age resolution. Populated after each age. */
   lastMilitaryResolution: SwMilitarySummary | null;
@@ -371,6 +396,8 @@ export interface SwFinalScoringRow {
   total: number;
   /** Expansion-contributed scoring categories (e.g., { leaders: 12 }). */
   extras?: Record<string, number>;
+  /** Olympia B: the neighbour's guild copied (scored in `guild` / `science`). */
+  copiedGuild?: string;
 }
 
 // ---------- Log ----------
@@ -378,6 +405,8 @@ export interface SwFinalScoringRow {
 export type SwLogEntry =
   | { seq: number; age: SwAge; ageRound: number; kind: 'pickSubmitted'; playerId: PlayerId }
   | { seq: number; age: SwAge; ageRound: number; kind: 'pickRevealed'; playerId: PlayerId; pick: SwPendingPick; cardName: string }
+  /** Halicarnassus: the card built from the discard pile (null = passed). */
+  | { seq: number; age: SwAge; ageRound: number; kind: 'discardBuilt'; playerId: PlayerId; cardId: number | null; cardName: string | null }
   | { seq: number; age: SwAge; ageRound: number; kind: 'militaryResolution'; summary: SwMilitarySummary }
   | { seq: number; age: SwAge; ageRound: number; kind: 'ageStart' }
   | { seq: number; age: SwAge; ageRound: number; kind: 'matchEnd'; winnerId: PlayerId | null };
@@ -388,6 +417,8 @@ export type SwAction =
   | { type: 'submitPick'; playerId: PlayerId; pick: SwPendingPick }
   /** Advance from a between-age pause (military summary shown) into the next age. */
   | { type: 'continue' }
+  /** Halicarnassus: build `cardId` from the discard pile for free (null = pass). */
+  | { type: 'buildFromDiscard'; playerId: PlayerId; cardId: number | null }
   // ---------- Leaders expansion actions ----------
   /** Submit a pick during the initial leader-draft phase. */
   | { type: 'submitLeaderDraft'; playerId: PlayerId; cardId: number }

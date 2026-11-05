@@ -22,6 +22,12 @@ html, body, #root {
   margin: 0;
 }
 
+html {
+  /* Keep phones from inflating text in landscape. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 body {
   background: var(--bg);
   color: var(--fg);
@@ -38,6 +44,9 @@ button {
   font-weight: 600;
   cursor: pointer;
 }
+
+/* No double-tap zoom on controls: taps register at once on phones. */
+button, select, label, input[type='checkbox'] { touch-action: manipulation; }
 
 button:hover { filter: brightness(1.1); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -96,10 +105,12 @@ input, select {
   flex-direction: column;
 }
 
-.game-card:hover {
-  background: var(--bg-hover);
-  transform: translateY(-3px);
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+@media (hover: hover) {
+  .game-card:hover {
+    background: var(--bg-hover);
+    transform: translateY(-3px);
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+  }
 }
 
 .game-card-art {
@@ -185,6 +196,7 @@ input, select {
 }
 
 .seat-list { display: flex; flex-direction: column; gap: 2px; }
+.seat-row .seat-name { flex: 1; min-width: 0; }
 
 /* ---------- rules modal ---------- */
 
@@ -422,6 +434,9 @@ input, select {
   border: 1px solid var(--border);
 }
 
+.online-join-row { display: flex; gap: 8px; align-items: center; }
+.online-join-row input { width: 130px; min-width: 0; }
+.online-join-row .online-join-code { letter-spacing: 2px; text-align: center; }
 .online-join h4 { margin: 0 0 8px; font-size: 13px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.5px; }
 
 .online-error {
@@ -527,6 +542,24 @@ button.tiny {
   padding: 6px 8px;
   border-radius: 4px;
   border: 1px solid var(--border);
+}
+
+/* ---------- in-game header ---------- */
+
+.game-host-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  gap: 12px;
+}
+.game-host-title { min-width: 0; }
+.game-host-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
 /* ---------- in-game online ---------- */
@@ -672,4 +705,48 @@ button.tiny {
   font-size: 16px;
   padding: 12px 28px;
   border-radius: 999px;
+}
+
+/* ---------- phones ---------- */
+
+@media (max-width: 600px) {
+  .app-shell header { padding: 10px 12px; }
+  .app-shell main { padding: 10px; }
+
+  .game-list { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .game-card-meta { flex-direction: column; align-items: flex-start; gap: 4px; padding: 8px 10px 10px; }
+  .game-card h3 { font-size: 14px; }
+  .game-card .player-range { font-size: 11px; padding: 1px 7px; }
+
+  .lobby-panel { padding: 14px 12px; }
+  .seat-row { gap: 6px; }
+  .online-join { padding: 10px; }
+  .online-join-row { gap: 6px; }
+  .online-join-row input { flex: 1 1 0; width: auto; }
+  .online-join-row .online-join-code { letter-spacing: 1px; padding-left: 6px; padding-right: 6px; }
+  .room-code { font-size: 18px; letter-spacing: 3px; }
+
+  /* Actions drop under the title only when they don't fit beside it. */
+  .game-host-bar { flex-wrap: wrap; gap: 6px 8px; margin-bottom: 8px; }
+  .game-host-title { font-size: 15px; }
+  .game-host-actions { gap: 6px; margin-left: auto; }
+  .game-host-actions button { padding: 6px 10px; font-size: 13px; white-space: nowrap; }
+  .net-pill { padding: 3px 8px; }
+  .net-pill-role { display: none; }
+
+  .rules-modal-backdrop { padding: 8px; }
+  .rules-modal { max-height: 92vh; max-height: 92dvh; }
+  .rules-modal-header { padding: 10px 12px; gap: 8px; }
+  .rules-modal-body { padding: 12px 14px; }
+  .rules-book-body { min-height: 0; }
+
+  .chat-panel { bottom: 10px; right: 10px; }
+  .chat-panel.open { width: calc(100vw - 20px); max-width: 320px; }
+
+  .hotseat-pass-card { padding: 28px 22px; }
+  .hotseat-pass-name { font-size: 34px; }
+}
+
+@media (max-width: 420px) {
+  .game-host-wide { display: none; }
 }

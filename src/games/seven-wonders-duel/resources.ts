@@ -1,23 +1,24 @@
-// 7 Wonders Duel — production, cost, and opponent-purchase logic.
+// 7 Wonders Duel — production, trading and paying for things.
 //
-// Production sources: brown/gray cards' produce effects, plus wonder-stage
-// produce effects from built wonders. Choice sources (e.g., a card that
-// produces wood-or-clay) supply one resource per turn.
+// Production: brown / gray cards make fixed resources; Forum, Caravansery,
+// the Great Lighthouse and Piraeus make one of several each turn.
 //
-// Trade: a buyer can purchase one unit of resource X from the opponent's
-// production. Cost = 2 + (number of X the opponent produces from
-// non-choice sources). A trade discount (yellow card) flattens this to 1
-// per unit of that resource KIND (raw or manufactured).
+// Trading (rulebook): a missing resource is bought from the bank for 2 coins
+// + 1 per unit of it the opponent makes with brown and gray cards (yellow
+// cards and wonders never raise the price). A Reserve / Customs House fixes
+// the price of its resources at 1 coin. With Economy the coins go to its owner.
 //
-// Progress tokens affect costs:
-//   - Architecture: wonder construction costs 2 fewer resources of any kind.
-//   - Masonry: blue card costs 2 fewer resources of any kind.
+// Masonry (blue cards) and Architecture (wonders) waive 2 resources of the
+// owner's choice. `cheapestPayment` finds the best way to pay: fixed
+// production first, every assignment of the choice producers tried, then the
+// dearest remaining units waived and the rest bought. Actions never carry a
+// payment; the reducer always pays this cheapest way.
 
 import type {
-  DuelCard, DuelCost, DuelPlayer, DuelProduction, DuelResource, DuelState,
+  DuelCard, DuelCost, DuelCount, DuelPlayer, DuelProduction, DuelResource, DuelScience, DuelState,
   DuelWonder,
 } from './types';
-import { DUEL_RAW_RESOURCES } from './types';
+import { DUEL_ALL_RESOURCES } from './types';
 import { wonderById } from './wonders';
 
 export interface ProductionSet {
@@ -25,232 +26,158 @@ export interface ProductionSet {
   choices: DuelProduction[];
 }
 
+/** Every production source of a player: cards and built wonders. */
 export function productionFor(player: DuelPlayer): ProductionSet {
   const fixed = new Map<DuelResource, number>();
   const choices: DuelProduction[] = [];
-  const add = (prods: DuelProduction[]) => {
+  const add = (prods: readonly DuelProduction[]) => {
     for (const opts of prods) {
-      if (opts.length === 1) {
-        fixed.set(opts[0], (fixed.get(opts[0]) ?? 0) + 1);
-      } else {
-        choices.push(opts);
-      }
+      if (opts.length === 1) fixed.set(opts[0], (fixed.get(opts[0]) ?? 0) + 1);
+      else choices.push(opts);
     }
   };
   for (const c of player.tableau) {
-    for (const eff of c.effects) {
-      if (eff.kind === 'produce') add(eff.production);
-    }
+    for (const eff of c.effects) if (eff.kind === 'produce') add(eff.production);
   }
-  // Built wonders: each wonder's produce effect contributes too.
   for (const ws of player.wonders) {
     if (!ws.built) continue;
-    const wonder = wonderById(ws.wonderId);
-    for (const eff of wonder.effects) {
-      if (eff.kind === 'produce' && eff.production) add(eff.production);
-    }
+    for (const eff of wonderById(ws.wonderId).effects) if (eff.kind === 'produce') add(eff.production);
   }
   return { fixed, choices };
 }
 
-/** True if a multiset of required resources can be supplied from a production set. */
-export function productionCanSupply(prod: ProductionSet, required: DuelResource[]): boolean {
-  return matchAssignment(prod, required) !== null;
-}
-
-function matchAssignment(prod: ProductionSet, required: DuelResource[]): string[] | null {
-  const fixedRem = new Map(prod.fixed);
-  const choiceUsed = new Array(prod.choices.length).fill(false);
-  const assign = new Array(required.length).fill('');
-  const tryAssign = (i: number): boolean => {
-    if (i === required.length) return true;
-    const need = required[i];
-    const f = fixedRem.get(need) ?? 0;
-    if (f > 0) {
-      fixedRem.set(need, f - 1);
-      assign[i] = 'fixed';
-      if (tryAssign(i + 1)) return true;
-      fixedRem.set(need, f);
-    }
-    for (let j = 0; j < prod.choices.length; j++) {
-      if (choiceUsed[j]) continue;
-      if (!prod.choices[j].includes(need)) continue;
-      choiceUsed[j] = true;
-      assign[i] = `choice-${j}`;
-      if (tryAssign(i + 1)) return true;
-      choiceUsed[j] = false;
-    }
-    return false;
-  };
-  return tryAssign(0) ? assign : null;
-}
-
-/** Does the player have a trade discount for the given resource kind? */
-export function hasTradeDiscount(player: DuelPlayer, kind: 'raw' | 'manufactured'): boolean {
+/** Units of `r` a player makes with brown and gray cards — what raises the
+ *  opponent's price for it. */
+export function tradeSupply(player: DuelPlayer, r: DuelResource): number {
+  let n = 0;
   for (const c of player.tableau) {
+    if (c.color !== 'brown' && c.color !== 'gray') continue;
     for (const eff of c.effects) {
-      if (kind === 'raw' && eff.kind === 'tradeDiscountRaw') return true;
-      if (kind === 'manufactured' && eff.kind === 'tradeDiscountManufactured') return true;
+      if (eff.kind === 'produce') for (const opts of eff.production) if (opts.length === 1 && opts[0] === r) n++;
     }
   }
-  // Wonder effects can also grant trade discounts.
-  for (const ws of player.wonders) {
-    if (!ws.built) continue;
-    const wonder = wonderById(ws.wonderId);
-    for (const eff of wonder.effects) {
-      if (kind === 'raw' && eff.kind === 'tradeDiscountRaw') return true;
-      if (kind === 'manufactured' && eff.kind === 'tradeDiscountManufactured') return true;
+  return n;
+}
+
+/** True when a card in the player's city fixes the price of `r` at 1 coin. */
+export function hasFixedPrice(player: DuelPlayer, r: DuelResource): boolean {
+  return player.tableau.some((c) => c.effects.some((e) => e.kind === 'tradeFixed' && e.resources.includes(r)));
+}
+
+/** Coins `buyer` pays the bank for one unit of `r`. */
+export function priceOf(buyer: DuelPlayer, opponent: DuelPlayer, r: DuelResource): number {
+  return hasFixedPrice(buyer, r) ? 1 : 2 + tradeSupply(opponent, r);
+}
+
+export interface Payment {
+  /** Total coins to pay (the printed coin cost + trading). */
+  coins: number;
+  /** Trading coins — what Economy hands to the opponent. */
+  trade: number;
+  /** Resources bought, dearest first. */
+  bought: DuelResource[];
+  /** Resources Masonry / Architecture let the player skip. */
+  waived: DuelResource[];
+  /** Built free through a chain. */
+  chained: boolean;
+}
+
+/** The cheapest way for `buyer` to pay `cost`, skipping up to `waive` resources. */
+export function cheapestPayment(buyer: DuelPlayer, opponent: DuelPlayer, cost: DuelCost, waive = 0): Payment {
+  const { fixed, choices } = productionFor(buyer);
+  const need = new Map<DuelResource, number>();
+  for (const r of cost.resources ?? []) need.set(r, (need.get(r) ?? 0) + 1);
+  for (const [r, n] of fixed) if (need.has(r)) need.set(r, Math.max(0, need.get(r)! - n));
+  const price = new Map(DUEL_ALL_RESOURCES.map((r) => [r, priceOf(buyer, opponent, r)]));
+
+  const best = { trade: Infinity, bought: [] as DuelResource[], waived: [] as DuelResource[] };
+  const settle = () => {
+    const units: DuelResource[] = [];
+    for (const [r, n] of need) for (let i = 0; i < n; i++) units.push(r);
+    units.sort((a, b) => price.get(b)! - price.get(a)!);
+    const bought = units.slice(waive);
+    const trade = bought.reduce((sum, r) => sum + price.get(r)!, 0);
+    if (trade < best.trade) Object.assign(best, { trade, bought, waived: units.slice(0, waive) });
+  };
+  const assign = (i: number) => {
+    if (best.trade === 0) return;
+    if (i === choices.length) { settle(); return; }
+    assign(i + 1);
+    for (const r of new Set(choices[i])) {
+      const n = need.get(r) ?? 0;
+      if (n === 0) continue;
+      need.set(r, n - 1);
+      assign(i + 1);
+      need.set(r, n);
     }
-  }
-  return false;
-}
-
-/** Cost per unit of buying `resource` from the opponent. */
-export function priceForResource(
-  buyer: DuelPlayer,
-  opponent: DuelPlayer,
-  resource: DuelResource,
-): number {
-  const isRaw = (DUEL_RAW_RESOURCES as readonly DuelResource[]).includes(resource);
-  const kind = isRaw ? 'raw' : 'manufactured';
-  if (hasTradeDiscount(buyer, kind)) return 1;
-  // Otherwise 2 + opponent's fixed (non-choice) production count for that resource.
-  const oppProd = productionFor(opponent);
-  return 2 + (oppProd.fixed.get(resource) ?? 0);
-}
-
-/** Total cost in coins to buy a list of resources from the opponent. */
-export function purchaseCost(
-  buyer: DuelPlayer,
-  opponent: DuelPlayer,
-  purchase: DuelResource[],
-): number {
-  let total = 0;
-  for (const r of purchase) total += priceForResource(buyer, opponent, r);
-  return total;
-}
-
-/** Returns a cost-modified copy after applying progress tokens (Masonry,
- *  Architecture). Costs are reduced by REMOVING resources from the cost
- *  (regardless of kind), up to `amount`. */
-export function effectiveCostForCard(player: DuelPlayer, card: DuelCard): DuelCost {
-  const baseCost: DuelCost = {
-    coins: card.cost.coins,
-    resources: card.cost.resources ? card.cost.resources.slice() : undefined,
   };
-  if (card.color === 'blue' && player.progressTokens.includes('masonry')) {
-    return stripResources(baseCost, 2);
+  assign(0);
+  return { coins: (cost.coins ?? 0) + best.trade, trade: best.trade, bought: best.bought, waived: best.waived, chained: false };
+}
+
+/** True if the player owns the card that makes `card` free. */
+export function hasChain(player: DuelPlayer, card: DuelCard): boolean {
+  return !!card.chainFrom && player.tableau.some((c) => c.name === card.chainFrom);
+}
+
+const opponentOf = (state: DuelState, seatIdx: 0 | 1) => state.players[(1 - seatIdx) as 0 | 1];
+
+/** What building `card` costs the seat (chain, Masonry and trading included). */
+export function cardPayment(state: DuelState, seatIdx: 0 | 1, card: DuelCard): Payment {
+  const me = state.players[seatIdx];
+  if (hasChain(me, card)) return { coins: 0, trade: 0, bought: [], waived: [], chained: true };
+  const waive = card.color === 'blue' && me.progressTokens.includes('masonry') ? 2 : 0;
+  return cheapestPayment(me, opponentOf(state, seatIdx), card.cost, waive);
+}
+
+/** What building `wonder` costs the seat (Architecture and trading included). */
+export function wonderPayment(state: DuelState, seatIdx: 0 | 1, wonder: DuelWonder): Payment {
+  const me = state.players[seatIdx];
+  const waive = me.progressTokens.includes('architecture') ? 2 : 0;
+  return cheapestPayment(me, opponentOf(state, seatIdx), wonder.cost, waive);
+}
+
+/** Coins for discarding a card: 2 + 1 per yellow card in the city. */
+export function discardCoins(player: DuelPlayer): number {
+  return 2 + player.tableau.filter((c) => c.color === 'yellow').length;
+}
+
+/** Science symbols a player holds, Law's scales included. */
+export function scienceSymbols(player: DuelPlayer): Map<DuelScience, number> {
+  const counts = new Map<DuelScience, number>();
+  for (const c of player.tableau) {
+    for (const eff of c.effects) if (eff.kind === 'science') counts.set(eff.symbol, (counts.get(eff.symbol) ?? 0) + 1);
   }
-  return baseCost;
+  if (player.progressTokens.includes('law')) counts.set('law', (counts.get('law') ?? 0) + 1);
+  return counts;
 }
 
-export function effectiveCostForWonder(player: DuelPlayer, wonder: DuelWonder): DuelCost {
-  const baseCost: DuelCost = {
-    coins: wonder.cost.coins,
-    resources: wonder.cost.resources ? wonder.cost.resources.slice() : undefined,
-  };
-  if (player.progressTokens.includes('architecture')) {
-    return stripResources(baseCost, 2);
-  }
-  return baseCost;
+/** Different science symbols held — 6 is Scientific Supremacy. */
+export function distinctScience(player: DuelPlayer): number {
+  return scienceSymbols(player).size;
 }
 
-function stripResources(cost: DuelCost, n: number): DuelCost {
-  const next: DuelCost = { coins: cost.coins };
-  if (!cost.resources) return next;
-  const rem = cost.resources.slice();
-  for (let i = 0; i < n && rem.length > 0; i++) rem.pop();
-  next.resources = rem;
-  return next;
-}
-
-/** True if the player can build the card for FREE via chain. */
-export function canChainBuild(player: DuelPlayer, card: DuelCard): boolean {
-  if (!card.chainFrom || card.chainFrom.length === 0) return false;
-  return card.chainFrom.some((n) => player.tableau.some((c) => c.name === n));
-}
-
-/** Validate a purchase + check ability to pay. Returns either { ok: true,
- *  coinsToPay } or { ok: false, error }. coinsToPay = card.coins + purchase cost. */
-export function validatePurchase(
-  state: DuelState,
-  buyer: DuelPlayer,
-  card: DuelCard,
-  purchase: DuelResource[],
-): { ok: true; coinsToPay: number; coinsToOpponent: number } | { ok: false; error: string } {
-  if (canChainBuild(buyer, card)) {
-    return { ok: true, coinsToPay: 0, coinsToOpponent: 0 };
-  }
-  const opponent = state.players[1 - state.players.indexOf(buyer) as 0 | 1] ?? state.players[0];
-  const effCost = effectiveCostForCard(buyer, card);
-  return validatePay(buyer, opponent, effCost, purchase);
-}
-
-export function validatePayWonder(
-  state: DuelState,
-  buyer: DuelPlayer,
-  wonder: DuelWonder,
-  purchase: DuelResource[],
-): { ok: true; coinsToPay: number; coinsToOpponent: number } | { ok: false; error: string } {
-  const opponent = state.players[1 - state.players.indexOf(buyer) as 0 | 1] ?? state.players[0];
-  const effCost = effectiveCostForWonder(buyer, wonder);
-  return validatePay(buyer, opponent, effCost, purchase);
-}
-
-function validatePay(
-  buyer: DuelPlayer,
-  opponent: DuelPlayer,
-  cost: DuelCost,
-  purchase: DuelResource[],
-): { ok: true; coinsToPay: number; coinsToOpponent: number } | { ok: false; error: string } {
-  const required = cost.resources ? cost.resources.slice() : [];
-  const remaining: DuelResource[] = required.slice();
-  // Remove each purchased resource from remaining.
-  for (const r of purchase) {
-    const idx = remaining.indexOf(r);
-    if (idx === -1) {
-      return { ok: false, error: `Paying for ${r} but it isn't required by the cost.` };
-    }
-    remaining.splice(idx, 1);
-  }
-  // Remaining must come from self-production.
-  const buyerProd = productionFor(buyer);
-  if (!productionCanSupply(buyerProd, remaining)) {
-    return { ok: false, error: 'Cannot self-produce the remaining resources.' };
-  }
-  const coinsToOpponent = purchaseCost(buyer, opponent, purchase);
-  const baseCoinCost = cost.coins ?? 0;
-  return {
-    ok: true,
-    coinsToPay: baseCoinCost + coinsToOpponent,
-    coinsToOpponent,
-  };
-}
-
-/** Sum of `kind: 'coins'` effects in a list (used when a card / wonder grants
- *  coins on play). */
-export function sumCoinsOnPlay(effects: { kind: string; amount?: number; coins?: number }[]): number {
-  let total = 0;
-  for (const eff of effects) {
-    if (eff.kind === 'coins') total += eff.amount ?? eff.coins ?? 0;
-  }
-  return total;
-}
-
-/** Total shields a player has from tableau + built wonders. */
+/** Printed shields on a player's cards and built wonders. */
 export function shieldsFor(player: DuelPlayer): number {
   let s = 0;
-  for (const c of player.tableau) {
-    for (const eff of c.effects) {
-      if (eff.kind === 'shields') s += eff.shields;
-    }
-  }
+  for (const c of player.tableau) for (const eff of c.effects) if (eff.kind === 'shields') s += eff.shields;
   for (const ws of player.wonders) {
     if (!ws.built) continue;
-    const wonder = wonderById(ws.wonderId);
-    for (const eff of wonder.effects) {
-      if (eff.kind === 'shields' && eff.shields) s += eff.shields;
-    }
+    for (const eff of wonderById(ws.wonderId).effects) if (eff.kind === 'shields') s += eff.shields;
   }
   return s;
+}
+
+/** How many of `what` a player's city holds. */
+export function countFor(player: DuelPlayer, what: DuelCount): number {
+  switch (what.kind) {
+    case 'color': return player.tableau.filter((c) => what.colors.includes(c.color)).length;
+    case 'wonders': return player.wonders.filter((w) => w.built).length;
+    case 'coins': return Math.floor(player.coins / 3);
+  }
+}
+
+/** A guild's count: the city with the most of `what`. */
+export function guildCount(state: DuelState, what: DuelCount): number {
+  return Math.max(countFor(state.players[0], what), countFor(state.players[1], what));
 }

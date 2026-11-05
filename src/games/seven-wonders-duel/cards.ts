@@ -1,87 +1,79 @@
-// 7 Wonders Duel — card data per age.
+// 7 Wonders Duel — the card list, per age.
 //
-// Duel decks are smaller than base 7W (23 cards × 3 ages plus 5 guilds).
-// Each age's deck is drawn into a fixed pyramid layout (see pyramid.ts).
+// The printed deck: 23 Age I cards, 23 Age II, 20 Age III and 7 Guilds. Each
+// age deals 20 (Ages I and II drop 3 unseen; Age III drops 3 of its 20 and
+// shuffles in 3 random Guilds), so some cards never appear in a match.
 //
-// Card fidelity: faithful to the Duel card list where I'm confident; some
-// per-card abilities (especially yellow cards with unique conditional bonuses)
-// are best-effort. Cards whose ability I'm not fully confident on use
-// approximations (e.g., simpler endVp shapes). This mirrors the same
-// pattern used for the Cities / Babel / Armada expansions in base 7W.
+// Card ids are fixed (100 + index for Age I, 200+ Age II, 300+ Age III, 400+
+// Guilds), so dealing needs no counter and every peer agrees on them.
+//
+// Chains: a card showing a chain symbol (`chain`) makes the later card with
+// that symbol in its cost (`chainCost`, named in `chainFrom`) free.
 
 import type {
-  DuelAge, DuelCard, DuelCardColor, DuelCardEffect, DuelCost, DuelResource, DuelScience,
+  DuelAge, DuelCard, DuelCardColor, DuelCardEffect, DuelChainSymbol, DuelCost, DuelCount,
+  DuelResource, DuelScience,
 } from './types';
 import { shuffle, type RngState } from '@/core/rng';
 
 interface DuelCardTemplate {
   name: string;
-  age: DuelAge;
   color: DuelCardColor;
   cost?: DuelCost;
-  chainFrom?: string[];
-  chainTo?: string[];
+  /** [symbol, card that shows it] — builds this card for free. */
+  chainCost?: [DuelChainSymbol, string];
+  chain?: DuelChainSymbol;
   effects: DuelCardEffect[];
 }
 
 const free: DuelCost = {};
-const cost = (...resources: DuelResource[]): DuelCost => ({ resources });
-const costCoins = (n: number): DuelCost => ({ coins: n });
+const res = (...resources: DuelResource[]): DuelCost => ({ resources });
+const coinsCost = (n: number, ...resources: DuelResource[]): DuelCost =>
+  resources.length ? { coins: n, resources } : { coins: n };
 const vp = (n: number): DuelCardEffect => ({ kind: 'vp', vp: n });
 const shields = (n: number): DuelCardEffect => ({ kind: 'shields', shields: n });
 const coins = (n: number): DuelCardEffect => ({ kind: 'coins', amount: n });
-const produce = (...prods: DuelResource[][]): DuelCardEffect =>
-  ({ kind: 'produce', production: prods });
-const science = (sym: DuelScience): DuelCardEffect => ({ kind: 'science', symbol: sym });
+const produce = (...prods: DuelResource[][]): DuelCardEffect => ({ kind: 'produce', production: prods });
+const science = (symbol: DuelScience): DuelCardEffect => ({ kind: 'science', symbol });
+const tradeFixed = (...resources: DuelResource[]): DuelCardEffect => ({ kind: 'tradeFixed', resources });
+const colors = (...c: DuelCardColor[]): DuelCount => ({ kind: 'color', colors: c });
+const coinsPer = (what: DuelCount, per: number): DuelCardEffect => ({ kind: 'coinsPer', what, per });
+const guild = (what: DuelCount, vpPer: number, coinsPerCard: number): DuelCardEffect =>
+  ({ kind: 'guild', what, vpPer, coinsPer: coinsPerCard });
 
 // =====================================================================
 // AGE I — 23 cards
 // =====================================================================
 
 const AGE_I: DuelCardTemplate[] = [
-  // Brown (raw) — 4
-  { name: 'Lumber Yard', age: 1, color: 'brown', cost: free, effects: [produce(['wood'])] },
-  { name: 'Logging Camp', age: 1, color: 'brown', cost: costCoins(1), effects: [produce(['wood'])] },
-  { name: 'Clay Pool', age: 1, color: 'brown', cost: free, effects: [produce(['clay'])] },
-  { name: 'Quarry', age: 1, color: 'brown', cost: costCoins(1), effects: [produce(['stone'])] },
+  { name: 'Lumber Yard', color: 'brown', cost: free, effects: [produce(['wood'])] },
+  { name: 'Logging Camp', color: 'brown', cost: coinsCost(1), effects: [produce(['wood'])] },
+  { name: 'Clay Pool', color: 'brown', cost: free, effects: [produce(['clay'])] },
+  { name: 'Clay Pit', color: 'brown', cost: coinsCost(1), effects: [produce(['clay'])] },
+  { name: 'Quarry', color: 'brown', cost: free, effects: [produce(['stone'])] },
+  { name: 'Stone Pit', color: 'brown', cost: coinsCost(1), effects: [produce(['stone'])] },
 
-  // Gray (manufactured) — 2
-  { name: 'Glassworks', age: 1, color: 'gray', cost: free, effects: [produce(['glass'])] },
-  { name: 'Press', age: 1, color: 'gray', cost: free, effects: [produce(['papyrus'])] },
+  { name: 'Glassworks', color: 'gray', cost: coinsCost(1), effects: [produce(['glass'])] },
+  { name: 'Press', color: 'gray', cost: coinsCost(1), effects: [produce(['papyrus'])] },
 
-  // Yellow — 3
-  { name: 'Tavern', age: 1, color: 'yellow', cost: free, effects: [coins(4)] },
-  { name: 'Stone Reserve', age: 1, color: 'yellow', cost: costCoins(3),
-    effects: [{ kind: 'tradeDiscountRaw' }],
-    chainTo: ['Caravansery'] },
-  { name: 'Clay Reserve', age: 1, color: 'yellow', cost: costCoins(3),
-    effects: [{ kind: 'tradeDiscountRaw' }] },
+  { name: 'Guard Tower', color: 'red', cost: free, effects: [shields(1)] },
+  { name: 'Stable', color: 'red', cost: res('wood'), chain: 'horseshoe', effects: [shields(1)] },
+  { name: 'Garrison', color: 'red', cost: res('clay'), chain: 'sword', effects: [shields(1)] },
+  { name: 'Palisade', color: 'red', cost: coinsCost(2), chain: 'tower', effects: [shields(1)] },
 
-  // Blue (civilian VP) — 4
-  { name: 'Theater', age: 1, color: 'blue', cost: free, effects: [vp(3)], chainTo: ['Statue'] },
-  { name: 'Altar', age: 1, color: 'blue', cost: free, effects: [vp(3)], chainTo: ['Temple'] },
-  { name: 'Baths', age: 1, color: 'blue', cost: cost('stone'), effects: [vp(3)], chainTo: ['Aqueduct'] },
-  { name: 'Pharmacist', age: 1, color: 'blue', cost: cost('glass'), effects: [vp(2)] },
+  { name: 'Workshop', color: 'green', cost: res('papyrus'), effects: [vp(1), science('plumb')] },
+  { name: 'Apothecary', color: 'green', cost: res('glass'), effects: [vp(1), science('wheel')] },
+  { name: 'Scriptorium', color: 'green', cost: coinsCost(2), chain: 'book', effects: [science('quill')] },
+  { name: 'Pharmacist', color: 'green', cost: coinsCost(2), chain: 'gear', effects: [science('mortar')] },
 
-  // Red (military) — 4
-  { name: 'Stockade', age: 1, color: 'red', cost: cost('wood'), effects: [shields(1)] },
-  { name: 'Barracks', age: 1, color: 'red', cost: cost('clay'), effects: [shields(1)] },
-  { name: 'Guard Tower', age: 1, color: 'red', cost: cost('clay'), effects: [shields(1)] },
-  { name: 'Palisade', age: 1, color: 'red', cost: cost('stone'), effects: [shields(1)] },
+  { name: 'Stone Reserve', color: 'yellow', cost: coinsCost(3), effects: [tradeFixed('stone')] },
+  { name: 'Clay Reserve', color: 'yellow', cost: coinsCost(3), effects: [tradeFixed('clay')] },
+  { name: 'Wood Reserve', color: 'yellow', cost: coinsCost(3), effects: [tradeFixed('wood')] },
+  { name: 'Tavern', color: 'yellow', cost: free, chain: 'jug', effects: [coins(4)] },
 
-  // Green (science) — 6
-  { name: 'Apothecary', age: 1, color: 'green', cost: cost('glass'),
-    effects: [science('compass')], chainTo: ['Dispensary'] },
-  { name: 'Workshop', age: 1, color: 'green', cost: cost('papyrus'),
-    effects: [science('gear')], chainTo: ['Archery Range'] },
-  { name: 'Scriptorium', age: 1, color: 'green', cost: cost('papyrus'),
-    effects: [science('tablet')], chainTo: ['Library'] },
-  { name: 'Stable', age: 1, color: 'green', cost: cost('wood'),
-    effects: [science('wheel')], chainTo: ['Horse Breeders'] },
-  { name: 'Bottling Plant', age: 1, color: 'green', cost: cost('glass'),
-    effects: [science('lyre')], chainTo: ['Brewery'] },
-  { name: 'Garrison', age: 1, color: 'green', cost: cost('clay'),
-    effects: [science('mortar')], chainTo: ['Walls'] },
+  { name: 'Theater', color: 'blue', cost: free, chain: 'mask', effects: [vp(3)] },
+  { name: 'Altar', color: 'blue', cost: free, chain: 'moon', effects: [vp(3)] },
+  { name: 'Baths', color: 'blue', cost: res('stone'), chain: 'drop', effects: [vp(3)] },
 ];
 
 // =====================================================================
@@ -89,169 +81,121 @@ const AGE_I: DuelCardTemplate[] = [
 // =====================================================================
 
 const AGE_II: DuelCardTemplate[] = [
-  // Brown — 3
-  { name: 'Sawmill', age: 2, color: 'brown', cost: costCoins(2), effects: [produce(['wood'], ['wood'])] },
-  { name: 'Brickyard', age: 2, color: 'brown', cost: costCoins(2), effects: [produce(['clay'], ['clay'])] },
-  { name: 'Shelf Quarry', age: 2, color: 'brown', cost: costCoins(2), effects: [produce(['stone'], ['stone'])] },
+  { name: 'Sawmill', color: 'brown', cost: coinsCost(2), effects: [produce(['wood'], ['wood'])] },
+  { name: 'Brickyard', color: 'brown', cost: coinsCost(2), effects: [produce(['clay'], ['clay'])] },
+  { name: 'Shelf Quarry', color: 'brown', cost: coinsCost(2), effects: [produce(['stone'], ['stone'])] },
 
-  // Gray — 2
-  { name: 'Glass-Blower', age: 2, color: 'gray', cost: free, effects: [produce(['glass'])] },
-  { name: 'Drying Room', age: 2, color: 'gray', cost: free, effects: [produce(['papyrus'])] },
+  { name: 'Glass-Blower', color: 'gray', cost: free, effects: [produce(['glass'])] },
+  { name: 'Drying Room', color: 'gray', cost: free, effects: [produce(['papyrus'])] },
 
-  // Yellow — 4
-  { name: 'Forum', age: 2, color: 'yellow', cost: cost('clay', 'clay'),
-    effects: [coins(3), { kind: 'tradeDiscountManufactured' }] },
-  { name: 'Caravansery', age: 2, color: 'yellow', cost: cost('wood', 'wood'),
-    effects: [{ kind: 'tradeDiscountRaw' }], chainFrom: ['Stone Reserve'] },
-  { name: 'Customs House', age: 2, color: 'yellow', cost: cost('clay', 'clay'),
-    effects: [coins(2), { kind: 'tradeDiscountRaw' }] },
-  { name: 'Brewery', age: 2, color: 'yellow', cost: cost('clay'),
-    effects: [coins(6)], chainFrom: ['Bottling Plant'] },
+  { name: 'Walls', color: 'red', cost: res('stone', 'stone'), effects: [shields(2)] },
+  { name: 'Horse Breeders', color: 'red', cost: res('clay', 'wood'), chainCost: ['horseshoe', 'Stable'], effects: [shields(1)] },
+  { name: 'Barracks', color: 'red', cost: coinsCost(3), chainCost: ['sword', 'Garrison'], effects: [shields(1)] },
+  { name: 'Archery Range', color: 'red', cost: res('stone', 'wood', 'papyrus'), chain: 'target', effects: [shields(2)] },
+  { name: 'Parade Ground', color: 'red', cost: res('clay', 'clay', 'glass'), chain: 'helmet', effects: [shields(2)] },
 
-  // Blue — 4
-  { name: 'Temple', age: 2, color: 'blue', cost: cost('wood', 'papyrus'),
-    effects: [vp(4)], chainFrom: ['Altar'], chainTo: ['Pantheon'] },
-  { name: 'Statue', age: 2, color: 'blue', cost: cost('clay', 'clay'),
-    effects: [vp(4)], chainFrom: ['Theater'], chainTo: ['Gardens'] },
-  { name: 'Aqueduct', age: 2, color: 'blue', cost: cost('stone', 'stone', 'stone'),
-    effects: [vp(5)], chainFrom: ['Baths'] },
-  { name: 'Rostrum', age: 2, color: 'blue', cost: cost('stone'),
-    effects: [vp(4)] },
+  { name: 'Library', color: 'green', cost: res('stone', 'wood', 'glass'), chainCost: ['book', 'Scriptorium'], effects: [vp(2), science('quill')] },
+  { name: 'Dispensary', color: 'green', cost: res('clay', 'clay', 'stone'), chainCost: ['gear', 'Pharmacist'], effects: [vp(2), science('mortar')] },
+  { name: 'School', color: 'green', cost: res('wood', 'papyrus', 'papyrus'), chain: 'lyre', effects: [vp(1), science('wheel')] },
+  { name: 'Laboratory', color: 'green', cost: res('wood', 'glass', 'glass'), chain: 'lamp', effects: [vp(1), science('plumb')] },
 
-  // Red — 4
-  { name: 'Walls', age: 2, color: 'red', cost: cost('stone', 'stone'),
-    effects: [shields(2)], chainFrom: ['Garrison'] },
-  { name: 'Horse Breeders', age: 2, color: 'red', cost: cost('clay', 'wood'),
-    effects: [shields(1)], chainFrom: ['Stable'] },
-  { name: 'Archery Range', age: 2, color: 'red', cost: cost('wood', 'wood', 'stone'),
-    effects: [shields(2)], chainFrom: ['Workshop'] },
-  { name: 'Parade Ground', age: 2, color: 'red', cost: cost('clay', 'clay', 'wood'),
-    effects: [shields(2)] },
+  { name: 'Forum', color: 'yellow', cost: coinsCost(3, 'clay'), effects: [produce(['glass', 'papyrus'])] },
+  { name: 'Caravansery', color: 'yellow', cost: coinsCost(2, 'glass', 'papyrus'), effects: [produce(['wood', 'clay', 'stone'])] },
+  { name: 'Customs House', color: 'yellow', cost: coinsCost(4), effects: [tradeFixed('papyrus', 'glass')] },
+  { name: 'Brewery', color: 'yellow', cost: free, chain: 'barrel', effects: [coins(6)] },
 
-  // Green — 6
-  { name: 'Dispensary', age: 2, color: 'green', cost: cost('glass', 'glass'),
-    effects: [science('compass')], chainFrom: ['Apothecary'] },
-  { name: 'Library', age: 2, color: 'green', cost: cost('papyrus', 'papyrus'),
-    effects: [science('tablet')], chainFrom: ['Scriptorium'] },
-  { name: 'School', age: 2, color: 'green', cost: cost('papyrus', 'wood'),
-    effects: [science('mortar')] },
-  { name: 'Laboratory', age: 2, color: 'green', cost: cost('papyrus', 'glass'),
-    effects: [science('gear')] },
-  { name: 'Courthouse', age: 2, color: 'green', cost: cost('clay', 'clay', 'papyrus'),
-    effects: [science('sundial')] },
-  { name: 'Tribunal', age: 2, color: 'green', cost: cost('wood', 'wood', 'glass'),
-    effects: [science('lyre')] },
+  { name: 'Courthouse', color: 'blue', cost: res('wood', 'wood', 'glass'), effects: [vp(5)] },
+  { name: 'Statue', color: 'blue', cost: res('clay', 'clay'), chainCost: ['mask', 'Theater'], chain: 'column', effects: [vp(4)] },
+  { name: 'Temple', color: 'blue', cost: res('wood', 'papyrus'), chainCost: ['moon', 'Altar'], chain: 'sun', effects: [vp(4)] },
+  { name: 'Aqueduct', color: 'blue', cost: res('stone', 'stone', 'stone'), chainCost: ['drop', 'Baths'], effects: [vp(5)] },
+  { name: 'Rostrum', color: 'blue', cost: res('stone', 'wood'), chain: 'senate', effects: [vp(4)] },
 ];
 
 // =====================================================================
-// AGE III — 20 cards + 7 guilds (5 guilds shuffled in)
+// AGE III — 20 cards
 // =====================================================================
 
 const AGE_III: DuelCardTemplate[] = [
-  // Yellow — 4 (Age III has commercial endgame)
-  { name: 'Chamber of Commerce', age: 3, color: 'yellow', cost: cost('papyrus', 'papyrus'),
-    effects: [{ kind: 'endVp', from: 'self', countWhat: { kind: 'cardColor', color: 'gray' }, coinsPerOnPlay: 3, vpPer: 3 }] },
-  { name: 'Port', age: 3, color: 'yellow', cost: cost('glass', 'papyrus', 'wood'),
-    effects: [{ kind: 'endVp', from: 'self', countWhat: { kind: 'cardColor', color: 'brown' }, coinsPerOnPlay: 2, vpPer: 2 }] },
-  { name: 'Armory', age: 3, color: 'yellow', cost: cost('stone', 'stone', 'glass'),
-    effects: [{ kind: 'endVp', from: 'self', countWhat: { kind: 'cardColor', color: 'red' }, coinsPerOnPlay: 1, vpPer: 1 }] },
-  { name: 'Lighthouse', age: 3, color: 'yellow', cost: cost('papyrus', 'wood', 'wood'),
-    effects: [{ kind: 'endVp', from: 'self', countWhat: { kind: 'cardColor', color: 'yellow' }, coinsPerOnPlay: 1, vpPer: 1 }] },
+  { name: 'Arsenal', color: 'red', cost: res('clay', 'clay', 'clay', 'wood', 'wood'), effects: [shields(3)] },
+  { name: 'Pretorium', color: 'red', cost: coinsCost(8), effects: [shields(3)] },
+  { name: 'Fortifications', color: 'red', cost: res('stone', 'stone', 'clay', 'papyrus'), chainCost: ['tower', 'Palisade'], effects: [shields(2)] },
+  { name: 'Siege Workshop', color: 'red', cost: res('wood', 'wood', 'wood', 'glass'), chainCost: ['target', 'Archery Range'], effects: [shields(2)] },
+  { name: 'Circus', color: 'red', cost: res('clay', 'clay', 'stone', 'stone'), chainCost: ['helmet', 'Parade Ground'], effects: [shields(2)] },
 
-  // Blue — 5
-  { name: 'Pantheon', age: 3, color: 'blue', cost: cost('clay', 'papyrus', 'glass', 'wood'),
-    effects: [vp(6)], chainFrom: ['Temple'] },
-  { name: 'Gardens', age: 3, color: 'blue', cost: cost('wood', 'wood', 'clay', 'clay'),
-    effects: [vp(6)], chainFrom: ['Statue'] },
-  { name: 'Senate', age: 3, color: 'blue', cost: cost('stone', 'wood', 'glass'),
-    effects: [vp(5)] },
-  { name: 'Town Hall', age: 3, color: 'blue', cost: cost('stone', 'stone', 'wood', 'glass'),
-    effects: [vp(7)] },
-  { name: 'Obelisk', age: 3, color: 'blue', cost: cost('stone', 'glass'),
-    effects: [vp(5)] },
+  { name: 'Academy', color: 'green', cost: res('stone', 'wood', 'glass', 'glass'), effects: [vp(3), science('sundial')] },
+  { name: 'Study', color: 'green', cost: res('wood', 'wood', 'glass', 'papyrus'), effects: [vp(3), science('sundial')] },
+  { name: 'University', color: 'green', cost: res('clay', 'glass', 'papyrus'), chainCost: ['lyre', 'School'], effects: [vp(2), science('globe')] },
+  { name: 'Observatory', color: 'green', cost: res('stone', 'papyrus', 'papyrus'), chainCost: ['lamp', 'Laboratory'], effects: [vp(2), science('globe')] },
 
-  // Red — 4
-  { name: 'Fortifications', age: 3, color: 'red', cost: cost('stone', 'clay', 'clay'),
-    effects: [shields(2)] },
-  { name: 'Siege Workshop', age: 3, color: 'red', cost: cost('wood', 'clay', 'clay'),
-    effects: [shields(2)], chainFrom: ['Archery Range'] },
-  { name: 'Circus', age: 3, color: 'red', cost: cost('stone', 'stone', 'clay'),
-    effects: [shields(2)] },
-  { name: 'Arsenal', age: 3, color: 'red', cost: cost('wood', 'wood', 'clay'),
-    effects: [shields(3)] },
+  { name: 'Chamber of Commerce', color: 'yellow', cost: res('papyrus', 'papyrus'), effects: [vp(3), coinsPer(colors('gray'), 3)] },
+  { name: 'Port', color: 'yellow', cost: res('wood', 'glass', 'papyrus'), effects: [vp(3), coinsPer(colors('brown'), 2)] },
+  { name: 'Armory', color: 'yellow', cost: res('stone', 'stone', 'glass'), effects: [vp(3), coinsPer(colors('red'), 1)] },
+  { name: 'Lighthouse', color: 'yellow', cost: res('clay', 'clay', 'glass'), chainCost: ['jug', 'Tavern'], effects: [vp(3), coinsPer(colors('yellow'), 1)] },
+  { name: 'Arena', color: 'yellow', cost: res('clay', 'stone', 'wood'), chainCost: ['barrel', 'Brewery'], effects: [vp(3), coinsPer({ kind: 'wonders' }, 2)] },
 
-  // Green — 4
-  { name: 'University', age: 3, color: 'green', cost: cost('wood', 'glass', 'papyrus'),
-    effects: [science('sundial')] },
-  { name: 'Observatory', age: 3, color: 'green', cost: cost('papyrus', 'glass'),
-    effects: [science('compass')] },
-  { name: 'Academy', age: 3, color: 'green', cost: cost('stone', 'glass'),
-    effects: [science('lyre')] },
-  { name: 'Study', age: 3, color: 'green', cost: cost('wood', 'glass', 'papyrus'),
-    effects: [science('wheel')] },
-
-  // Yellow second batch — 3 more
-  { name: 'Pretorium', age: 3, color: 'yellow', cost: costCoins(8),
-    effects: [vp(7)] },
-  { name: 'Arena', age: 3, color: 'yellow', cost: cost('stone', 'stone', 'clay'),
-    effects: [{ kind: 'endVp', from: 'self', countWhat: { kind: 'wonderStages' }, coinsPerOnPlay: 3, vpPer: 3 }] },
-  { name: 'Merchants Guild', age: 3, color: 'purple', cost: cost('wood', 'wood', 'glass', 'papyrus'),
-    effects: [{ kind: 'endVp', from: 'both', countWhat: { kind: 'cardColor', color: 'yellow' }, vpPer: 1 }] },
+  { name: 'Palace', color: 'blue', cost: res('clay', 'stone', 'wood', 'glass', 'glass'), effects: [vp(7)] },
+  { name: 'Town Hall', color: 'blue', cost: res('stone', 'stone', 'stone', 'wood', 'wood'), effects: [vp(7)] },
+  { name: 'Obelisk', color: 'blue', cost: res('stone', 'stone', 'glass'), effects: [vp(5)] },
+  { name: 'Gardens', color: 'blue', cost: res('clay', 'clay', 'wood', 'wood'), chainCost: ['column', 'Statue'], effects: [vp(6)] },
+  { name: 'Pantheon', color: 'blue', cost: res('clay', 'wood', 'papyrus', 'papyrus'), chainCost: ['sun', 'Temple'], effects: [vp(6)] },
+  { name: 'Senate', color: 'blue', cost: res('clay', 'clay', 'stone', 'papyrus'), chainCost: ['senate', 'Rostrum'], effects: [vp(5)] },
 ];
 
-// ----- Guilds (purple) — 7 total, 5 shuffled into Age III deck -----
+// =====================================================================
+// GUILDS — 7, three shuffled into each Age III deck
+// =====================================================================
+//
+// A guild counts in the city that has the most of its kind (yours or your
+// opponent's): coins when built, VP at the end (counted again then).
+
 const GUILDS: DuelCardTemplate[] = [
-  { name: 'Merchants Guild', age: 3, color: 'purple', cost: cost('clay', 'wood', 'glass', 'papyrus'),
-    effects: [{ kind: 'endVp', from: 'both', countWhat: { kind: 'cardColor', color: 'yellow' }, vpPer: 1 }] },
-  { name: 'Shipowners Guild', age: 3, color: 'purple', cost: cost('clay', 'stone', 'glass', 'papyrus'),
-    effects: [{ kind: 'endVp', from: 'both', countWhat: { kind: 'cardColor', color: 'brown' }, vpPer: 1 }] },
-  { name: 'Builders Guild', age: 3, color: 'purple', cost: cost('stone', 'stone', 'clay', 'wood', 'glass'),
-    effects: [{ kind: 'endVp', from: 'both', countWhat: { kind: 'wonderStages' }, vpPer: 2 }] },
-  { name: 'Magistrates Guild', age: 3, color: 'purple', cost: cost('wood', 'wood', 'clay', 'papyrus'),
-    effects: [{ kind: 'endVp', from: 'both', countWhat: { kind: 'cardColor', color: 'blue' }, vpPer: 1 }] },
-  { name: 'Scientists Guild', age: 3, color: 'purple', cost: cost('clay', 'clay', 'wood', 'wood'),
-    effects: [{ kind: 'endVp', from: 'both', countWhat: { kind: 'cardColor', color: 'green' }, vpPer: 1 }] },
-  { name: 'Tacticians Guild', age: 3, color: 'purple', cost: cost('stone', 'stone', 'clay', 'papyrus'),
-    effects: [{ kind: 'endVp', from: 'both', countWhat: { kind: 'cardColor', color: 'red' }, vpPer: 1 }] },
-  { name: 'Moneylenders Guild', age: 3, color: 'purple', cost: cost('stone', 'stone', 'wood', 'wood'),
-    effects: [{ kind: 'endVp', from: 'both', countWhat: { kind: 'coins' }, vpPer: 1 }] },
+  { name: 'Merchants Guild', color: 'purple', cost: res('clay', 'wood', 'glass', 'papyrus'), effects: [guild(colors('yellow'), 1, 1)] },
+  { name: 'Shipowners Guild', color: 'purple', cost: res('clay', 'stone', 'glass', 'papyrus'), effects: [guild(colors('brown', 'gray'), 1, 1)] },
+  { name: 'Builders Guild', color: 'purple', cost: res('stone', 'stone', 'clay', 'wood', 'glass'), effects: [guild({ kind: 'wonders' }, 2, 0)] },
+  { name: 'Magistrates Guild', color: 'purple', cost: res('wood', 'wood', 'clay', 'papyrus'), effects: [guild(colors('blue'), 1, 1)] },
+  { name: 'Scientists Guild', color: 'purple', cost: res('clay', 'clay', 'wood', 'wood'), effects: [guild(colors('green'), 1, 1)] },
+  { name: 'Moneylenders Guild', color: 'purple', cost: res('stone', 'stone', 'wood', 'wood'), effects: [guild({ kind: 'coins' }, 1, 0)] },
+  { name: 'Tacticians Guild', color: 'purple', cost: res('stone', 'stone', 'clay', 'papyrus'), effects: [guild(colors('red'), 1, 1)] },
 ];
 
-// Strip the second Merchants Guild from AGE_III (duplicates the guild pool one).
-const AGE_III_NO_DUP: DuelCardTemplate[] = AGE_III.filter((c) => c.color !== 'purple');
-
-let _nextId = 1;
-export function resetDuelCardIdCounter(start = 1): void { _nextId = start; }
-
-function instantiate(t: DuelCardTemplate): DuelCard {
-  return {
-    id: _nextId++,
-    name: t.name,
-    age: t.age,
-    color: t.color,
-    cost: t.cost ?? {},
-    chainFrom: t.chainFrom,
-    chainTo: t.chainTo,
-    effects: t.effects,
-  };
+function instantiate(t: DuelCardTemplate, age: DuelAge, id: number): DuelCard {
+  const card: DuelCard = { id, name: t.name, age, color: t.color, cost: t.cost ?? {}, effects: t.effects };
+  if (t.chainCost) { card.chainCost = t.chainCost[0]; card.chainFrom = t.chainCost[1]; }
+  if (t.chain) card.chain = t.chain;
+  return card;
 }
 
-/** Returns a fresh array of card OBJECTS for the given age. Includes 3 randomly
- *  drawn guilds for age 3. The caller should shuffle for pyramid placement. */
-export function buildDuelAgeDeck(age: DuelAge, rng: RngState): DuelCard[] {
-  if (age === 1) return AGE_I.map(instantiate);
-  if (age === 2) return AGE_II.map(instantiate);
-  // Age 3: base + 3 random guilds.
-  const base = AGE_III_NO_DUP.map(instantiate);
-  const guildPool = shuffle(rng, GUILDS).map(instantiate);
-  return base.concat(guildPool.slice(0, 3));
+const DECKS: Record<DuelAge, DuelCard[]> = {
+  1: AGE_I.map((t, i) => instantiate(t, 1, 100 + i)),
+  2: AGE_II.map((t, i) => instantiate(t, 2, 200 + i)),
+  3: AGE_III.map((t, i) => instantiate(t, 3, 300 + i)),
+};
+const GUILD_CARDS: DuelCard[] = GUILDS.map((t, i) => instantiate(t, 3, 400 + i));
+
+/** Every card of an age as printed (Age III without the guilds). Read-only. */
+export function ageCards(age: DuelAge): readonly DuelCard[] {
+  return DECKS[age];
 }
 
-export const DUEL_AGE_I_NAMES = AGE_I.map((t) => t.name);
-export const DUEL_AGE_II_NAMES = AGE_II.map((t) => t.name);
-export const DUEL_AGE_III_NAMES = AGE_III_NO_DUP.map((t) => t.name);
-export const DUEL_GUILD_NAMES = GUILDS.map((t) => t.name);
+/** The seven guilds. Read-only. */
+export function guildCards(): readonly DuelCard[] {
+  return GUILD_CARDS;
+}
 
-export const DUEL_AGE_I_COUNT = AGE_I.length;
-export const DUEL_AGE_II_COUNT = AGE_II.length;
-export const DUEL_AGE_III_COUNT = AGE_III_NO_DUP.length + 3; // 3 random guilds added per match
+/** Every card in the game, Guilds included. */
+export function allCards(): readonly DuelCard[] {
+  return [...DECKS[1], ...DECKS[2], ...DECKS[3], ...GUILD_CARDS];
+}
+
+const copy = (c: DuelCard): DuelCard => JSON.parse(JSON.stringify(c));
+
+/** The 20 cards an age deals, shuffled for the pyramid: 3 of the age's cards
+ *  go back to the box unseen; Age III shuffles in 3 of the 7 Guilds. */
+export function dealAge(age: DuelAge, rng: RngState): DuelCard[] {
+  const kept = shuffle(rng, DECKS[age]).slice(0, DECKS[age].length - 3);
+  const withGuilds = age === 3 ? kept.concat(shuffle(rng, GUILD_CARDS).slice(0, 3)) : kept;
+  return shuffle(rng, withGuilds).map(copy);
+}
+
+export const DUEL_AGE_COUNTS: Record<DuelAge, number> = { 1: AGE_I.length, 2: AGE_II.length, 3: AGE_III.length };
+export const DUEL_GUILD_COUNT = GUILDS.length;

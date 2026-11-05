@@ -11,7 +11,7 @@ import type { SwCard, SwCardColor, SwCardEffect, SwCost, SwResource, SwWonder } 
 import { MANUFACTURED_RESOURCES, RAW_RESOURCES } from './types';
 import {
   AgeIcon, ArrowIcon, CARD_COLOR_HEX, CardArt, ChainIcon, CoinIcon, ColorChip, DebtIcon, DiplomacyIcon,
-  MilitaryToken, ResourceIcon, ScienceIcon, ShieldIcon, VpIcon, WonderArt, WonderStageIcon,
+  MilitaryToken, ResourceIcon, ScienceIcon, ShieldIcon, VpIcon, WonderArt, WonderPowerIcon, WonderStageIcon,
 } from './art';
 
 const ROMAN = ['', 'I', 'II', 'III'] as const;
@@ -92,6 +92,12 @@ function effectIcons(e: SwCardEffect, size: number): ReactNode {
         : <span className="sw-fx-group"><ShieldIcon size={size} /><span className="sw-fx-text">×{e.shields}</span></span>;
     case 'vp': return <VpIcon n={e.vp} size={size} />;
     case 'science': return <ScienceIcon s={e.symbol} size={size} />;
+    case 'scienceWild': return <ScienceIcon s="any" size={size} />;
+    case 'buildFromDiscard':
+    case 'playLastCard':
+    case 'freeBuildPerAge':
+    case 'copyGuild':
+      return <WonderPowerIcon power={e.kind} size={size} />;
     case 'tradeDiscountRaw': return <Trade sides={e.sides} goods={RAW_RESOURCES} size={size} />;
     case 'tradeDiscountManufactured': return <Trade sides={e.sides} goods={MANUFACTURED_RESOURCES} size={size} />;
     case 'endVp': {
@@ -176,16 +182,13 @@ function effectIcons(e: SwCardEffect, size: number): ReactNode {
   }
 }
 
-/** A row of effect icons. Empty when the effects aren't drawable (unmodelled). */
-export function EffectIcons({ effects, name, size = 18 }: { effects: readonly SwCardEffect[]; name?: string; size?: number }) {
-  const parts = effects.map((e, i) => <span key={i} className="sw-fx-group">{effectIcons(e, size)}</span>);
-  // The Scientists Guild's wild symbol is scored by name (see scoring.ts).
-  if (name === 'Scientists Guild') parts.push(<ScienceIcon key="any" s="any" size={size} />);
-  return <span className="sw-fx">{parts}</span>;
+/** A row of effect icons. */
+export function EffectIcons({ effects, size = 18 }: { effects: readonly SwCardEffect[]; size?: number }) {
+  return <span className="sw-fx">{effects.map((e, i) => <span key={i} className="sw-fx-group">{effectIcons(e, size)}</span>)}</span>;
 }
 
-export function hasEffectIcons(card: Pick<SwCard, 'effects' | 'name'>): boolean {
-  return card.effects.length > 0 || card.name === 'Scientists Guild';
+export function hasEffectIcons(card: Pick<SwCard, 'effects'>): boolean {
+  return card.effects.length > 0;
 }
 
 /** Resources (and coins) of a cost, one icon per unit. */
@@ -208,6 +211,7 @@ export function cardEffectsText(c: Pick<SwCard, 'effects' | 'name'>): string {
     else if (eff.kind === 'coins') parts.push(`+${eff.amount} coins`);
     else if (eff.kind === 'shields') parts.push(`+${eff.shields} shield${eff.shields === 1 ? '' : 's'}`);
     else if (eff.kind === 'science') parts.push(`science: ${eff.symbol}`);
+    else if (eff.kind === 'scienceWild') parts.push('a science symbol of your choice');
     else if (eff.kind === 'produce') parts.push(eff.production.map((opts) => opts.join('/')).join(' + '));
     else if (eff.kind === 'tradeDiscountRaw') parts.push(`raw materials cost 1 coin (${eff.sides.join('/')})`);
     else if (eff.kind === 'tradeDiscountManufactured') parts.push(`manufactured goods cost 1 coin (${eff.sides.join('/')})`);
@@ -225,7 +229,6 @@ export function cardEffectsText(c: Pick<SwCard, 'effects' | 'name'>): string {
     else if (eff.kind === 'citiesDebtToNeighbors') parts.push(`each neighbour takes ${eff.amount} debt`);
     else if (eff.kind === 'citiesGainDiplomacy') parts.push(`+${eff.amount} diplomacy`);
   }
-  if (c.name === 'Scientists Guild') parts.push('one extra science symbol of your choice');
   return parts.join(' · ') || '—';
 }
 
@@ -281,7 +284,7 @@ export function CardFace({
       onKeyDown={onClick && !disabled ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } } : undefined}
     >
       <div className="sw-cf-band">
-        {hasEffectIcons(card) ? <EffectIcons effects={card.effects} name={card.name} size={icon} /> : <span className="sw-fx-text">special</span>}
+        {hasEffectIcons(card) ? <EffectIcons effects={card.effects} size={icon} /> : <span className="sw-fx-text">special</span>}
       </div>
       <div className="sw-cf-art">
         <CardArt card={card} />
@@ -306,13 +309,14 @@ export function CardFace({
   );
 }
 
-/** A tucked card: only the coloured effect band shows. */
-export function CardBand({ card, size = 'md' }: { card: SwCard; size?: 'md' | 'sm' }) {
+/** A tucked card: only the coloured effect band shows. `fresh`: built on the
+ *  last turn — it pops in and glows for a moment. */
+export function CardBand({ card, size = 'md', fresh = false }: { card: SwCard; size?: 'md' | 'sm'; fresh?: boolean }) {
   const icon = size === 'md' ? 17 : 13;
   return (
-    <div className={`sw-band sw-band-${size} sw-c-${card.color}`} style={cardStyle(card.color)} title={`${card.name} — ${cardEffectsText(card)}`}>
+    <div className={`sw-band sw-band-${size} sw-c-${card.color}${fresh ? ' sw-fresh' : ''}`} style={cardStyle(card.color)} title={`${card.name} — ${cardEffectsText(card)}`}>
       {hasEffectIcons(card)
-        ? <EffectIcons effects={card.effects} name={card.name} size={icon} />
+        ? <EffectIcons effects={card.effects} size={icon} />
         : <span className="sw-band-name">{card.name}</span>}
     </div>
   );
@@ -321,7 +325,7 @@ export function CardBand({ card, size = 'md' }: { card: SwCard; size?: 'md' | 's
 /** Cards of a city, tucked by colour into columns in the printed colour order. */
 export const TABLEAU_ORDER: SwCardColor[] = ['brown', 'gray', 'yellow', 'red', 'green', 'blue', 'purple', 'black', 'orange', 'navy', 'leader'];
 
-export function TableauColumns({ cards, size = 'md' }: { cards: SwCard[]; size?: 'md' | 'sm' }) {
+export function TableauColumns({ cards, size = 'md', fresh }: { cards: SwCard[]; size?: 'md' | 'sm'; fresh?: ReadonlySet<number> }) {
   return (
     <div className={`sw-city sw-city-${size}`}>
       {TABLEAU_ORDER.map((color) => {
@@ -329,7 +333,7 @@ export function TableauColumns({ cards, size = 'md' }: { cards: SwCard[]; size?:
         if (col.length === 0) return null;
         return (
           <div key={color} className="sw-city-col">
-            {col.map((c) => <CardBand key={c.id} card={c} size={size} />)}
+            {col.map((c) => <CardBand key={c.id} card={c} size={size} fresh={fresh?.has(c.id)} />)}
           </div>
         );
       })}
@@ -340,9 +344,10 @@ export function TableauColumns({ cards, size = 'md' }: { cards: SwCard[]; size?:
 // ---------------------------------------------------------------------------
 // Wonder board
 
-const NOT_MODELLED = /not (fully )?modeled|placeholder/i;
+const POWERS = new Set<SwCardEffect['kind']>(['buildFromDiscard', 'playLastCard', 'freeBuildPerAge', 'copyGuild', 'scienceWild']);
 
-export function WonderBoard({ wonder, built, highlightNext = false }: { wonder: SwWonder; built: number; highlightNext?: boolean }) {
+/** `fresh`: the last built stage went up on the last turn (it glows). */
+export function WonderBoard({ wonder, built, highlightNext = false, fresh = false }: { wonder: SwWonder; built: number; highlightNext?: boolean; fresh?: boolean }) {
   return (
     <div className="sw-wboard">
       <div className="sw-wboard-art">
@@ -359,9 +364,10 @@ export function WonderBoard({ wonder, built, highlightNext = false }: { wonder: 
         {wonder.stages.map((stage, i) => {
           const isBuilt = i < built;
           const isNext = highlightNext && i === built;
-          const showText = stage.effects.length === 0 || NOT_MODELLED.test(stage.text);
+          // Powers don't read from an icon alone: spell them out.
+          const showText = stage.effects.length === 0 || stage.effects.some((e) => POWERS.has(e.kind));
           return (
-            <div key={i} className={`sw-wstage ${isBuilt ? 'built' : ''} ${isNext ? 'next' : ''}`} title={`Stage ${i + 1}: ${stage.text}`}>
+            <div key={i} className={`sw-wstage ${isBuilt ? 'built' : ''} ${isNext ? 'next' : ''} ${fresh && i === built - 1 ? 'sw-fresh' : ''}`} title={`Stage ${i + 1}: ${stage.text}`}>
               <div className="sw-wstage-cost"><CostIcons cost={stage.cost} size={17} /></div>
               <div className="sw-wstage-fx">
                 {stage.effects.length > 0 && <EffectIcons effects={stage.effects} size={26} />}
@@ -377,14 +383,14 @@ export function WonderBoard({ wonder, built, highlightNext = false }: { wonder: 
 }
 
 /** A small strip of a neighbour's wonder with built-stage pips. */
-export function WonderMini({ wonder, built }: { wonder: SwWonder; built: number }) {
+export function WonderMini({ wonder, built, fresh = false }: { wonder: SwWonder; built: number; fresh?: boolean }) {
   return (
     <div className="sw-wmini" title={`${wonder.name} (${wonder.side}) — ${built}/${wonder.stages.length} stages built`}>
       <WonderArt wonder={wonder} />
       <div className="sw-wmini-bar">
         <span className="sw-wmini-name">{wonder.name.replace(/^(Pyramids|Colossus|Lighthouse|Temple|Statue of Zeus|Mausoleum|Hanging Gardens) (of|at) /, '')}</span>
         <span className="sw-wmini-pips">
-          {wonder.stages.map((_, i) => <span key={i} className={i < built ? 'on' : ''} />)}
+          {wonder.stages.map((_, i) => <span key={i} className={`${i < built ? 'on' : ''}${fresh && i === built - 1 ? ' sw-fresh' : ''}`} />)}
         </span>
       </div>
     </div>

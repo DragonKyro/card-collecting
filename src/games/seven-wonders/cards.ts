@@ -1,11 +1,12 @@
 // 7 Wonders — card database for all 3 Ages.
 //
-// Each Age, the deck contains (player-count × 7) cards. The base game scales
-// player-count-restricted cards in/out via min/maxPlayers.
+// Each Age, the deck contains exactly (player-count × 7) cards. Every entry in
+// `appearances` is one physical copy, printed with the player count it joins
+// the deck at ("3+", "4+", …), as in the rulebook's card list.
 //
-// For Age I/II: cards repeat in 3/4/5/6/7-player variants (some cards have
-// duplicates that show up only with more players).
-// For Age III: 6 cards per player + 2 guilds per player (drawn from a pool of 10).
+// For Age I/II: 21 cards at 3 players, 7 more for each extra player.
+// For Age III: 16 + 6 per extra player, plus (players + 2) guilds drawn from
+// the 10 (`buildAgeIIIDeck`).
 
 import { shuffle, type RngState } from '@/core/rng';
 import type {
@@ -65,16 +66,16 @@ function endVp(opts: {
 const AGE_I: CardTemplate[] = [
   // ---- Brown (raw materials) ----
   { name: 'Lumber Yard', age: 1, color: 'brown',
-    appearances: [{ minPlayers: 3, maxPlayers: 4 }],
+    appearances: [{ minPlayers: 3 }, { minPlayers: 4 }],
     cost: free, effects: [produce(['wood'])] },
   { name: 'Stone Pit', age: 1, color: 'brown',
-    appearances: [{ minPlayers: 3, maxPlayers: 5 }],
+    appearances: [{ minPlayers: 3 }, { minPlayers: 5 }],
     cost: free, effects: [produce(['stone'])] },
   { name: 'Clay Pool', age: 1, color: 'brown',
-    appearances: [{ minPlayers: 3, maxPlayers: 5 }],
+    appearances: [{ minPlayers: 3 }, { minPlayers: 5 }],
     cost: free, effects: [produce(['clay'])] },
   { name: 'Ore Vein', age: 1, color: 'brown',
-    appearances: [{ minPlayers: 3, maxPlayers: 4 }],
+    appearances: [{ minPlayers: 3 }, { minPlayers: 4 }],
     cost: free, effects: [produce(['ore'])] },
   { name: 'Tree Farm', age: 1, color: 'brown',
     appearances: [{ minPlayers: 6 }],
@@ -97,21 +98,21 @@ const AGE_I: CardTemplate[] = [
 
   // ---- Gray (manufactured) ----
   { name: 'Loom', age: 1, color: 'gray',
-    appearances: [{ minPlayers: 3, maxPlayers: 5 }, { minPlayers: 6 }],
+    appearances: [{ minPlayers: 3 }, { minPlayers: 6 }],
     cost: free, effects: [produce(['loom'])] },
   { name: 'Glassworks', age: 1, color: 'gray',
-    appearances: [{ minPlayers: 3, maxPlayers: 5 }, { minPlayers: 6 }],
+    appearances: [{ minPlayers: 3 }, { minPlayers: 6 }],
     cost: free, effects: [produce(['glass'])] },
   { name: 'Press', age: 1, color: 'gray',
-    appearances: [{ minPlayers: 3, maxPlayers: 5 }, { minPlayers: 6 }],
+    appearances: [{ minPlayers: 3 }, { minPlayers: 6 }],
     cost: free, effects: [produce(['papyrus'])] },
 
   // ---- Blue (civilian VP) ----
   { name: 'Pawnshop', age: 1, color: 'blue',
-    appearances: [{ minPlayers: 4, maxPlayers: 5 }, { minPlayers: 7 }],
+    appearances: [{ minPlayers: 4 }, { minPlayers: 7 }],
     cost: free, effects: [vp(3)] },
   { name: 'Baths', age: 1, color: 'blue',
-    appearances: [{ minPlayers: 3, maxPlayers: 6 }],
+    appearances: [{ minPlayers: 3 }, { minPlayers: 7 }],
     cost: cost('stone'),
     chainTo: ['Aqueduct'],
     effects: [vp(3)] },
@@ -442,15 +443,13 @@ const GUILDS: CardTemplate[] = [
   { name: 'Strategists Guild', age: 3, color: 'purple',
     appearances: [{ minPlayers: 3 }],
     cost: cost('ore', 'ore', 'stone', 'loom'),
-    // Special: 1 VP per defeat token among neighbors. We approximate by counting
-    // "military" (each defeat token = -1). Implementation will award 1 VP per
-    // neighbor's military *defeat* token (negative tokens). Reuse 'military' here.
+    // 1 VP per defeat token (−1) held by the neighbours.
     effects: [endVp({ from: 'neighbors', countWhat: { kind: 'military' }, vpPer: 1 })] },
   { name: 'Shipowners Guild', age: 3, color: 'purple',
     appearances: [{ minPlayers: 3 }],
     cost: cost('wood', 'wood', 'wood', 'glass', 'papyrus'),
-    // 1 VP per brown + gray + purple in OWN tableau. We model this as three
-    // separate endVp effects on the same card (the engine sums them).
+    // 1 VP per brown + gray + purple (itself included) in your own city:
+    // three endVp effects on the same card (the engine sums them).
     effects: [
       endVp({ from: 'self', countWhat: { kind: 'cardColor', color: 'brown' }, vpPer: 1 }),
       endVp({ from: 'self', countWhat: { kind: 'cardColor', color: 'gray' }, vpPer: 1 }),
@@ -459,12 +458,8 @@ const GUILDS: CardTemplate[] = [
   { name: 'Scientists Guild', age: 3, color: 'purple',
     appearances: [{ minPlayers: 3 }],
     cost: cost('wood', 'wood', 'ore', 'ore', 'papyrus'),
-    // Adds an extra free-choice science symbol at scoring. Modeled by giving
-    // this card a 'science' effect with a special "any" symbol — but our science
-    // type doesn't have "any". We'll handle it as a special-case in scoring by
-    // detecting the Scientists Guild card by name. Effects list left empty; the
-    // scoring code adds +1 to the player's best of (compass, gear, tablet).
-    effects: [] },
+    // A science symbol of the owner's choice, picked at scoring.
+    effects: [{ kind: 'scienceWild' }] },
   { name: 'Magistrates Guild', age: 3, color: 'purple',
     appearances: [{ minPlayers: 3 }],
     cost: cost('wood', 'wood', 'wood', 'stone', 'loom'),
@@ -519,20 +514,6 @@ export function buildAgeIIIDeck(rng: RngState, playerCount: number): SwCard[] {
 /** Per the rulebook: each Age dealt 7 cards per player. */
 export function ageDeckTargetSize(playerCount: number): number {
   return playerCount * 7;
-}
-
-/** Verify and trim a deck to exactly target size. We sample down if it's larger
- *  (some min/max ranges can produce extras at edge counts) and pad with nothing
- *  if smaller (engineer choice: leave shorter — should not happen for valid counts). */
-export function trimAndShuffleDeck(rng: RngState, deck: SwCard[], playerCount: number): SwCard[] {
-  const target = ageDeckTargetSize(playerCount);
-  const shuffled = shuffle(rng, deck);
-  return shuffled.slice(0, target);
-}
-
-/** Look up a card by name in a tableau (used for chain-from cost waivers). */
-export function tableauHasChain(tableau: SwCard[], chainName: string): boolean {
-  return tableau.some((c) => c.name === chainName);
 }
 
 /** Player-count range allowed by the deck construction (3–7 per rulebook). */

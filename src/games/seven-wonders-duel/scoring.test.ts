@@ -1,120 +1,71 @@
-// 7 Wonders Duel — scoring tests.
+// 7 Wonders Duel — civilian scoring.
 
 import { describe, it, expect } from 'vitest';
-import { createRng } from '@/core/rng';
-import type { DuelCard, DuelState } from './types';
-import { scoreMatch } from './scoring';
-
-function emptyState(): DuelState {
-  return {
-    phase: 'playing',
-    seats: [
-      { id: 'p0', name: 'P0', color: '#3d6da0', isAI: true, isLocal: true },
-      { id: 'p1', name: 'P1', color: '#b73c3c', isAI: true, isLocal: true },
-    ],
-    activePlayerId: 'p0',
-    finalScores: null,
-    rngState: createRng(1),
-    config: { variant: 'base' },
-    age: 1,
-    subPhase: 'turn',
-    players: [
-      { id: 'p0', tableau: [], wonders: [], coins: 0, progressTokens: [] },
-      { id: 'p1', tableau: [], wonders: [], coins: 0, progressTokens: [] },
-    ],
-    activeSeatIdx: 0,
-    pyramid: [],
-    cardsById: {},
-    discard: [],
-    militaryPawn: 0,
-    militaryAwards: { p1At3: false, p1At6: false, p2At3: false, p2At6: false },
-    progressOffer: [],
-    pendingProgressPick: null,
-    wonderDraft: null,
-    pendingWonderBury: null,
-    finalScoringBreakdown: null,
-    endReason: null,
-    winnerSeatIdx: null,
-    log: [],
-    logSeq: 0,
-  };
-}
-
-function blueCard(id: number, vp: number): DuelCard {
-  return {
-    id, name: `Blue${id}`, age: 1, color: 'blue',
-    cost: {}, effects: [{ kind: 'vp', vp }],
-  };
-}
-
-function sciCard(id: number, sym: 'compass' | 'gear' | 'tablet' | 'lyre' | 'wheel' | 'sundial' | 'mortar'): DuelCard {
-  return {
-    id, name: `Sci${id}-${sym}`, age: 1, color: 'green',
-    cost: {}, effects: [{ kind: 'science', symbol: sym }],
-  };
-}
+import { civilianWinner, scoreMatch } from './scoring';
+import { giveCard, startedMatch } from './testSupport';
 
 describe('Duel scoring', () => {
-  it('civilian: sum of blue VP', () => {
-    const s = emptyState();
-    s.players[0].tableau = [blueCard(1, 3), blueCard(2, 5), blueCard(3, 2)];
-    const rows = scoreMatch(s);
-    expect(rows[0].civilian).toBe(10);
+  it('scores printed VP by colour — green cards by their VP, not symbol sets', () => {
+    const s = startedMatch();
+    giveCard(s, 0, 'Theater', 'Temple', 'Palace');            // 3 + 4 + 7
+    giveCard(s, 0, 'Workshop', 'Laboratory', 'Academy');      // 1 + 1 + 3 (a plumb pair)
+    giveCard(s, 0, 'Port', 'Tavern');                         // 3 + 0
+    const [row] = scoreMatch(s);
+    expect(row.civilian).toBe(14);
+    expect(row.science).toBe(5);
+    expect(row.commercial).toBe(3);
   });
 
-  it('science: n² per symbol set', () => {
-    const s = emptyState();
-    // 2 compass + 1 gear → 4 + 1 = 5
-    s.players[0].tableau = [sciCard(1, 'compass'), sciCard(2, 'compass'), sciCard(3, 'gear')];
-    const rows = scoreMatch(s);
-    expect(rows[0].science).toBe(5);
+  it('counts a guild in the city with the most of its kind', () => {
+    const s = startedMatch();
+    giveCard(s, 0, 'Magistrates Guild', 'Theater');
+    giveCard(s, 1, 'Altar', 'Baths', 'Temple');
+    expect(scoreMatch(s)[0].guild).toBe(3);
+    giveCard(s, 0, 'Moneylenders Guild');
+    s.players[0].coins = 4;
+    s.players[1].coins = 13;
+    expect(scoreMatch(s)[0].guild).toBe(3 + 4);
+    giveCard(s, 1, 'Builders Guild');
+    s.players[0].wonders[0].built = true;
+    s.players[0].wonders[1].built = true;
+    expect(scoreMatch(s)[1].guild).toBe(4);
   });
 
-  it('treasury: floor(coins / 3)', () => {
-    const s = emptyState();
-    s.players[0].coins = 10;
-    const rows = scoreMatch(s);
-    expect(rows[0].treasury).toBe(3);
+  it('scores wonders, progress tokens, treasury and military', () => {
+    const s = startedMatch();
+    s.players[0].wonders[0].built = true; // Pyramids, 9
+    s.players[0].progressTokens = ['mathematics', 'philosophy', 'agriculture'];
+    s.players[0].coins = 11;
+    s.militaryPawn = 4;
+    const [row, opp] = scoreMatch(s);
+    expect(row.wonders).toBe(9);
+    expect(row.progress).toBe(9 + 7 + 4);
+    expect(row.treasury).toBe(3);
+    expect(row.military).toBe(5);
+    expect(opp.military).toBe(0);
+    expect(row.total).toBe(9 + 20 + 3 + 5);
   });
 
-  it('military VPs scale with pawn position', () => {
-    const s = emptyState();
-    s.militaryPawn = 4; // in seat 0's favor
-    const rows = scoreMatch(s);
-    expect(rows[0].military).toBe(5); // ≥3 = 5
-    expect(rows[1].military).toBe(0);
+  it('gives military VP by zone', () => {
+    const s = startedMatch();
+    const at = (pawn: number) => { s.militaryPawn = pawn; return scoreMatch(s).map((r) => r.military); };
+    expect(at(0)).toEqual([0, 0]);
+    expect(at(2)).toEqual([2, 0]);
+    expect(at(-3)).toEqual([0, 5]);
+    expect(at(8)).toEqual([10, 0]);
   });
 
-  it('Philosophy progress token = +7 VP', () => {
-    const s = emptyState();
-    s.players[0].progressTokens = ['philosophy'];
+  it('breaks a tie on civilian VP, then shares it', () => {
+    const s = startedMatch();
+    giveCard(s, 0, 'Theater');             // 3 civilian
+    s.players[1].wonders[3].built = true;  // Great Library, 4
+    s.players[0].coins = 3;                // +1 → 4 each
+    s.players[1].coins = 0;
     const rows = scoreMatch(s);
-    expect(rows[0].progress).toBe(7);
-  });
-
-  it('Mathematics scales with progress-token count', () => {
-    const s = emptyState();
-    s.players[0].progressTokens = ['mathematics', 'philosophy'];
-    const rows = scoreMatch(s);
-    // mathematics = 3 × 2 tokens = 6, philosophy = 7 → 13 total
-    expect(rows[0].progress).toBe(13);
-  });
-
-  it('Agriculture adds +4 VP', () => {
-    const s = emptyState();
-    s.players[0].progressTokens = ['agriculture'];
-    const rows = scoreMatch(s);
-    expect(rows[0].progress).toBe(4);
-  });
-
-  it('total = sum of all categories', () => {
-    const s = emptyState();
-    s.players[0].tableau = [blueCard(1, 6)];
-    s.players[0].coins = 9;
-    s.militaryPawn = 5;
-    s.players[0].progressTokens = ['philosophy'];
-    const rows = scoreMatch(s);
-    // civilian 6 + science 0 + commercial 0 + guild 0 + wonders 0 + treasury 3 + military 5 + progress 7 = 21
-    expect(rows[0].total).toBe(21);
+    expect(rows[0].total).toBe(rows[1].total);
+    expect(civilianWinner(rows)).toBe(0);
+    giveCard(s, 1, 'Altar');
+    s.players[0].coins = 12;               // 3 + 4 = 7 vs 4 + 3 = 7, civilian 3 vs 3
+    expect(civilianWinner(scoreMatch(s))).toBeNull();
   });
 });

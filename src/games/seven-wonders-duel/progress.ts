@@ -1,83 +1,36 @@
-// 7 Wonders Duel — Progress Tokens (10 total, 5 drawn at setup).
+// 7 Wonders Duel — the 10 Progress tokens (5 on the board each match, the
+// other 5 boxed for the Great Library).
 //
-// Each token has a unique passive effect. Some apply on claim (Agriculture,
-// Urbanism), some are endgame VP (Mathematics, Philosophy), some modify
-// ongoing rules (Architecture, Masonry, Strategy, Theology, Law, Economy).
-//
-// Effects are handled in reducer.ts and scoring.ts by inspecting the player's
-// progressTokens list. v1 implementation summary:
-//   - Agriculture: +6 coins, +4 VP on claim — applied immediately in
-//     reducer.claimProgress().
-//   - Architecture: -2 resources on wonder construction. Applied in
-//     resources.effectiveCostForWonder.
-//   - Economy: when opponent buys from us, gain those coins. Applied during
-//     opponent's takeAndBuild purchase resolution.
-//   - Law: counts as a wild science symbol. Applied in scoring.scienceCount.
-//   - Masonry: -2 resources on blue cards. Applied in resources.effectiveCostForCard.
-//   - Mathematics: +3 VP per token at endgame. Applied in scoring.progressVps.
-//   - Philosophy: +7 VP at endgame. Applied in scoring.progressVps.
-//   - Strategy: +1 shield bonus when triggering military. Applied in
-//     reducer.applyShields (treats each shield effect as +1 if owner has Strategy).
-//   - Theology: wonders grant extra turn — NOT modeled in v1 (extra turn
-//     mechanic itself isn't implemented; flagged as not-modeled in wonder
-//     descriptions).
-//   - Urbanism: +6 coins immediate. Applied in reducer.claimProgress().
+// Where each one is applied:
+//   - Agriculture, Urbanism: 6 coins when taken (reducer.takeProgressToken);
+//     Agriculture's 4 VP and Philosophy / Mathematics in scoring.progressVps.
+//   - Architecture / Masonry: 2 fewer resources for wonders / blue cards,
+//     the owner's choice — resources.ts waives the two dearest to buy.
+//   - Economy: the opponent's trading coins go to the owner (reducer.pay).
+//   - Law: the scales symbol (scienceSymbols in resources.ts).
+//   - Strategy: +1 shield on each red card built after it (reducer).
+//   - Theology: every wonder the owner builds plays again (reducer).
+//   - Urbanism: 4 coins on every chain build (reducer).
 
 import type { DuelProgressToken, DuelProgressTokenId } from './types';
 
 export const ALL_PROGRESS_TOKENS: readonly DuelProgressToken[] = [
-  {
-    id: 'agriculture',
-    name: 'Agriculture',
-    description: 'Gain 6 coins. +4 VP at endgame.',
-  },
-  {
-    id: 'architecture',
-    name: 'Architecture',
-    description: 'Wonders cost 2 fewer resources of any kind.',
-  },
-  {
-    id: 'economy',
-    name: 'Economy',
-    description: 'When opponent pays for resources from you, gain those coins.',
-  },
-  {
-    id: 'law',
-    name: 'Law',
-    description: 'Counts as one wild science symbol (toward 6-symbol supremacy).',
-  },
-  {
-    id: 'masonry',
-    name: 'Masonry',
-    description: 'Civilian (blue) cards cost 2 fewer resources.',
-  },
-  {
-    id: 'mathematics',
-    name: 'Mathematics',
-    description: '+3 VP per Progress Token you own at endgame.',
-  },
-  {
-    id: 'philosophy',
-    name: 'Philosophy',
-    description: '+7 VP at endgame.',
-  },
-  {
-    id: 'strategy',
-    name: 'Strategy',
-    description: '+1 shield each time you advance the military pawn.',
-  },
-  {
-    id: 'theology',
-    name: 'Theology',
-    description: 'Wonder constructions grant an extra turn. (Not fully modeled in v1.)',
-  },
-  {
-    id: 'urbanism',
-    name: 'Urbanism',
-    description: 'Gain 6 coins on claim.',
-  },
+  { id: 'agriculture', name: 'Agriculture', description: 'Take 6 coins. 4 VP.' },
+  { id: 'architecture', name: 'Architecture', description: 'Your wonders cost 2 fewer resources.' },
+  { id: 'economy', name: 'Economy', description: 'Coins your opponent spends trading for resources come to you.' },
+  { id: 'law', name: 'Law', description: 'Counts as a science symbol (the scales).' },
+  { id: 'masonry', name: 'Masonry', description: 'Your blue cards cost 2 fewer resources.' },
+  { id: 'mathematics', name: 'Mathematics', description: '3 VP for each Progress token you own (this one too).' },
+  { id: 'philosophy', name: 'Philosophy', description: '7 VP.' },
+  { id: 'strategy', name: 'Strategy', description: 'Each red card you build from now on gives 1 extra shield.' },
+  { id: 'theology', name: 'Theology', description: 'Every wonder you build from now on lets you play again.' },
+  { id: 'urbanism', name: 'Urbanism', description: 'Take 6 coins. Take 4 coins each time you build a card for free through a chain.' },
 ];
 
+const BY_ID = new Map(ALL_PROGRESS_TOKENS.map((t) => [t.id, t]));
+
 export function progressTokenById(id: DuelProgressTokenId): DuelProgressToken {
-  return ALL_PROGRESS_TOKENS.find((t) => t.id === id) ?? ALL_PROGRESS_TOKENS[0];
+  const t = BY_ID.get(id);
+  if (!t) throw new Error(`Unknown progress token: ${id}`);
+  return t;
 }

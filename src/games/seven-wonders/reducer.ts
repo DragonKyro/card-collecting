@@ -2,20 +2,28 @@
 //
 // Turn flow (per Age, repeats 3 times):
 //   1. Deal 7 cards per player; subPhase = 'picking'.
-//   2. Each player submits a pendingPick (build / wonder / discard) — when all
-//      have submitted, the reducer reveals + applies in a single batch:
-//        - duplicate-name builds: ALLOWED only for FIRST copy (rulebook: cannot
-//          build a card with same name as one already in your tableau)
-//        - chain-build: free if any chainFrom name matches a tableau card
-//        - wonder stages: built in order (next stage = wonderStagesBuilt + 1)
-//        - discard: 3 coins gained, card moved to global discard pile
-//   3. Hands rotate (CW in I/III, CCW in II); the last card (ageRound=7) is
-//      discarded by all per the base 7W rule.
-//   4. After 6 picks (the 7th card is auto-discarded), resolve military:
-//        each player vs L+R neighbor, compare shields.
-//      Win → +1 / +3 / +5 (Ages I/II/III). Loss → -1. Draw → 0.
-//   5. After Age III military, transition to phase = 'gameOver' with the final
-//      scoring breakdown filled in.
+//   2. Each player submits a pendingPick (build / wonder / discard), validated
+//      against the table as it stood at the start of the turn. When all have
+//      submitted, the turn resolves simultaneously in two passes:
+//        - place: every card leaves its hand (into a city, under a wonder
+//          stage, or onto the discard pile) and every cost is paid — trade
+//          coins go to the neighbours;
+//        - activate: on-play income (Tavern, Vineyard, Arena, a discard's 3
+//          coins…), counting the cards everyone built this turn, then events.
+//      Building rules: no two cards of the same name in a city; a chain card
+//      is free; Olympia A builds once per Age for free (`pick.free`); wonder
+//      stages go in order.
+//   3. End of turn: on the 6th pick the last card is discarded, except by a
+//      city with Babylon B's power, which plays it next (ageRound 7, only that
+//      city picks). A Halicarnassus stage built this turn → 'discardBuild':
+//      that city builds one card from the discard pile for free (the 6th
+//      pick's last cards included). Then hands pass: to the west (left) in
+//      Ages I and III, to the east (right) in Age II.
+//   4. After the Age's last turn, resolve military: each player vs both
+//      neighbours, comparing shields. Each win is a +1 / +3 / +5 token (Ages
+//      I/II/III), each loss a −1 token, a draw nothing.
+//   5. After Age III military, phase = 'gameOver' with the final scoring
+//      breakdown; ties go to the most coins.
 //
 // Expansion hooks: any action type not in the base switch is routed through
 // active expansions' applyAction. Subphases not in the base set (e.g.,
@@ -26,24 +34,24 @@ import type { PlayerId } from '@/core/types';
 import { shuffle } from '@/core/rng';
 import type {
   SwState, SwAction, SwPlayer, SwPendingPick, SwAge,
-  SwMilitarySummary, SwLogEntry, SwCard,
+  SwMilitarySummary, SwLogEntry, SwCard, SwWonderStage,
 } from './types';
 import {
   buildAgeDeck, buildAgeIIIDeck, ageDeckTargetSize, resetCardIdCounter,
 } from './cards';
-import { wonderById } from './wonders';
+import { hasWonderPower, wonderById } from './wonders';
 import {
   productionFor, productionCanSupply, canChainBuild, validatePayment,
   shieldsFor, sumCoinsOnPlay, neighborsOf, effectiveCostFor,
 } from './resources';
-import { scoreMatch, coinsOnPlayForEndVp } from './scoring';
+import { scoreMatch, coinsOnPlayForEndVp, rankRows } from './scoring';
 import { getActiveExpansions } from './expansions/registry';
 import type { SwEvent } from './expansions/types';
 
 const AGE_MILITARY_WIN_VP: Record<SwAge, number> = { 1: 1, 2: 3, 3: 5 };
 const DISCARD_COIN_REWARD = 3;
 
-const BASE_SUBPHASES = new Set(['picking', 'militaryEnd', 'finalScoring']);
+const BASE_SUBPHASES = new Set(['picking', 'discardBuild', 'militaryEnd', 'finalScoring']);
 
 function clone<T>(x: T): T {
   return JSON.parse(JSON.stringify(x));
@@ -69,27 +77,40 @@ function playerById(state: SwState, id: PlayerId): SwPlayer {
   return p;
 }
 
-/** True if every player has submitted a pick this tick. */
+/** Does this player still owe a pick this turn? (On Babylon B's 7th-card
+ *  turn every other hand is empty.) */
+function owesPick(p: SwPlayer): boolean {
+  return p.pendingPick === null && p.hand.length > 0;
+}
+
+/** True if every player who holds cards has submitted a pick this tick. */
 function allPlayersSubmitted(state: SwState): boolean {
-  return state.players.every((p) => p.pendingPick !== null);
+  return !state.players.some(owesPick);
 }
 
-/** Find the next AI player without a pendingPick, or null. */
-function nextAIPickerBase(state: SwState): PlayerId | null {
-  for (const p of state.players) {
-    if (p.pendingPick !== null) continue;
-    const seat = state.seats.find((s) => s.id === p.id);
-    if (seat?.isAI) return p.id;
-  }
-  return null;
+/** Who `activePlayerId` should point at while picks are open. The GameHost AI
+ *  driver acts for AI seats; a human seat parked here is the one hot-seat
+ *  shows (and hands the device to). With one human, the AIs pick first so they
+ *  are done while the human thinks; with several humans sharing a device, the
+ *  humans go first and the AIs last, so no hand is on screen while an AI
+ *  plays. Null once nobody owes a pick. */
+function nextPickerBase(state: SwState): PlayerId | null {
+  const isAI = (id: PlayerId) => state.seats.find((s) => s.id === id)?.isAI === true;
+  const waiting = state.players.filter(owesPick);
+  const ai = waiting.find((p) => isAI(p.id));
+  const human = waiting.find((p) => !isAI(p.id));
+  const humansFirst = state.seats.filter((s) => !s.isAI).length >= 2;
+  return (humansFirst ? human ?? ai : ai ?? human)?.id ?? null;
 }
 
-/** Public helper: set activePlayerId to whichever AI seat should act next.
+/** Public helper: set activePlayerId to whichever seat should act next.
  *  Defers to expansions when the subphase is expansion-owned. */
 export function setActiveAIIfAny(state: SwState): void {
   if (BASE_SUBPHASES.has(state.subPhase)) {
     if (state.subPhase === 'picking') {
-      state.activePlayerId = nextAIPickerBase(state);
+      state.activePlayerId = nextPickerBase(state);
+    } else if (state.subPhase === 'discardBuild') {
+      state.activePlayerId = state.discardBuildQueue?.[0] ?? null;
     } else {
       state.activePlayerId = null;
     }
@@ -112,36 +133,20 @@ function emitEvent(state: SwState, event: SwEvent): void {
   }
 }
 
-/** Deal 7 cards to each player, sized to player count.
- *  Expansions may contribute extra cards via `ageDeckCards`. Cities, e.g., adds
- *  black cards proportional to player count. */
+/** Deal 7 cards to each player. The base decks hold exactly 7 per player;
+ *  expansions may contribute extra cards via `ageDeckCards` (Cities, e.g.,
+ *  adds black cards), in which case the shuffled deck is cut to 7 per player. */
 function dealAge(state: SwState, age: SwAge): void {
   const playerCount = state.players.length;
   let deck = age === 3
     ? buildAgeIIIDeck(state.rngState, playerCount)
     : buildAgeDeck(age, playerCount);
-  // Fold in expansion-contributed cards (Cities, future Babel/Armada/Edifice).
   for (const ext of getActiveExpansions(state.config)) {
     if (!ext.ageDeckCards) continue;
     const extra = ext.ageDeckCards(age, playerCount, state.rngState);
     if (extra.length > 0) deck = deck.concat(extra);
   }
-  const target = ageDeckTargetSize(playerCount);
-  deck = shuffle(state.rngState, deck);
-  // The card-data table doesn't perfectly track the rulebook's per-player
-  // copy counts. Pad with duplicates (cycle, fresh ids) to reach (n × 7).
-  if (deck.length < target && deck.length > 0) {
-    const original = deck.slice();
-    let nextId = (original[original.length - 1]?.id ?? 0) + 1;
-    let i = 0;
-    while (deck.length < target) {
-      const src = original[i % original.length];
-      deck.push({ ...src, id: nextId++ });
-      i += 1;
-    }
-    deck = shuffle(state.rngState, deck);
-  }
-  if (deck.length > target) deck = deck.slice(0, target);
+  deck = shuffle(state.rngState, deck).slice(0, ageDeckTargetSize(playerCount));
   for (const p of state.players) {
     p.hand = deck.splice(0, 7);
     p.pendingPick = null;
@@ -168,6 +173,7 @@ export function startAge(state: SwState, age: SwAge): void {
   state.ageRound = 1;
   state.subPhase = 'picking';
   state.passDirection = age === 2 ? 'ccw' : 'cw';
+  state.discardBuildQueue = [];
   dealAge(state, age);
   pushLog(state, { kind: 'ageStart' });
   // tickStart fires for per-tick housekeeping (e.g., Bilkis once-per-tick reset).
@@ -175,36 +181,35 @@ export function startAge(state: SwState, age: SwAge): void {
   setActiveAIIfAny(state);
 }
 
-/** Rotate hands among the players per state.passDirection. */
+/** Pass the hands: 'cw' (Ages I, III) to the left = west neighbour (index − 1),
+ *  'ccw' (Age II) to the right = east (index + 1). */
 function rotateHands(state: SwState): void {
   const hands = state.players.map((p) => p.hand);
   const n = state.players.length;
-  if (state.passDirection === 'cw') {
-    // CW = player i sends their hand to (i+1) — i.e. player i receives from (i-1).
-    for (let i = 0; i < n; i++) {
-      state.players[i].hand = hands[(i - 1 + n) % n];
-    }
-  } else {
-    for (let i = 0; i < n; i++) {
-      state.players[i].hand = hands[(i + 1) % n];
-    }
+  for (let i = 0; i < n; i++) {
+    // Player i receives from the neighbour on the other side.
+    state.players[i].hand = state.passDirection === 'cw' ? hands[(i + 1) % n] : hands[(i - 1 + n) % n];
   }
+}
+
+/** Olympia A: may this player build for free right now? */
+export function canBuildFree(state: SwState, player: SwPlayer): boolean {
+  return hasWonderPower(player, 'freeBuildPerAge') && player.freeBuildUsedAge !== state.age;
 }
 
 /** Validate a pendingPick against the player's hand + rules. Throws on illegal. */
 function validatePick(state: SwState, player: SwPlayer, pick: SwPendingPick): void {
-  const cardId =
-    pick.kind === 'build' ? pick.cardId
-    : pick.kind === 'wonder' ? pick.cardId
-    : pick.kind === 'discard' ? pick.cardId
-    : -1;
-  const card = player.hand.find((c) => c.id === cardId);
-  if (!card) throw new Error(`Card ${cardId} not in hand.`);
+  const card = player.hand.find((c) => c.id === pick.cardId);
+  if (!card) throw new Error(`Card ${pick.cardId} not in hand.`);
 
   if (pick.kind === 'build') {
     // No duplicates by name.
     if (player.tableau.some((c) => c.name === card.name)) {
       throw new Error(`You already have ${card.name} in your tableau.`);
+    }
+    if (pick.free) {
+      if (!canBuildFree(state, player)) throw new Error('No free build available this Age.');
+      return;
     }
     // Chain-build → free.
     if (!canChainBuild(player, card)) {
@@ -229,103 +234,109 @@ function validatePick(state: SwState, player: SwPlayer, pick: SwPendingPick): vo
   // 'discard' is always legal.
 }
 
-/** Apply a player's pendingPick to their tableau. Mutates state.players[i].
- *  Removes the card from hand, charges coins, pays neighbors, etc. */
-function applyPick(state: SwState, player: SwPlayer): void {
-  if (!player.pendingPick) return;
-  const pick = player.pendingPick;
+/** One player's pick, resolved against the table as it stood at the start of
+ *  the turn (simultaneous play: nothing built this turn can pay for it). */
+interface ResolvedPick {
+  player: SwPlayer;
+  pick: SwPendingPick;
+  card: SwCard;
+  viaChain: boolean;
+  /** Coins to the bank and to each neighbour. */
+  pay: { total: number; toWest: number; toEast: number };
+  stage: SwWonderStage | null;
+}
 
+function resolvePick(state: SwState, player: SwPlayer, pick: SwPendingPick): ResolvedPick | null {
+  const card = player.hand.find((c) => c.id === pick.cardId);
+  if (!card) return null;
+  const none = { total: 0, toWest: 0, toEast: 0 };
+  if (pick.kind === 'discard') return { player, pick, card, viaChain: false, pay: none, stage: null };
+  if (pick.kind === 'build') {
+    const viaChain = !pick.free && canChainBuild(player, card);
+    if (pick.free || viaChain) return { player, pick, card, viaChain, pay: none, stage: null };
+    const v = validatePayment(state, player, effectiveCostFor(state, player, { kind: 'card', card }), pick.payment);
+    return { player, pick, card, viaChain, pay: v.ok ? { total: v.totalCoins, toWest: v.toWest, toEast: v.toEast } : none, stage: null };
+  }
+  const stage = wonderById(player.wonderId).stages[pick.stageIndex];
+  const v = validatePayment(state, player, effectiveCostFor(state, player, { kind: 'wonderStage', stageIndex: pick.stageIndex, stage }), pick.payment);
+  return { player, pick, card, viaChain: false, pay: v.ok ? { total: v.totalCoins, toWest: v.toWest, toEast: v.toEast } : none, stage };
+}
+
+/** Pass 1: the card leaves the hand and the cost is paid. */
+function placePick(state: SwState, r: ResolvedPick): void {
+  const { player, pick, card } = r;
+  player.hand = player.hand.filter((c) => c.id !== card.id);
   if (pick.kind === 'discard') {
-    const card = player.hand.find((c) => c.id === pick.cardId);
-    if (!card) return;
-    player.hand = player.hand.filter((c) => c.id !== pick.cardId);
-    player.coins += DISCARD_COIN_REWARD;
     state.discard.push(card);
     return;
   }
-
+  const free = pick.kind === 'build' && pick.free === true;
   if (pick.kind === 'build') {
-    const card = player.hand.find((c) => c.id === pick.cardId);
-    if (!card) return;
-    player.hand = player.hand.filter((c) => c.id !== pick.cardId);
-    const viaChain = canChainBuild(player, card);
-    // Apply payment.
-    if (!viaChain) {
-      const effCost = effectiveCostFor(state, player, { kind: 'card', card });
-      const v = validatePayment(state, player, effCost, pick.payment);
-      if (v.ok) {
-        player.coins -= v.totalCoins;
-        const { west, east } = neighborsOf(state, player.id);
-        west.coins += v.toWest;
-        east.coins += v.toEast;
-        if (pick.payment.fromWest.length > 0) {
-          emitEvent(state, { kind: 'neighborPurchase', buyerId: player.id, sellerId: west.id, units: pick.payment.fromWest.length });
-        }
-        if (pick.payment.fromEast.length > 0) {
-          emitEvent(state, { kind: 'neighborPurchase', buyerId: player.id, sellerId: east.id, units: pick.payment.fromEast.length });
-        }
-      }
-    }
-    // Add to tableau.
     player.tableau.push(card);
-    // Apply immediate effects: coins, coins-on-play from endVp.
-    player.coins += sumCoinsOnPlay(card.effects);
-    for (const eff of card.effects) {
-      if (eff.kind === 'endVp') {
-        player.coins += coinsOnPlayForEndVp(state, player, eff);
-      }
-    }
-    emitEvent(state, { kind: 'cardBuilt', playerId: player.id, card, viaChain });
-    return;
-  }
-
-  if (pick.kind === 'wonder') {
-    const card = player.hand.find((c) => c.id === pick.cardId);
-    if (!card) return;
-    // Remove from hand — card goes face-down under the wonder (effectively gone).
-    player.hand = player.hand.filter((c) => c.id !== pick.cardId);
-    const wonder = wonderById(player.wonderId);
-    const stage = wonder.stages[pick.stageIndex];
-    const effCost = effectiveCostFor(state, player, { kind: 'wonderStage', stageIndex: pick.stageIndex, stage });
-    const v = validatePayment(state, player, effCost, pick.payment);
-    if (v.ok) {
-      player.coins -= v.totalCoins;
-      const { west, east } = neighborsOf(state, player.id);
-      west.coins += v.toWest;
-      east.coins += v.toEast;
-      if (pick.payment.fromWest.length > 0) {
-        emitEvent(state, { kind: 'neighborPurchase', buyerId: player.id, sellerId: west.id, units: pick.payment.fromWest.length });
-      }
-      if (pick.payment.fromEast.length > 0) {
-        emitEvent(state, { kind: 'neighborPurchase', buyerId: player.id, sellerId: east.id, units: pick.payment.fromEast.length });
-      }
-    }
+    if (free) player.freeBuildUsedAge = state.age;
+  } else {
+    // The card goes face down under the stage (out of the game).
     player.wonderStagesBuilt += 1;
-    // Apply stage effects: coins immediately.
-    player.coins += sumCoinsOnPlay(stage.effects);
-    emitEvent(state, { kind: 'wonderStageBuilt', playerId: player.id, stageIndex: pick.stageIndex });
-    return;
+  }
+  if (free || r.viaChain) return;
+  const { west, east } = neighborsOf(state, player.id);
+  player.coins -= r.pay.total;
+  west.coins += r.pay.toWest;
+  east.coins += r.pay.toEast;
+  if (pick.payment.fromWest.length > 0) {
+    emitEvent(state, { kind: 'neighborPurchase', buyerId: player.id, sellerId: west.id, units: pick.payment.fromWest.length });
+  }
+  if (pick.payment.fromEast.length > 0) {
+    emitEvent(state, { kind: 'neighborPurchase', buyerId: player.id, sellerId: east.id, units: pick.payment.fromEast.length });
   }
 }
 
-/** Run reveal + apply for all players. Mutates state. */
+/** Pass 2: on-play effects, which see every card placed this turn. */
+function activatePick(state: SwState, r: ResolvedPick): void {
+  const { player, pick, card } = r;
+  if (pick.kind === 'discard') {
+    player.coins += DISCARD_COIN_REWARD;
+    return;
+  }
+  if (pick.kind === 'build') {
+    applyOnPlay(state, player, card);
+    emitEvent(state, { kind: 'cardBuilt', playerId: player.id, card, viaChain: r.viaChain });
+    return;
+  }
+  const stage = r.stage!;
+  player.coins += sumCoinsOnPlay(stage.effects);
+  if (stage.effects.some((e) => e.kind === 'buildFromDiscard')) {
+    (state.discardBuildQueue ??= []).push(player.id);
+  }
+  emitEvent(state, { kind: 'wonderStageBuilt', playerId: player.id, stageIndex: pick.stageIndex });
+}
+
+/** A built card's immediate income: flat coins and coins per counted card. */
+function applyOnPlay(state: SwState, player: SwPlayer, card: SwCard): void {
+  player.coins += sumCoinsOnPlay(card.effects);
+  for (const eff of card.effects) {
+    if (eff.kind === 'endVp') {
+      player.coins += coinsOnPlayForEndVp(state, player, eff);
+    }
+  }
+}
+
+/** Reveal every pick and resolve the turn simultaneously. Mutates state. */
 function revealAndApply(state: SwState): void {
-  // Apply in seat order; one player's purchase affects neighbors' coins.
+  const resolved: ResolvedPick[] = [];
   for (const p of state.players) {
     if (!p.pendingPick) continue;
-    const card = p.hand.find((c) =>
-      c.id === (p.pendingPick!.kind === 'build' ? p.pendingPick!.cardId
-        : p.pendingPick!.kind === 'wonder' ? p.pendingPick!.cardId
-        : p.pendingPick!.cardId)
-    );
+    const r = resolvePick(state, p, p.pendingPick);
     pushLog(state, {
       kind: 'pickRevealed',
       playerId: p.id,
       pick: p.pendingPick,
-      cardName: card?.name ?? '?',
+      cardName: r?.card.name ?? '?',
     });
-    applyPick(state, p);
+    if (r) resolved.push(r);
   }
+  for (const r of resolved) placePick(state, r);
+  for (const r of resolved) activatePick(state, r);
   for (const p of state.players) {
     p.pendingPick = null;
     p.transientResources = [];
@@ -333,17 +344,56 @@ function revealAndApply(state: SwState): void {
   }
 }
 
-/** Discard everyone's last card (after 6 picks). */
-function discardLastCards(state: SwState): void {
+/** Cards a player may take from the discard pile (no duplicate names). */
+export function discardBuildOptions(state: SwState, player: SwPlayer): SwCard[] {
+  return state.discard.filter((c) => !player.tableau.some((t) => t.name === c.name));
+}
+
+/** After a turn's picks (and any discard build) are resolved: hand off to the
+ *  next Halicarnassus pick, the next turn, Babylon's 7th card, or the Age's
+ *  military. Re-entered after each 'buildFromDiscard'. */
+function continueTurnEnd(state: SwState): void {
+  const queue = (state.discardBuildQueue ??= []);
+  while (queue.length > 0) {
+    if (discardBuildOptions(state, playerById(state, queue[0])).length > 0) {
+      state.subPhase = 'discardBuild';
+      state.activePlayerId = queue[0];
+      return;
+    }
+    queue.shift(); // nothing buildable: the power is lost
+  }
+  if (state.ageRound < 6) {
+    rotateHands(state);
+    startTurn(state, state.ageRound + 1);
+    return;
+  }
+  if (state.ageRound === 6 && state.players.some((p) => p.hand.length > 0)) {
+    // Babylon B keeps its last card and plays it as a turn of its own.
+    startTurn(state, 7);
+    return;
+  }
+  endAge(state);
+}
+
+function startTurn(state: SwState, round: number): void {
+  state.ageRound = round;
+  state.subPhase = 'picking';
+  emitEvent(state, { kind: 'tickStart' });
+  setActiveAIIfAny(state);
+}
+
+/** Discard everyone's leftover cards. */
+function discardLastCards(state: SwState, keep: (p: SwPlayer) => boolean = () => false): void {
   for (const p of state.players) {
-    if (p.hand.length > 0) {
+    if (p.hand.length > 0 && !keep(p)) {
       state.discard.push(...p.hand);
       p.hand = [];
     }
   }
 }
 
-/** Compute military resolution at age end. Mutates each player's militaryTokens.
+/** Compute military resolution at age end. Mutates each player's militaryTokens:
+ *  one token per battle won (+1/+3/+5) and one −1 token per battle lost.
  *  Cities: a player with ≥1 diplomacy token auto-spends one this age and is
  *  skipped from military comparison (counts as draws on both sides). Their
  *  neighbors are then compared against each OTHER across the gap. */
@@ -373,6 +423,11 @@ function resolveMilitary(state: SwState): SwMilitarySummary {
     }
     return null;
   };
+  const battle = (mine: number, other: SwPlayer | null): 'win' | 'loss' | 'draw' => {
+    if (!other) return 'draw';
+    const theirs = shieldsByPlayer.get(other.id) ?? 0;
+    return mine > theirs ? 'win' : mine < theirs ? 'loss' : 'draw';
+  };
   for (let i = 0; i < n; i++) {
     const p = state.players[i];
     if (skipped.has(p.id)) {
@@ -380,46 +435,22 @@ function resolveMilitary(state: SwState): SwMilitarySummary {
       perPlayer.push({ playerId: p.id, vsWest: 'draw', vsEast: 'draw', tokenGained: 0 });
       continue;
     }
-    const west = neighborOf(i, -1);
-    const east = neighborOf(i, 1);
     const myS = shieldsByPlayer.get(p.id) ?? 0;
-    const wS = west ? (shieldsByPlayer.get(west.id) ?? 0) : myS;
-    const eS = east ? (shieldsByPlayer.get(east.id) ?? 0) : myS;
-    const vsWest: 'win' | 'loss' | 'draw' = west
-      ? (myS > wS ? 'win' : myS < wS ? 'loss' : 'draw')
-      : 'draw';
-    const vsEast: 'win' | 'loss' | 'draw' = east
-      ? (myS > eS ? 'win' : myS < eS ? 'loss' : 'draw')
-      : 'draw';
-    let gained = 0;
-    if (vsWest === 'win') gained += ageVp;
-    else if (vsWest === 'loss') gained -= 1;
-    if (vsEast === 'win') gained += ageVp;
-    else if (vsEast === 'loss') gained -= 1;
-    perPlayer.push({ playerId: p.id, vsWest, vsEast, tokenGained: gained });
+    const vsWest = battle(myS, neighborOf(i, -1));
+    const vsEast = battle(myS, neighborOf(i, 1));
+    const value = (r: 'win' | 'loss' | 'draw') => (r === 'win' ? ageVp : r === 'loss' ? -1 : 0);
+    perPlayer.push({ playerId: p.id, vsWest, vsEast, tokenGained: value(vsWest) + value(vsEast) });
   }
-  // Apply.
+  // Apply: one token per battle, so defeat tokens are never netted away
+  // (the Strategists Guild counts them).
   for (const row of perPlayer) {
     const p = playerById(state, row.playerId);
-    if (row.tokenGained === 0) {
-      // Even a "0" outcome from two draws still appends nothing.
-    } else if (row.tokenGained > 0) {
-      p.militaryTokens.push(row.tokenGained);
-      emitEvent(state, { kind: 'militaryTokenGained', playerId: p.id, vp: row.tokenGained, age: state.age });
-    } else {
-      // A loss appends -1 per loss. We track per-loss tokens for guild counting.
-      // Each loss = 1 token of -1.
-      let losses = 0;
-      if (row.vsWest === 'loss') losses += 1;
-      if (row.vsEast === 'loss') losses += 1;
-      for (let k = 0; k < losses; k++) p.militaryTokens.push(-1);
-      // Wins, if any, also recorded separately.
-      const wins =
-        (row.vsWest === 'win' ? ageVp : 0) +
-        (row.vsEast === 'win' ? ageVp : 0);
-      if (wins > 0) {
-        p.militaryTokens.push(wins);
-        emitEvent(state, { kind: 'militaryTokenGained', playerId: p.id, vp: wins, age: state.age });
+    for (const result of [row.vsWest, row.vsEast]) {
+      if (result === 'win') {
+        p.militaryTokens.push(ageVp);
+        emitEvent(state, { kind: 'militaryTokenGained', playerId: p.id, vp: ageVp, age: state.age });
+      } else if (result === 'loss') {
+        p.militaryTokens.push(-1);
       }
     }
   }
@@ -434,34 +465,27 @@ function advanceAfterMilitary(state: SwState): void {
     state.finalScoringBreakdown = breakdown;
     state.finalScores = {};
     for (const row of breakdown) state.finalScores[row.playerId] = row.total;
-    let winnerId: PlayerId | null = null;
-    let best = -Infinity;
-    for (const row of breakdown) {
-      if (row.total > best) { best = row.total; winnerId = row.playerId; }
-    }
+    const { winnerIds } = rankRows(state, breakdown);
     state.phase = 'gameOver';
     state.subPhase = 'finalScoring';
-    pushLog(state, { kind: 'matchEnd', winnerId });
+    pushLog(state, { kind: 'matchEnd', winnerId: winnerIds.length === 1 ? winnerIds[0] : null });
     return;
   }
   // Otherwise, just stay in 'militaryEnd' until the user clicks continue.
   state.subPhase = 'militaryEnd';
 }
 
-/** Tick: after every pick is in, reveal/apply/rotate/possibly end age. */
+/** Tick: after every pick is in, reveal/apply, then end the turn. */
 function tick(state: SwState): void {
   revealAndApply(state);
-  // ageRound increments after applying.
-  if (state.ageRound < 6) {
-    rotateHands(state);
-    state.ageRound += 1;
-    state.subPhase = 'picking';
-    emitEvent(state, { kind: 'tickStart' });
-    setActiveAIIfAny(state);
-    return;
-  }
-  // After the 6th pick: rotate, discard last cards (the unplayed 7th), resolve military.
-  rotateHands(state);
+  // The 6th pick's leftover cards are discarded now — before any discard
+  // build, which may take one — except Babylon B's, which it plays next.
+  if (state.ageRound === 6) discardLastCards(state, (p) => hasWonderPower(p, 'playLastCard'));
+  continueTurnEnd(state);
+}
+
+/** End of an Age: discard what's left, resolve military, pause or finish. */
+function endAge(state: SwState): void {
   discardLastCards(state);
   const summary = resolveMilitary(state);
   state.lastMilitaryResolution = summary;
@@ -499,6 +523,23 @@ export function applyAction(state: SwState, action: SwAction): SwState {
       return s;
     }
 
+    case 'buildFromDiscard': {
+      if (s.subPhase !== 'discardBuild') throw new Error('buildFromDiscard: not in discardBuild');
+      if (s.discardBuildQueue?.[0] !== action.playerId) throw new Error('buildFromDiscard: not your pick');
+      const player = playerById(s, action.playerId);
+      let card: SwCard | null = null;
+      if (action.cardId !== null) {
+        card = discardBuildOptions(s, player).find((c) => c.id === action.cardId) ?? null;
+        if (!card) throw new Error(`Card ${action.cardId} can't be built from the discard pile.`);
+        s.discard = s.discard.filter((c) => c.id !== card!.id);
+        buildCardForFree(s, player, card);
+      }
+      pushLog(s, { kind: 'discardBuilt', playerId: player.id, cardId: card?.id ?? null, cardName: card?.name ?? null });
+      s.discardBuildQueue!.shift();
+      continueTurnEnd(s);
+      return s;
+    }
+
     case 'continue': {
       if (s.subPhase !== 'militaryEnd') throw new Error('continue: not in militaryEnd');
       const nextAge: SwAge = (s.age + 1) as SwAge;
@@ -518,16 +559,11 @@ export function applyAction(state: SwState, action: SwAction): SwState {
   }
 }
 
-/** Build a card into a player's tableau as a side-effect (used by Solomon).
- *  Does not charge coins or resources. */
+/** Build a card into a player's tableau as a side-effect (Halicarnassus,
+ *  Solomon). Does not charge coins or resources. */
 export function buildCardForFree(state: SwState, player: SwPlayer, card: SwCard): void {
   player.tableau.push(card);
-  player.coins += sumCoinsOnPlay(card.effects);
-  for (const eff of card.effects) {
-    if (eff.kind === 'endVp') {
-      player.coins += coinsOnPlayForEndVp(state, player, eff);
-    }
-  }
+  applyOnPlay(state, player, card);
   emitEvent(state, { kind: 'cardBuilt', playerId: player.id, card, viaChain: false });
 }
 
@@ -543,8 +579,10 @@ export function setupNewMatch(state: SwState): void {
     p.pendingPick = null;
     p.wonderStagesBuilt = 0;
     p.militaryTokens = [];
+    p.freeBuildUsedAge = null;
   }
   state.discard = [];
+  state.discardBuildQueue = [];
   state.lastMilitaryResolution = null;
   state.finalScoringBreakdown = null;
   state.finalScores = null;

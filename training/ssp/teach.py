@@ -15,7 +15,10 @@ Everything else is frozen and checked unchanged afterwards. So the policy
 still plays every game without Pepper — and every v2 decision in a game with
 it — exactly as before.
 
-    python training/ssp/teach.py src/games/sea-salt-paper/policies/hard-multi-update14000.json --matches 3000
+    python training/ssp/teach.py path/to/upgraded-policy.json --matches 3000
+
+(Only on a policy just upgraded from v2: on one trained with Pepper it would
+replace the learned Pepper decisions with the fixed rules.)
 
 Writes the policy back in place (or to --out), with `meta.taught` recording the
 data and the held-out accuracy per decision kind.

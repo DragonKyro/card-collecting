@@ -1,60 +1,68 @@
-// ALS AI smoke + end-to-end tests.
-
 import { describe, it, expect } from 'vitest';
-import { airLandSeaModule } from './module';
+import { createRng, rngInt } from '@/core/rng';
+import type { AlsAction, AlsConfig, AlsState } from './types';
 import { applyAction } from './reducer';
 import { chooseAIAction } from './ai';
-import type { AlsState } from './types';
-import { BASE_THEATER_IDS, DEFAULT_TARGET_VP } from './cards';
-import type { Seat } from '@/core/types';
+import { legalActions } from './moves';
+import { newMatch } from './testSupport';
 
-function aiSeats(): Seat[] {
-  return [
-    { id: 'a', name: 'AI-A', color: '#fff', isAI: true, isLocal: true },
-    { id: 'b', name: 'AI-B', color: '#ccc', isAI: true, isLocal: true },
-  ];
+const SLS = { expansions: { spiesLiesSupplies: true } };
+
+type Agent = (s: AlsState, playerId: string) => AlsAction;
+
+const aiAgent: Agent = (s, id) => {
+  const a = chooseAIAction(s, id);
+  if (!a) throw new Error(`AI returned null in ${s.subPhase}`);
+  return a;
+};
+
+function randomAgent(seed: number): Agent {
+  const rng = createRng(seed);
+  return (s, id) => {
+    const actions = legalActions(s, id).filter((a) => a.type !== 'withdraw');
+    const pool = actions.length ? actions : legalActions(s, id);
+    return pool[rngInt(rng, pool.length)];
+  };
 }
 
-function freshState(seed = 7): AlsState {
-  return airLandSeaModule.createInitialState(
-    { theaters: BASE_THEATER_IDS.slice(), targetVp: DEFAULT_TARGET_VP },
-    seed,
-    aiSeats(),
-  );
-}
-
-function runAIGame(seed = 1, maxSteps = 5000): AlsState {
-  let s = freshState(seed);
-  for (let i = 0; i < maxSteps && s.phase === 'playing'; i++) {
-    const playerId = s.activePlayerId;
-    if (!playerId) break;
-    const action = chooseAIAction(s, playerId);
-    if (!action) break;
+/** Play a match; returns the winning seat. */
+function run(config: Partial<AlsConfig>, seed: number, agents: [Agent, Agent]): 0 | 1 {
+  let s = newMatch({ randomOrder: true, ...config }, seed);
+  for (let step = 0; step < 3000 && s.phase !== 'gameOver'; step++) {
+    const id = s.activePlayerId!;
+    const seat = s.players[0].id === id ? 0 : 1;
+    const action = agents[seat](s, id);
     s = applyAction(s, action);
   }
-  return s;
+  expect(s.phase).toBe('gameOver');
+  return s.players[0].vp >= s.config.targetVp ? 0 : 1;
 }
 
-describe('ALS AI', () => {
-  it('runs an end-to-end AI vs AI match without throwing', () => {
-    expect(() => runAIGame(1)).not.toThrow();
-    expect(() => runAIGame(2)).not.toThrow();
-    expect(() => runAIGame(3)).not.toThrow();
+describe('AI', () => {
+  it.each<[string, Partial<AlsConfig>]>([
+    ['the base game', {}],
+    ['Spies, Lies & Supplies', { theaters: ['intel', 'diplo', 'econ'], ...SLS }],
+    ['mixed theaters', { theaters: ['sea', 'diplo', 'intel'], ...SLS }],
+    ['Epic Mode', { theaters: ['air', 'land', 'sea', 'diplo', 'econ'], ...SLS, targetVp: 6 }],
+  ])('plays %s to the end against itself', (_name, config) => {
+    for (const seed of [11, 12]) run(config, seed, [aiAgent, aiAgent]);
   });
 
-  it('produces a legal first move from the initial state', () => {
-    const s = freshState();
-    const a = chooseAIAction(s, s.activePlayerId!);
-    expect(a).not.toBeNull();
-    expect(['deploy', 'improvise', 'withdraw']).toContain(a!.type);
-  });
-
-  it('eventually reaches gameOver across several matches', () => {
-    let reached = 0;
-    for (let seed = 100; seed < 110; seed++) {
-      const s = runAIGame(seed);
-      if (s.phase === 'gameOver') reached += 1;
+  it('beats random play', () => {
+    let wins = 0;
+    const games = 16;
+    for (let g = 0; g < games; g++) {
+      const config: Partial<AlsConfig> = g % 2 ? { theaters: ['intel', 'diplo', 'econ'], ...SLS } : {};
+      const aiSeat = (g % 4 < 2 ? 0 : 1) as 0 | 1;
+      const agents: [Agent, Agent] = aiSeat === 0 ? [aiAgent, randomAgent(g)] : [randomAgent(g), aiAgent];
+      if (run(config, 100 + g, agents) === aiSeat) wins++;
     }
-    expect(reached).toBeGreaterThan(0);
+    expect(wins).toBeGreaterThanOrEqual(13);
+  });
+
+  it('continues a finished battle', () => {
+    let s = newMatch({}, 3);
+    s = applyAction(s, { type: 'withdraw', playerId: s.activePlayerId! });
+    expect(chooseAIAction(s, s.activePlayerId!)).toEqual({ type: 'continueBattle' });
   });
 });

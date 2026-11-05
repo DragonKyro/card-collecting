@@ -9,7 +9,7 @@ Shipping targets:
 - **Sea Salt & Paper**
 - **7 Wonders** (with all 5 expansions: Leaders, Cities, Babel, Armada, Edifice)
 - **7 Wonders Duel** (standalone 2-player variant — pyramid draft + three supremacy paths)
-- **Air, Land & Sea**
+- **Air, Land & Sea** (Revised Edition + Spies, Lies & Supplies — mixed theaters and Epic Mode; heuristic AI)
 - **Set** (all 16 variants: Junior, Set-Chain, UltraSet, GhostSet, 4Set, MegaSet, Puzzle, Shuffle, Memory, …)
 - **Machi Koro** (Machi Koro 2 by default, incl. the landmark promo pack; the original base game as an edition option, with its Harbor and Millionaire's Row expansions)
 - **Jaipur** (2-player trading duel — hot-seat, online, or vs AI)
@@ -40,7 +40,7 @@ src/
     sea-salt-paper/             Sea Salt & Paper (+ Extra Salt + Extra Pepper).
     seven-wonders/              7 Wonders + 5 expansions (Leaders, Cities, Babel, Armada, Edifice).
     seven-wonders-duel/         7 Wonders Duel (standalone two-player).
-    air-land-sea/               Air, Land & Sea (+ Spies, Lies, & Supplies scaffolding).
+    air-land-sea/               Air, Land & Sea + Spies, Lies & Supplies (mixed theaters, Epic Mode).
     set/                        Set — cards as vectors, 16 modes off one rule engine.
     machi-koro/                 Machi Koro 2 + the original Machi Koro (+ Harbor, Millionaire's Row), one dice engine.
     jaipur/                     Jaipur — trading duel, trained easy / normal / hard AI.
@@ -79,28 +79,121 @@ npm run test:run    # vitest single run
 
 `.github/workflows/deploy.yml` builds and deploys to GitHub Pages on every push to `main`. Vite `base` is `/card-collecting/` to match the repo name — change it in `vite.config.ts` if you rename the repo.
 
-## Project plan / roadmap
+## Checklist
 
-- [x] **Phase 0** — Scaffolding. Vite + React + TS, GameModule contract, Zustand stores, Trystero stub, GitHub Pages workflow, hot-seat lobby, stub modules for all three games.
-- [x] **Phase 1** — Sea Salt & Paper (hot-seat reducer + UI + AI complete).
-- [x] **Phase 2** — Sushi Go! Party engine (simultaneous-pick + hand-pass loop, menu builder, base party cards + specials).
-- [x] **Phase 3** — Online multiplayer wired up for SSP + Sushi Go (Trystero `/torrent` room, lobby sync, action broadcast, snapshot on join, lobby + in-game chat, host-only AI driver, spectator fallback).
-- [x] **Phase 4** — 7 Wonders base game (3-age draft, simultaneous pick, hand rotation CW/CCW by age, payment to neighbors with discounts, military resolution between ages, final scoring across 7 categories). Hand-drawn SVG art: a resource / coin / shield / laurel / science icon set on every card, an illustration for every card (base and expansions) and every wonder board (side B at dusk), cities shown as tucked effect bands, neighbours in table order.
-- [x] **Phase 5** — AI heuristics per game (`chooseAIAction` on every module). Each AI scores legal moves with context-aware values — Sushi Go tracks unseen cards by kind so the marginal value of wasabi / sashimi / eel updates as picks reveal information; Sea Salt & Paper's heuristic has since been replaced by trained easy / normal / hard policies (see `training/README.md`); 7 Wonders weighs cards on resources gained, military shields when behind a neighbor, and science set completion; 7 Wonders Duel ranks each available pyramid card across build/bury/discard outcomes against opponent production; Air, Land & Sea scores every legal deploy/improvise by control-margin swing + per-ability value. The host runs the AI driver and dispatches actions on a small delay so moves remain visible.
-- [x] **Phase 6** — Sea Salt & Paper expansions, togglable per match in the lobby:
-  - *Extra Salt* — 8 new cards / 5 new effects shuffled into the main deck (jellyfish + swimmer next-turn lock, lobster + crab top-5 peek, basket of crabs multiplier, starfish trio, seahorse collector wildcard).
-  - *Extra Pepper* — separate event deck. One event flipped at round start applies to all (or the current holder); awarded at round end to the leader (`+`) or laggard (`−`). Six event cards implemented (Three Mermaids, Stop at Five, Angelfish, Stormy Seas, Calm Waters, Pepper Burn) — the framework supports the remaining six pending authoritative text.
-- [ ] **Phase 7** — 7 Wonders expansions (each as a sub-module under `src/games/seven-wonders/expansions/`).
-  - [x] *Leaders* — pick-and-pass draft of 4 leaders at match start, then one leader per Age (play / bury / discard / skip). All 36 leaders modeled across 7 hook tiers (pure on-play, end-game per-X, cost modifier, on-play trigger, activated ability, set-completion, on-recruit). Bilkis once-per-turn ability and Solomon "build from discard" sub-phase wired.
-  - [x] *Cities* — 27 black cards (9 per age) shuffled into existing age decks. Debt tokens (−1 VP each) handed to neighbors via the `citiesDebtToNeighbors` effect. Diplomacy tokens auto-spent at age-end military (holder is skipped, neighbors compare across the gap). Tourist Office (+7 per 7-color set) and Gambling Hall (+1 VP per debt token across all players) scoring extras implemented. A few card abilities still placeholder no-ops pending authoritative rulebook text.
-  - [x] *Babel* (partial) — 15 orange cards (5 per age) shuffled into existing age decks. Three Babel-themed scoring rules implemented (`vpPerScienceSet`, `vpPerNeighborCards`, `vpPerOwnColors`). Central Tower of Babel (shared law tiles) and Great Projects of Babylon (cooperative goals) NOT modeled in v1 — they require shared central state coordinated across all picks, pending authoritative rule text.
-  - [x] *Armada* (partial) — 15 navy cards (5 per age) shuffled into existing age decks. Three Armada-themed scoring rules implemented (`vpPerNeighborMilitaryLosses`, `vpPerOwnAgeIIIBuilds`, `vpPerOwnNavalSet`). Personal shipyards (4 fleets × 3 levels), naval combat at age-end, island cards (separate deck via Naval action), and the pirate track are NOT modeled in v1.
-  - [x] *Edifice* — 3 central project tiles (one per age) drawn from a pool of 8 at match setup. A player contributes to age N's project by building any wonder stage during that age. At endgame, projects whose threshold of contributors is met reward each contributor and penalize each non-contributor. Outcomes (VP, shields, science, coins, debt tokens) are surfaced as an "edifice" column in final scoring.
-- [x] **Phase 8** — Air, Land & Sea (2-player; 3-theater battles; Deploy / Improvise (face-down) / Withdraw; instant + ongoing abilities; best-to-12 across rotating battles). Spies, Lies, & Supplies expansion scaffolded — its 3 new theaters (Intel/Diplo/Econ) and 18 cards are playable with raw strengths; per-card abilities are placeholder no-ops pending authoritative rulebook text. Epic Mode (5 theaters, 9-card hands) wired through the lobby toggle. Hand-drawn SVG art: a unit illustration on every base card, theater banners, Instant / Ongoing markers, cascading theater stacks and a control flag on each theater.
-- [ ] **Phase 9** — Additional games as desired.
-  - [x] *Set* — solo / shared-screen, all 16 variants of the classic pattern game. Cards are modelled as vectors over a product of cyclic groups, so "all the same or all different" is just `sum ≡ 0 (mod 3)` and every variant is the same algebra with different numbers: 3/4/5 features, 3 or 4 variants each, groups of 3 / 4 / 6 cards, and the chain / puzzle / shuffle / face-down twists. Own card art (four shapes, four fills, three borders). Session-only split-time stats. **Not yet:** online racing (concurrent claims need host-authoritative arbitration, so "Host online" is hidden for Set), AI opponents, and Kyle's custom drilling modes — the mode registry in `set/modes.ts` is the seam for those.
-  - [x] *7 Wonders Duel* — standalone 2-player variant. Separate game module under `src/games/seven-wonders-duel/`; shares zero state with the base 7 Wonders module. Pyramid draft (face-up + face-down rows of cards, "available when uncovered"), 12 unique wonders (8 drafted per match, 4 each), 5 of 10 Progress Tokens (claimed by matching a 2nd science symbol), single-line two-sided military track. Three victory conditions: Civilian Victory (most VP at endgame), Military Supremacy (pawn at ±9), Science Supremacy (6 different science symbols). Effects modeled v1; the wonder-only "extra turn" and "pick from discard" mechanics are stubbed pending follow-up. Hand-drawn SVG art: every card, all 12 wonders, the progress tokens, age and guild card backs, an overlapping pyramid and an illustrated military track with its looting tokens.
-  - [x] *Machi Koro* — one module, two editions. **Machi Koro 2** (default, 2–5 players): 5 coins and an empty town, three build-only opening rounds, a 5-5-5 market (1–6 / 7+ / landmarks) dealt from shuffled decks with duplicates stacking, landmark price ladders, "everyone" landmarks that change the rules for all players, win on the 3rd landmark or the Launch Pad; all 20 establishments and 20 + 3 promo landmarks. **Machi Koro** base (2–4 players): starting Wheat Field + Bakery, open supply, the four personal landmarks, Train Station two dice, Radio Tower reroll, TV Station target. Hand-drawn SVG art for all 47 buildings; tumbling dice, coins flying between purses and the bank, built cards flying from the market into the town. Heuristic AI over an expected-income model. **Harbor** (City Hall / Harbor / Airport, 10 establishments incl. the boats and Tuna Boat roll, a 5th player, the 10-pile marketplace) and **Millionaire's Row** (14 establishments: renovations, demolition, Loan Office, Tech Startup investment, International Exhibit Hall, landmark-count conditions) toggle in the lobby for the original edition. Catan-style layout: your town and the action panel share the bottom strip, opponents sit compact beside the history.
-  - [x] *Jaipur* — 2 players, best of three rounds (1 / 3 / 5 in the lobby). Market of five, take one / take all camels / trade 2+ / sell one good with tokens that fall in value, ×3 / ×4 / ×5 bonus tokens, the camel token, Seals of Excellence; the hand limit and both round endings. Hand-drawn SVG cards and tokens; cards and tokens fly between deck, market, hands, herds, the discard pile and the price board. Plays hot-seat, online and vs easy / normal / hard AIs trained by PPO self-play (`training/jaipur/`), which play only from what their seat may know.
+`[x]` done · `[ ]` still to do. Each game lists its base game, then its expansions, then what's open.
+
+### Platform
+
+- [x] Vite + React 19 + TypeScript scaffold, `GameModule` contract, Zustand stores, seeded RNG
+- [x] GitHub Pages deploy on every push to `main`
+- [x] Game picker, lobby (seat builder + each game's options) and hot-seat play with a pass-the-device screen
+- [x] Online play over Trystero: room codes, host-authoritative lobby, action broadcast, snapshot on join, spectators
+- [x] Lobby chat and in-game chat
+- [x] Host-only AI driver, so AI seats play in online matches too
+- [x] A rules book for every game (the in-game Rules button)
+- [ ] Hot-seat with two or more human seats in Sushi Go, and in the 7 Wonders Leaders draft / leader play: only AI seats are handed the turn, so the second human never gets the device and the match stalls (fixed for base 7 Wonders)
+- [ ] Host hand-off: if the online host disconnects, AI seats freeze
+- [ ] Per-seat AI difficulty (today one level covers every AI seat; needs a game-agnostic seat field)
+
+### Sushi Go! Party
+
+- [x] Engine: simultaneous pick and pass, hand size by player count, desserts carried across rounds, 2–8 players
+- [x] Every party card: nigiri + wasabi, maki / temaki / uramaki, all appetizers, all specials (chopsticks, spoon, menu, special order, takeout box, soy sauce, tea), all desserts
+- [x] Menu builder (8 kinds, player-count limits) and random menu
+- [x] Hand-drawn card art
+- [x] Hot-seat and online
+- [x] Trained AI: easy / normal / hard (PPO, trained at 2 players, plays 2–8)
+- [ ] Rulebook timing: chopsticks' second card and the spoon call are chosen with the pick (the rulebook calls them during the reveal); a special order picks its copy after the reveal
+- [ ] Multi-human hot-seat (see Platform)
+
+### Sea Salt & Paper
+
+- [x] Base game: draw two keep one, duo effects, collectors, multipliers, mermaids, STOP / LAST CHANCE, rounds to the target score
+- [x] Hidden-information model (what each seat may know) and card-flight animations
+- [x] Hot-seat and online
+- [x] Expansion: Extra Salt (jellyfish, lobster, starfish trio, seahorse, crab basket)
+- [x] Expansion: Extra Pepper (all 12 events, per the official rule sheet)
+- [x] Trained AI: easy / normal / hard (Hard also trained on 3–4 players and with Extra Pepper)
+- [ ] Easy and Normal trained at 3–4 players and with Extra Pepper (only Hard is today)
+- [ ] Check LAST CHANCE scoring against the rulebook (the AI's whole edge is LAST CHANCE bets)
+- [ ] Smaller policy files (fp16 / int8; each is ~1.7 MB)
+- [ ] A stronger policy: training plateaus, so try capacity (`--hidden 512 --layers 3`) or `--anneal-lr`
+
+### 7 Wonders
+
+- [x] Base game: 3 Ages, 3–7 players, simultaneous picks, hands pass left / right / left, exact rulebook deck per player count
+- [x] Building: costs, chains, no duplicates, trading (a neighbour's wonder resource + brown / gray cards; trading-post and Marketplace discounts), cheapest payment found for you
+- [x] Military (one token per battle) and final scoring: 7 categories, wild science symbols, ties to the most coins
+- [x] All 14 wonder boards with every power: Babylon's science symbol and 7th card, Halicarnassus' build from the discard, Olympia's free build per Age and guild copy
+- [x] Heuristic AI scoring every build / stage / sale (beats the previous heuristic in ~80% of games)
+- [x] Hand-drawn art for every card and wonder board; each neighbour's last turn shown, new cards pop in
+- [x] Hot-seat and online
+- [x] Expansion: Leaders: draft of 4, one leader per Age (play / bury / discard / skip), Bilkis, Solomon; 35 of 36 leaders
+- [ ] Leaders: Tomyris (defeat tokens go to the victor) needs a hook into military resolution
+- [ ] Leaders: burying a leader under a stage skips the stage's power (Halicarnassus) and the Edifice contribution
+- [ ] Leaders: multi-human hot-seat (see Platform)
+- [x] Expansion: Cities: 27 black cards, debt tokens, diplomacy, Tourist Office and Gambling Hall scoring
+- [ ] Cities: Pigeon Loft, Spy Ring (second ability), Black Market and Slave Market abilities are placeholders (need the rulebook text)
+- [ ] Cities: check the hand size against the rulebook (black cards are cut into a 7-card deal here; the box rules may deal 8 per Age)
+- [ ] Cities: the 3-player "ghost city" variant
+- [x] Expansion: Edifice: 3 projects (one per Age), contributing by building a wonder stage, rewards and penalties at the end
+- [x] Expansion: Babel, partial: 15 orange cards and 3 scoring rules, written without the rulebook
+- [ ] Babel: the Tower of Babel (law tiles) and the Great Projects; Tower Workers and Great Project Worksite are placeholders
+- [x] Expansion: Armada, partial: 15 navy cards and 3 scoring rules, written without the rulebook
+- [ ] Armada: shipyards, naval combat, islands and the pirate track; Shipyard, Lighthouse Beacon and Naval Yard are placeholders
+- [ ] Expansion: Wonder Pack (Great Wall, Stonehenge, Abu Simbel, Manneken Pis), not started
+
+### 7 Wonders Duel
+
+- [x] Base game, checked against the printed deck and rulebook: pyramid draft, wonder draft, Progress tokens (Great Library included), chains, trading, play-again, destroy wonders, the Mausoleum, 7-wonder limit, all three victories
+- [x] Heuristic AI (gain minus the best card it leaves the opponent)
+- [x] Hand-drawn art and card / wonder / token flights
+- [x] Hot-seat and online
+- [ ] Expansion: Pantheon, not started
+- [ ] Expansion: Agora, not started
+
+### Air, Land & Sea
+
+- [x] Revised Edition: all 18 cards with their printed abilities (ordered ability queue), both withdraw charts, theater rotation, Beginner Mode
+- [x] Heuristic AI that samples the hidden cards rather than reading them
+- [x] Hand-drawn art for every card, theater banners, a decision panel for every ability prompt
+- [x] Hot-seat and online
+- [x] Expansion: Spies, Lies & Supplies: all 18 cards, supply tokens and reveals; any three theaters from either box, or Epic Mode
+
+### Set
+
+- [x] All 16 variants (Junior, Set-Chain, UltraSet, GhostSet, 4Set, MegaSet, Puzzle, Shuffle, Memory, …) off one rule engine
+- [x] Own card art; session split-time stats
+- [x] Solo and shared-screen (1–4 players on one device)
+- [ ] Custom drill modes (sprint to N, blitz clock, streak / sudden death, metronome, flashcard boards, complete-the-set, near-miss decoys); `set/modes.ts` is the seam
+- [ ] Online racing: needs host-authoritative claim arbitration (then flip `onlineSupported`)
+- [ ] AI opponent / pace-setter bot (needs its own timer driver in the view)
+
+### Machi Koro
+
+- [x] Machi Koro 2 (default): 5-5-5 market, landmark price ladders, "everyone" landmarks, all 20 establishments + 20 landmarks + 3 promo landmarks
+- [x] Machi Koro (original) base game as an edition option
+- [x] Heuristic AI over an expected-income model
+- [x] Hand-drawn art for every building; dice, coin and card animations
+- [x] Hot-seat and online
+- [x] Expansion: Harbor (original edition): City Hall, Harbor, Airport, 10 establishments, a 5th player, the 10-pile marketplace
+- [x] Expansion: Millionaire's Row (original edition): 14 establishments incl. renovation, demolition, Tech Startup, Exhibit Hall
+- [ ] Deluxe / 5th-anniversary 5-5-2 market (a third supply option)
+- [ ] Check rulings against the printed rulebooks: Tuna Boat rolled once for all boats, Renovation Company paid per copy, Vineyard's wheat symbol, one purple per player in the supply
+- [ ] AI: commit to a two-dice economy (it favours cheap 1–6 cards until they sell out)
+
+### Jaipur
+
+- [x] Full game: market of five, take / camels / trade / sell, bonus tokens, camel token, Seals of Excellence, best of 1 / 3 / 5
+- [x] Hand-drawn cards and tokens; card and token flights
+- [x] Hot-seat and online
+- [x] Trained AI: easy / normal / hard (PPO self-play, plays only from what its seat may know)
+- [ ] A stronger policy past the plateau (capacity `--hidden 512 --layers 3` or `--anneal-lr`)
+- [ ] An `analyze` tool like `sgp:analyze`
+
+### More games
+
+- [ ] Additional games as desired
 
 Game-specific design notes live in each game's `types.ts` and in [CLAUDE.md](CLAUDE.md).

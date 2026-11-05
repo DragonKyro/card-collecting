@@ -158,16 +158,20 @@ python training/ssp/evaluate.py freeze training/runs/ssp/main@10000 --name hard-
 |---|---|---|---|---|---|
 | easy | `bench:easy-update100` | `runs/ssp/main` update 100 | 100.0% | — | — |
 | normal | `bench:normal-update1000` | `runs/ssp/main` update 1000 | 99.9% | 61.4% | — |
-| hard | `bench:hard-multi-update14000` | `runs/ssp/multi` update 14000 | 100.0% | 76.1% | 64.7% |
-| (old hard) | `bench:hard-update10000` | `runs/ssp/main` update 10000 | 100.0% | 71.6% | 64.8% |
+| hard | `bench:hard-pepper-update17500` | `runs/ssp/pepper` update 17500 | 100.0% | 75.8% | 66.6% |
+| (multi hard) | `bench:hard-multi-update14000` | `runs/ssp/multi` update 14000 | 100.0% | 76.1% | 64.7% |
+| (2-player hard) | `bench:hard-update10000` | `runs/ssp/main` update 10000 | 100.0% | 71.6% | 64.8% |
 
-2000 seat-swapped 2-player matches each; `bench:hard-multi-update14000`
-beats `bench:hard-update10000` 53.5% there. `bench:normal-update1000` doubles
-as the "1k" reference that the overnight run was measured against. The old
-hard is no longer shipped (`aiLevels.ts` imports the multi one) but stays as
-the benchmark the multi-player run was measured against: at tables of its
-copies, on fresh deals, the new hard wins 51.0% of 2p matches (4000), 44.5%
-of 3p (3000; even 33.3%) and 37.4% of 4p (3000; even 25%).
+2000 seat-swapped 2-player Extra Salt matches each; the shipped hard beats the
+multi hard 55.6% and the 2-player hard 55.5% there, and the multi hard beat
+the 2-player one 53.5%. `bench:normal-update1000` doubles as the "1k"
+reference that the overnight run was measured against. The two earlier hards
+are no longer shipped (`aiLevels.ts` imports the Pepper one) but stay as the
+benchmarks their successors were measured against. At tables of
+multi-hard copies on fresh deals (3000 matches each) the shipped hard wins
+53.5% at 2p, 35.6% at 3p (even 33.3%) and 28.6% at 4p (even 25%), and with
+Extra Pepper 57.9% / 39.1% / 31.2%; at tables of 2-player-hard copies the
+multi hard won 51.0% at 2p (4000), 44.5% at 3p and 37.4% at 4p.
 
 `freeze` writes into the game's policy folder, but a new file only becomes a
 difficulty once `src/games/sea-salt-paper/aiLevels.ts` points a level at it.

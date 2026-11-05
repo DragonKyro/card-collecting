@@ -247,9 +247,9 @@ export function GameLobby({ module, initial, onBack, onStart }: Props) {
                   onChange={(newColor) => updateSeat(s.id, { color: newColor })}
                 />
                 <input
+                  className="seat-name"
                   value={s.name}
                   onChange={(e) => updateSeat(s.id, { name: e.target.value })}
-                  style={{ flex: 1 }}
                   disabled={!isHostEditable}
                 />
                 {isOnlineHost && (
@@ -353,18 +353,17 @@ export function GameLobby({ module, initial, onBack, onStart }: Props) {
         {!isOnline && (
           <div className="online-join">
             <h4>Join a room</h4>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <div className="online-join-row">
               <input
                 placeholder="Your name"
                 value={localName}
                 onChange={(e) => setLocalName(e.target.value)}
-                style={{ width: 130 }}
               />
               <input
+                className="online-join-code"
                 placeholder="ROOM CODE"
                 value={joinCode}
                 onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-                style={{ width: 130, letterSpacing: 2, textAlign: 'center' }}
                 maxLength={8}
               />
               <button className="secondary" onClick={joinOnline} disabled={status === 'connecting' || !joinCode.trim()}>

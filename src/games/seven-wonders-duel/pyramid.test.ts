@@ -1,74 +1,71 @@
-// 7 Wonders Duel — pyramid mechanics.
+// 7 Wonders Duel — the three card structures.
 
 import { describe, it, expect } from 'vitest';
-import {
-  buildPyramid, isSlotAvailable, flipUncovered, isPyramidEmpty, pyramidSize,
-} from './pyramid';
+import type { DuelAge } from './types';
+import { availableSlots, buildPyramid, flipUncovered, isPyramidEmpty, pyramidSize, wouldUncover } from './pyramid';
+
+const ids = Array.from({ length: 20 }, (_, i) => 500 + i);
+const rows = (age: DuelAge) => {
+  const p = buildPyramid(age, ids);
+  const out: number[] = [];
+  for (const s of p) out[s.row] = (out[s.row] ?? 0) + 1;
+  return out;
+};
 
 describe('Duel pyramid', () => {
-  it('Age I size = 20', () => {
-    expect(pyramidSize(1)).toBe(20);
+  it('holds 20 cards in the printed rows', () => {
+    for (const age of [1, 2, 3] as const) expect(pyramidSize(age)).toBe(20);
+    expect(rows(1)).toEqual([2, 3, 4, 5, 6]);
+    expect(rows(2)).toEqual([6, 5, 4, 3, 2]);
+    expect(rows(3)).toEqual([2, 3, 4, 2, 4, 3, 2]);
   });
 
-  it('Age II size = 20', () => {
-    expect(pyramidSize(2)).toBe(20);
+  it('opens with 6 cards in Age I and 2 in Ages II and III, all face up', () => {
+    const open = (age: DuelAge) => availableSlots(buildPyramid(age, ids));
+    expect(open(1)).toHaveLength(6);
+    expect(open(2)).toHaveLength(2);
+    expect(open(3)).toHaveLength(2);
+    for (const age of [1, 2, 3] as const) for (const s of open(age)) expect(s.faceUp).toBe(true);
   });
 
-  it('Age III size = 20', () => {
-    expect(pyramidSize(3)).toBe(20);
-  });
-
-  it('built pyramid maps cardIds to slots', () => {
-    const cardIds = Array.from({ length: 20 }, (_, i) => i + 100);
-    const pyramid = buildPyramid(1, cardIds);
-    expect(pyramid.length).toBe(20);
-    expect(new Set(pyramid.map((s) => s.cardId)).size).toBe(20);
-  });
-
-  it('top-row slots are immediately available', () => {
-    const cardIds = Array.from({ length: 20 }, (_, i) => i + 100);
-    const pyramid = buildPyramid(1, cardIds);
-    const topRow = pyramid.filter((s) => s.row === 0);
-    expect(topRow.length).toBeGreaterThan(0);
-    for (const s of topRow) {
-      expect(isSlotAvailable(s, pyramid)).toBe(true);
+  it('alternates face up and face down rows, back and front rows up', () => {
+    for (const age of [1, 2, 3] as const) {
+      const p = buildPyramid(age, ids);
+      for (const s of p) expect(s.faceUp).toBe(s.row % 2 === 0);
     }
   });
 
-  it('lower-row slots are NOT initially available', () => {
-    const cardIds = Array.from({ length: 20 }, (_, i) => i + 100);
-    const pyramid = buildPyramid(1, cardIds);
-    const bottomRow = pyramid.filter((s) => s.row === 4);
-    for (const s of bottomRow) {
-      // bottom row covered by row above
-      if (s.coveredBy.length > 0) {
-        expect(isSlotAvailable(s, pyramid)).toBe(false);
+  it('covers an edge card of the wide Age II back row with one card only', () => {
+    const p = buildPyramid(2, ids);
+    const back = p.filter((s) => s.row === 0).sort((a, b) => a.x - b.x);
+    expect(back[0].coveredBy).toHaveLength(1);
+    expect(back[2].coveredBy).toHaveLength(2);
+  });
+
+  it('splits the Age III middle row over the outer pairs', () => {
+    const p = buildPyramid(3, ids);
+    const middle = p.filter((s) => s.row === 3);
+    expect(middle.map((s) => s.x)).toEqual([-2, 2]);
+    // The inner cards of the row behind it are covered by one middle card each.
+    const inner = p.filter((s) => s.row === 2 && Math.abs(s.x) === 1);
+    for (const s of inner) expect(s.coveredBy).toHaveLength(1);
+  });
+
+  it('turns cards up as they become accessible, in any taking order', () => {
+    for (const age of [1, 2, 3] as const) {
+      const p = buildPyramid(age, ids);
+      let guard = 0;
+      while (!isPyramidEmpty(p) && guard++ < 40) {
+        const open = availableSlots(p);
+        for (const s of open) expect(s.faceUp).toBe(true);
+        const pick = open[guard % open.length];
+        const opened = wouldUncover(pick, p).map((s) => s.index);
+        pick.taken = true;
+        flipUncovered(p);
+        const nowOpen = availableSlots(p).map((s) => s.index);
+        for (const i of opened) expect(nowOpen).toContain(i);
       }
+      expect(isPyramidEmpty(p)).toBe(true);
     }
-  });
-
-  it('taking a top slot does not flip lower slots that are still covered', () => {
-    const cardIds = Array.from({ length: 20 }, (_, i) => i + 100);
-    const pyramid = buildPyramid(1, cardIds);
-    const top0 = pyramid.find((s) => s.row === 0 && s.col === 0)!;
-    top0.taken = true;
-    flipUncovered(pyramid);
-    // Row 1, col 0 — was face-down — covered by both top-row slots. Taking only top-0
-    // should leave it still face-down because top-1 still covers it.
-    const r1c0 = pyramid.find((s) => s.row === 1 && s.col === 0)!;
-    // r1c0 is covered by (0, -1) [no] and (0, 0) [yes], so coveredBy = [top0].
-    // With top0 taken, r1c0 should be available + face-up.
-    if (r1c0.coveredBy.length === 1) {
-      // Only top0 covered it
-      expect(isSlotAvailable(r1c0, pyramid)).toBe(true);
-    }
-  });
-
-  it('isPyramidEmpty true only after all slots taken', () => {
-    const cardIds = Array.from({ length: 20 }, (_, i) => i + 100);
-    const pyramid = buildPyramid(1, cardIds);
-    expect(isPyramidEmpty(pyramid)).toBe(false);
-    for (const s of pyramid) s.taken = true;
-    expect(isPyramidEmpty(pyramid)).toBe(true);
   });
 });

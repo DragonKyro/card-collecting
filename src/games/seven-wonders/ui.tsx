@@ -7,16 +7,17 @@ import type {
   SwState, SwAction, SwConfig, SwExpansionId,
   SwCard, SwCardColor, SwPlayer, SwPendingPick, SwResource, SwScience, SwWonderStage,
 } from './types';
-import { WONDERS, wonderById, wondersByName } from './wonders';
+import { wonderById, wondersByName } from './wonders';
 import {
-  canChainBuild, shortfall, suggestCheapestPurchase,
-  validatePayment, shieldsFor, productionFor, effectiveCostFor,
+  canChainBuild, effectiveCostFor, planPayment, shieldsFor, type PaymentPlan,
 } from './resources';
+import { canBuildFree, discardBuildOptions } from './reducer';
+import { rankRows } from './scoring';
 import { getActiveExpansions, getAllExpansions } from './expansions/registry';
 import { BilkisButton } from './expansions/leaders/ui';
 import {
   AGE_HEX, AgeIcon, ArrowIcon, ChainIcon, CoinIcon, ColorChip, DebtIcon, DiplomacyIcon, MilitaryToken,
-  ResourceIcon, ScienceIcon, ShieldIcon, VpIcon, WonderStageIcon,
+  ResourceIcon, ScienceIcon, ShieldIcon, VpIcon, WonderPowerIcon, WonderStageIcon,
 } from './art';
 import {
   CardFace, CostIcons, EffectIcons, TableauColumns, WonderBoard, WonderMini, type CardStatus,
@@ -50,9 +51,15 @@ function LobbyConfig({ config, seats, onChange }: { config: SwConfig; seats: Sea
 
   const setPresetFor = (seatIdx: number, wonderId: string) => {
     const next = (config.presetWonders ?? []).slice();
-    while (next.length < seats.length) next.push(WONDERS[0].id);
+    // Seats without a pick stay random ('').
+    while (next.length < seats.length) next.push('');
     next[seatIdx] = wonderId;
     onChange({ ...config, presetWonders: next });
+  };
+
+  const presetName = (i: number) => {
+    const id = config.presetWonders?.[i];
+    return id ? wonderGroups.find((g) => g.a.id === id || g.b.id === id)?.name ?? null : null;
   };
 
   return (
@@ -83,21 +90,24 @@ function LobbyConfig({ config, seats, onChange }: { config: SwConfig; seats: Sea
 
       {config.wonderAssignment === 'preset' && (
         <div>
-          <p style={{ fontSize: 12, color: 'var(--fg-muted)' }}>Pick a wonder for each seat:</p>
+          <p style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
+            Pick a wonder for each seat. Seats left on random get a wonder nobody picked, on the side chosen above.
+          </p>
           {seats.map((s, i) => {
             const current = config.presetWonders?.[i] ?? '';
+            const takenElsewhere = new Set(seats.map((_, k) => (k === i ? null : presetName(k))).filter(Boolean));
             return (
               <div key={s.id} className="sw-expansion-row">
-                <span style={{ width: 110, fontSize: 13 }}>{s.name}</span>
+                <span className="sw-preset-name">{s.name}</span>
                 <select
                   value={current}
                   onChange={(e) => setPresetFor(i, e.target.value)}
-                  style={{ flex: 1 }}
+                  className="sw-preset-select"
                 >
                   <option value="">— random —</option>
                   {wonderGroups.flatMap((g) => [
-                    <option key={g.a.id} value={g.a.id}>{g.name} (A)</option>,
-                    <option key={g.b.id} value={g.b.id}>{g.name} (B)</option>,
+                    <option key={g.a.id} value={g.a.id} disabled={takenElsewhere.has(g.name)}>{g.name} (A)</option>,
+                    <option key={g.b.id} value={g.b.id} disabled={takenElsewhere.has(g.name)}>{g.name} (B)</option>,
                   ])}
                 </select>
                 {current && <WonderMini wonder={wonderById(current)} built={0} />}
@@ -125,7 +135,7 @@ function LobbyConfig({ config, seats, onChange }: { config: SwConfig; seats: Sea
               <span style={{ fontSize: 10, color: 'var(--fg-muted)', fontStyle: 'italic' }}>(not implemented)</span>
             )}
           </label>
-          <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{e.desc}</span>
+          <span className="sw-expansion-desc" style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{e.desc}</span>
         </div>
       ))}
       {/* Render implemented expansions' LobbySection components */}
@@ -157,29 +167,37 @@ function Rules() {
                 subtitle="Draft your way through 3 Ages. Build a civilization."
                 accent="linear-gradient(135deg, #8b6f3a 0%, #d4a85a 100%)"
               />
-              <h3>Each tick</h3>
+              <h3>Each turn</h3>
+              <p>Everyone picks a card at the same time, then all picks are revealed and resolved together. With your card you either:</p>
               <RulesGrid cols={3}>
-                <RulesTile icon="🏛️" label="Build" hint="Pay the card's cost from your production + neighbor purchases. Chain-build for free if pre-req is met." accent="#9ed27c" />
-                <RulesTile icon="⛏️" label="Bury" hint="Slip it under your next wonder stage. Pay the stage's cost; gain its effect." accent="#6aa0ff" />
-                <RulesTile icon="🪙" label="Discard" hint="Discard for 3 coins. Always legal." accent="#f4d268" />
+                <RulesTile icon="🏛️" label="Build" hint="Pay its cost from your production, buying the rest from your neighbours. A city can't hold two cards of the same name. Free if you own the card it chains from." accent="#9ed27c" />
+                <RulesTile icon="⛏️" label="Wonder stage" hint="Tuck the card face down under your next wonder stage (they go in order), pay the stage's cost and gain its effect. Any card will do." accent="#6aa0ff" />
+                <RulesTile icon="🪙" label="Sell" hint="Discard it face down for 3 coins. Always legal." accent="#f4d268" />
               </RulesGrid>
               <h3>Hand rotation</h3>
               <p>
-                After every simultaneous pick, hands rotate one seat. Ages I &amp;
-                III pass <strong>clockwise</strong>, Age II passes
-                <strong> counter-clockwise</strong>. Each Age is 6 picks; the 7th
-                card of each hand is discarded (unless Halicarnassus / Solomon
-                can recover it).
+                After every pick the hands pass on. Ages I &amp; III pass to the
+                <strong> left</strong> (your west neighbour), Age II to the
+                <strong> right</strong> (east). Each Age is 6 picks; the 7th card
+                of each hand is discarded — unless your wonder lets you play it.
+              </p>
+              <p>
+                Income a card gives when built (Tavern, Vineyard, Arena…) counts
+                every card built that same turn, your neighbours' included.
               </p>
             </>
           ),
         },
         {
-          title: 'Military &amp; trade',
+          title: 'Military & trade',
           body: (
             <>
               <h3>End-of-age military</h3>
-              <p>Shields are compared with BOTH neighbors. Winner gains a victory token; loser gains a −1 defeat token.</p>
+              <p>
+                Shields are compared with BOTH neighbours, one battle each. The
+                stronger city takes a victory token for that battle, the weaker a
+                −1 defeat token; a tie gives nothing.
+              </p>
               <table className="tight">
                 <thead><tr><th>Age</th><th className="num">Win</th><th className="num">Loss</th></tr></thead>
                 <tbody>
@@ -189,9 +207,29 @@ function Rules() {
                 </tbody>
               </table>
               <h3>Resource trading</h3>
+              <p>
+                You may buy what your neighbours produce with their wonder's
+                starting resource and their brown and gray cards — not their
+                yellow cards' or wonder stages' production. Buying never uses
+                the resource up, and the seller can't refuse. The coins reach
+                them at the end of the turn.
+              </p>
               <RulesGrid cols={2}>
-                <RulesTile icon="🪙" label="2 coins / unit" hint="Buy a missing resource from either neighbor. Coins go to that neighbor." accent="#f4d268" />
-                <RulesTile icon="🛒" label="1 coin / unit" hint="If you've built the matching trade-discount card (e.g. East/West Trading Post)." accent="#9ed27c" />
+                <RulesTile icon="🪙" label="2 coins / unit" hint="The normal price, paid to that neighbour." accent="#f4d268" />
+                <RulesTile icon="🛒" label="1 coin / unit" hint="Raw materials with East / West Trading Post (or Olympia B) on that side; manufactured goods with the Marketplace." accent="#9ed27c" />
+              </RulesGrid>
+            </>
+          ),
+        },
+        {
+          title: 'Wonder powers',
+          body: (
+            <>
+              <RulesGrid cols={2}>
+                <RulesTile icon="🏺" label="Halicarnassus" hint="The turn a stage with this power is built, at the end of the turn: build one card from the discard pile for free (the Age's last cards included on the 6th turn)." accent="#c9a47c" />
+                <RulesTile icon="🌿" label="Babylon" hint="A: a science symbol of your choice. B: play the 7th card of each Age instead of discarding it, and (last stage) a science symbol of your choice." accent="#9ed27c" />
+                <RulesTile icon="⚡" label="Olympia" hint="A: once per Age, build a card for free. B: raw materials from both neighbours cost 1; at the end, copy one guild built by a neighbour." accent="#6aa0ff" />
+                <RulesTile icon="🔥" label="The others" hint="Gizah, Rhodes, Alexandria and Ephesos give VP, shields, coins or production printed on each stage." accent="#f4d268" />
               </RulesGrid>
             </>
           ),
@@ -206,10 +244,11 @@ function Rules() {
                 <RulesTile icon="🪙" label="Coins" hint="1 VP per 3 coins." accent="#f4d268" />
                 <RulesTile icon="🏛️" label="Wonder stages" hint="Face value of every built stage." accent="#c9a47c" />
                 <RulesTile icon="📘" label="Civilian (blue)" hint="Face value VP." accent="#6aa0ff" />
-                <RulesTile icon="🛍️" label="Commercial (yellow)" hint="End-of-game effects only." accent="#e8a04a" />
-                <RulesTile icon="🎭" label="Guilds (purple)" hint="End-of-game effects (lots of conditional VP)." accent="#b984c9" />
-                <RulesTile icon="🔬" label="Science (green)" hint="t² + c² + g² + 7 · min(t,c,g). Wild symbols pick highest." accent="#9ed27c" />
+                <RulesTile icon="🛍️" label="Commercial (yellow)" hint="Age III yellows' VP per card / stage." accent="#e8a04a" />
+                <RulesTile icon="🎭" label="Guilds (purple)" hint="VP per card, stage or defeat token they count." accent="#b984c9" />
+                <RulesTile icon="🔬" label="Science (green)" hint="t² + c² + g² + 7 · min(t,c,g). Wild symbols become whichever scores most." accent="#9ed27c" />
               </RulesGrid>
+              <p>The most points wins; a tie goes to the most coins, and a tie on both is shared.</p>
             </>
           ),
         },
@@ -244,6 +283,59 @@ function Rules() {
 
 const ROMAN = ['', 'I', 'II', 'III'] as const;
 
+type Mode = 'build' | 'free' | 'wonder' | 'discard';
+
+/** What a city did on the last resolved turn (public information only: a sold
+ *  or tucked card stays face down). */
+type LastMove =
+  | { kind: 'build'; cardName: string }
+  | { kind: 'wonder'; stage: number }
+  | { kind: 'discard' };
+
+interface LastTurn {
+  moves: Map<PlayerId, LastMove[]>;
+  /** Cards built on that turn, to pop in. */
+  freshCards: Set<number>;
+  /** Cities that built a wonder stage on it. */
+  freshStage: Set<PlayerId>;
+}
+
+/** The most recently resolved turn, read back off the log (reveals plus any
+ *  Halicarnassus build that followed). Empty at the start of an Age. */
+function lastTurn(state: SwState): LastTurn {
+  const out: LastTurn = { moves: new Map(), freshCards: new Set(), freshStage: new Set() };
+  const add = (id: PlayerId, m: LastMove) => out.moves.set(id, [m, ...(out.moves.get(id) ?? [])]);
+  let collecting = false;
+  for (let i = state.log.length - 1; i >= 0; i--) {
+    const e = state.log[i];
+    if (e.kind === 'pickSubmitted' && !collecting) continue;
+    if (e.kind === 'discardBuilt') {
+      collecting = true;
+      if (e.cardId !== null && e.cardName) {
+        add(e.playerId, { kind: 'build', cardName: e.cardName });
+        out.freshCards.add(e.cardId);
+      }
+      continue;
+    }
+    if (e.kind !== 'pickRevealed') break;
+    collecting = true;
+    if (e.pick.kind === 'build') {
+      add(e.playerId, { kind: 'build', cardName: e.cardName });
+      out.freshCards.add(e.pick.cardId);
+    } else if (e.pick.kind === 'wonder') {
+      add(e.playerId, { kind: 'wonder', stage: e.pick.stageIndex + 1 });
+      out.freshStage.add(e.playerId);
+    } else {
+      add(e.playerId, { kind: 'discard' });
+    }
+  }
+  return out;
+}
+
+function seatName(state: SwState, id: PlayerId | null | undefined): string {
+  return state.seats.find((s) => s.id === id)?.name ?? id ?? '?';
+}
+
 function GameView({
   state,
   localPlayerId,
@@ -254,15 +346,16 @@ function GameView({
   dispatch: (a: SwAction) => void;
 }) {
   const [selectedCardId, setSelectedCardId] = useState<number | null>(null);
-  const [mode, setMode] = useState<'build' | 'wonder' | 'discard' | null>(null);
+  const [mode, setMode] = useState<Mode | null>(null);
 
   useEffect(() => {
     setSelectedCardId(null);
     setMode(null);
-  }, [state.age, state.ageRound, state.subPhase]);
+  }, [state.age, state.ageRound, state.subPhase, localPlayerId]);
 
   const me = state.players.find((p) => p.id === localPlayerId) ?? null;
   const mySeatName = state.seats.find((s) => s.id === localPlayerId)?.name ?? 'You';
+  const last = useMemo(() => lastTurn(state), [state]);
 
   if (state.phase === 'gameOver') {
     return <GameOver state={state} />;
@@ -283,15 +376,14 @@ function GameView({
     );
   }
 
-  const submittedCount = state.players.filter((p) => p.pendingPick !== null).length;
   const header = (
     <>
-      <StatusBar state={state} submittedCount={submittedCount} />
-      <Opponents state={state} localPlayerId={localPlayerId} />
+      <StatusBar state={state} me={me} />
+      <Opponents state={state} localPlayerId={localPlayerId} last={last} />
       {me && (
         <div className="sw-self">
-          <WonderBoard wonder={wonderById(me.wonderId)} built={me.wonderStagesBuilt} highlightNext />
-          <SelfCity player={me} />
+          <WonderBoard wonder={wonderById(me.wonderId)} built={me.wonderStagesBuilt} highlightNext fresh={last.freshStage.has(me.id)} />
+          <SelfCity player={me} fresh={last.freshCards} />
         </div>
       )}
     </>
@@ -313,6 +405,17 @@ function GameView({
         </div>
       );
     }
+  }
+
+  if (state.subPhase === 'discardBuild') {
+    return (
+      <div className="sw">
+        <div className="sw-board">
+          {header}
+          <DiscardBuildPanel state={state} me={me} dispatch={dispatch} />
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -339,28 +442,38 @@ function GameView({
   );
 }
 
-function StatusBar({ state, submittedCount }: { state: SwState; submittedCount: number }) {
+function StatusBar({ state, me }: { state: SwState; me: SwPlayer | null }) {
   const picking = state.subPhase === 'picking';
+  const waiting = state.players.filter((p) => p.hand.length > 0 || p.pendingPick !== null);
+  const submittedCount = waiting.filter((p) => p.pendingPick !== null).length;
+  const n = state.players.length;
+  const idx = me ? state.players.findIndex((p) => p.id === me.id) : -1;
+  const toWest = state.passDirection === 'cw';
+  const target = idx >= 0 ? state.players[toWest ? (idx - 1 + n) % n : (idx + 1) % n] : null;
   return (
     <div className="sw-status">
       <span className="sw-pill sw-pill-age" style={{ ['--sw-age' as string]: AGE_HEX[state.age] }}>
         <AgeIcon age={state.age} size={22} />
-        Age {ROMAN[state.age]}{picking && <> · pick {state.ageRound} of 6</>}
+        Age {ROMAN[state.age]}
+        {picking && (state.ageRound <= 6 ? <> · pick {state.ageRound} of 6</> : <> · the 7th card</>)}
       </span>
-      {picking && (
+      {picking && state.ageRound <= 6 && (
         <span className="sw-pill" title="Hands pass this way after every pick">
-          <span className="sw-pass">{state.passDirection === 'cw' ? '↻' : '↺'}</span>
-          Pass {state.passDirection === 'cw' ? 'clockwise' : 'counter-clockwise'}
+          {toWest && <ArrowIcon dir="west" size={12} light />}
+          {target
+            ? <>Pass {toWest ? 'left' : 'right'} to <strong>{seatName(state, target.id)}</strong></>
+            : <>Pass {toWest ? 'left (west)' : 'right (east)'}</>}
+          {!toWest && <ArrowIcon dir="east" size={12} light />}
         </span>
       )}
-      {picking && <span className="sw-pill">Picked {submittedCount} / {state.players.length}</span>}
-      <span className="sw-pill" title="Discarded cards">Discard pile · {state.discard.length}</span>
+      {picking && <span className="sw-pill">Picked {submittedCount} / {waiting.length}</span>}
+      <span className="sw-pill" title="Discarded cards (face down)">Discard pile · {state.discard.length}</span>
     </div>
   );
 }
 
 /** Opponents in table order, from the west neighbour round to the east one. */
-function Opponents({ state, localPlayerId }: { state: SwState; localPlayerId: PlayerId | null }) {
+function Opponents({ state, localPlayerId, last }: { state: SwState; localPlayerId: PlayerId | null; last: LastTurn }) {
   const n = state.players.length;
   const idx = state.players.findIndex((p) => p.id === localPlayerId);
   const order: Array<{ player: SwPlayer; side: 'west' | 'east' | null }> = idx < 0
@@ -371,15 +484,23 @@ function Opponents({ state, localPlayerId }: { state: SwState; localPlayerId: Pl
     }));
   return (
     <div className="sw-opponents">
-      {order.map(({ player, side }) => <OpponentStrip key={player.id} player={player} side={side} state={state} />)}
+      {order.map(({ player, side }) => <OpponentStrip key={player.id} player={player} side={side} state={state} last={last} />)}
     </div>
   );
 }
 
-function OpponentStrip({ player, side, state }: { player: SwPlayer; side: 'west' | 'east' | null; state: SwState }) {
+function moveText(m: LastMove): string {
+  if (m.kind === 'build') return `built ${m.cardName}`;
+  if (m.kind === 'wonder') return `built wonder stage ${m.stage}`;
+  return 'sold a card for 3 coins';
+}
+
+function OpponentStrip({ player, side, state, last }: { player: SwPlayer; side: 'west' | 'east' | null; state: SwState; last: LastTurn }) {
   const seat = state.seats.find((s) => s.id === player.id);
   const submitted = player.pendingPick != null;
+  const owes = player.hand.length > 0 && !submitted;
   const cards = [...player.tableau, ...(player.leaderTableau ?? [])];
+  const moves = last.moves.get(player.id) ?? [];
   return (
     <div className={`sw-opp ${side ? `sw-opp-${side}` : ''} ${submitted ? 'done' : ''}`}>
       <header>
@@ -388,13 +509,18 @@ function OpponentStrip({ player, side, state }: { player: SwPlayer; side: 'west'
         {seat?.isAI && <span className="sw-tag">AI</span>}
         {side === 'west' && <span className="sw-tag sw-tag-side"><ArrowIcon dir="west" size={10} light /> West neighbour</span>}
         {side === 'east' && <span className="sw-tag sw-tag-side">East neighbour <ArrowIcon dir="east" size={10} light /></span>}
-        {state.subPhase === 'picking' && <span className={`sw-opp-state ${submitted ? 'on' : ''}`}>{submitted ? '✓ picked' : 'choosing…'}</span>}
+        {state.subPhase === 'picking' && (submitted || owes) && (
+          <span className={`sw-opp-state ${submitted ? 'on' : ''}`}>{submitted ? '✓ picked' : 'choosing…'}</span>
+        )}
       </header>
+      {moves.length > 0 && (
+        <p className="sw-opp-last" key={moves.map(moveText).join('|')}>Last turn: {moves.map(moveText).join(', then ')}</p>
+      )}
       <div className="sw-opp-row">
-        <WonderMini wonder={wonderById(player.wonderId)} built={player.wonderStagesBuilt} />
+        <WonderMini wonder={wonderById(player.wonderId)} built={player.wonderStagesBuilt} fresh={last.freshStage.has(player.id)} />
         <CityStats player={player} />
       </div>
-      {cards.length > 0 ? <TableauColumns cards={cards} size="sm" /> : <p className="sw-empty">No buildings yet.</p>}
+      {cards.length > 0 ? <TableauColumns cards={cards} size="sm" fresh={last.freshCards} /> : <p className="sw-empty">No buildings yet.</p>}
     </div>
   );
 }
@@ -409,6 +535,9 @@ function scienceCounts(player: SwPlayer): Record<SwScience, number> {
 
 function CityStats({ player }: { player: SwPlayer }) {
   const sci = scienceCounts(player);
+  const wonder = wonderById(player.wonderId);
+  const wild = [...player.tableau, ...wonder.stages.slice(0, player.wonderStagesBuilt)]
+    .reduce((n, x) => n + x.effects.filter((e) => e.kind === 'scienceWild').length, 0);
   return (
     <div className="sw-stats">
       <span className="sw-stat" title="Coins"><CoinIcon size={18} />{player.coins}</span>
@@ -416,6 +545,7 @@ function CityStats({ player }: { player: SwPlayer }) {
       {(Object.keys(sci) as SwScience[]).filter((s) => sci[s] > 0).map((s) => (
         <span key={s} className="sw-stat"><ScienceIcon s={s} size={18} />{sci[s]}</span>
       ))}
+      {wild > 0 && <span className="sw-stat" title="Science symbols of their choice"><ScienceIcon s="any" size={18} />{wild}</span>}
       {player.debtTokens ? <span className="sw-stat"><DebtIcon size={18} />{player.debtTokens}</span> : null}
       {player.diplomacyTokens ? <span className="sw-stat"><DiplomacyIcon size={18} />{player.diplomacyTokens}</span> : null}
       {player.militaryTokens.length > 0 && (
@@ -427,7 +557,7 @@ function CityStats({ player }: { player: SwPlayer }) {
   );
 }
 
-function SelfCity({ player }: { player: SwPlayer }) {
+function SelfCity({ player, fresh }: { player: SwPlayer; fresh: ReadonlySet<number> }) {
   const cards = [...player.tableau, ...(player.leaderTableau ?? [])];
   return (
     <div className="sw-panel sw-self-city">
@@ -437,7 +567,7 @@ function SelfCity({ player }: { player: SwPlayer }) {
       </h3>
       {cards.length === 0
         ? <p className="sw-empty">You haven't built anything yet. Built cards tuck in here by colour.</p>
-        : <TableauColumns cards={cards} size="md" />}
+        : <TableauColumns cards={cards} size="md" fresh={fresh} />}
     </div>
   );
 }
@@ -459,8 +589,8 @@ function HandPanel({
   state: SwState; me: SwPlayer; mySeatName: string;
   selectedCardId: number | null;
   setSelectedCardId: (n: number | null) => void;
-  mode: 'build' | 'wonder' | 'discard' | null;
-  setMode: (m: 'build' | 'wonder' | 'discard' | null) => void;
+  mode: Mode | null;
+  setMode: (m: Mode | null) => void;
   submitted: boolean;
   dispatch: (a: SwAction) => void;
 }) {
@@ -469,6 +599,7 @@ function HandPanel({
   const stageIdx = me.wonderStagesBuilt;
   const canBuildAnotherStage = stageIdx < wonder.stages.length;
   const pending = me.pendingPick;
+  const freeBuild = canBuildFree(state, me);
 
   // For the build mode: compute payment plan automatically (cheapest).
   const buildPlan = useMemo(() => {
@@ -483,10 +614,36 @@ function HandPanel({
 
   const statuses = useMemo(() => new Map(me.hand.map((c) => [c.id, cardStatus(state, me, c)])), [state, me]);
 
+  // Players sharing a device: once your pick is locked in, your hand stays
+  // hidden — whoever looks at the screen next may not be you.
+  const humans = state.seats.filter((s) => !s.isAI).length;
+  const hideHand = submitted && humans >= 2;
+
+  if (me.hand.length === 0 && !pending) {
+    const babylon = state.players.filter((p) => p.hand.length > 0).map((p) => seatName(state, p.id));
+    return (
+      <div className="sw-panel sw-hand-area">
+        <h3><span>{mySeatName}'s hand · empty</span></h3>
+        <p className="sw-hint">
+          {babylon.length > 0
+            ? `${babylon.join(' and ')} play${babylon.length === 1 ? 's' : ''} the Age's 7th card (Hanging Gardens of Babylon).`
+            : 'Waiting for the others…'}
+        </p>
+      </div>
+    );
+  }
+
   function submit() {
     if (!card || submitted) return;
     if (mode === 'discard') {
       dispatch({ type: 'submitPick', playerId: me.id, pick: { kind: 'discard', cardId: card.id } });
+      return;
+    }
+    if (mode === 'free') {
+      dispatch({
+        type: 'submitPick', playerId: me.id,
+        pick: { kind: 'build', cardId: card.id, payment: { fromWest: [], fromEast: [], coins: 0 }, free: true },
+      });
       return;
     }
     if (mode === 'build' && buildPlan) {
@@ -510,15 +667,20 @@ function HandPanel({
   const hasBilkis = (me.leaderTableau ?? []).some((c) => c.name === 'Bilkis');
   const dup = card ? me.tableau.some((t) => t.name === card.name) : false;
   const pendingLabel = pending
-    ? pending.kind === 'build' ? 'build' : pending.kind === 'wonder' ? `bury under stage ${pending.stageIndex + 1}` : 'sell for 3 coins'
+    ? pending.kind === 'build' ? (pending.free ? 'build for free' : 'build') : pending.kind === 'wonder' ? `build wonder stage ${pending.stageIndex + 1}` : 'sell for 3 coins'
     : '';
+  const lastCard = state.ageRound === 7;
 
   return (
     <div className="sw-panel sw-hand-area">
       <h3>
         <span>{mySeatName}'s hand · {me.hand.length} card{me.hand.length === 1 ? '' : 's'}</span>
         <span className="sw-hint">
-          {submitted ? `Locked in: ${pendingLabel}. Waiting for the others…` : 'Pick a card, then build it, bury it under your wonder or sell it.'}
+          {submitted
+            ? `Locked in: ${pendingLabel}. Waiting for the others…`
+            : lastCard
+              ? 'The Hanging Gardens let you play the 7th card: build it, use it for a stage or sell it.'
+              : 'Pick a card, then build it, use it for a wonder stage or sell it.'}
         </span>
       </h3>
 
@@ -533,23 +695,26 @@ function HandPanel({
         </div>
       )}
 
-      <div className="sw-hand">
-        {me.hand.map((c) => (
-          <CardFace
-            key={c.id}
-            card={c}
-            selected={c.id === selectedCardId || pending?.cardId === c.id}
-            disabled={submitted && pending?.cardId !== c.id}
-            status={statuses.get(c.id)}
-            onClick={submitted ? undefined : () => {
-              setSelectedCardId(c.id);
-              const st = statuses.get(c.id);
-              setMode(st?.kind === 'owned' || st?.kind === 'blocked' ? 'discard' : 'build');
-            }}
-          />
-        ))}
-        {me.hand.length === 0 && <p className="sw-empty">No cards in hand.</p>}
-      </div>
+      {hideHand
+        ? <p className="sw-empty">Your hand is hidden until the turn is revealed.</p>
+        : (
+          <div className="sw-hand">
+            {me.hand.map((c) => (
+              <CardFace
+                key={c.id}
+                card={c}
+                selected={c.id === selectedCardId || pending?.cardId === c.id}
+                disabled={submitted && pending?.cardId !== c.id}
+                status={statuses.get(c.id)}
+                onClick={submitted ? undefined : () => {
+                  setSelectedCardId(c.id);
+                  const st = statuses.get(c.id);
+                  setMode(st?.kind === 'owned' ? 'discard' : st?.kind === 'blocked' ? (freeBuild ? 'free' : 'discard') : 'build');
+                }}
+              />
+            ))}
+          </div>
+        )}
 
       {!submitted && card && (
         <div className="sw-pay-dialog">
@@ -560,9 +725,20 @@ function HandPanel({
               disabled={dup}
               title={dup ? 'You already have one in your city.' : ''}
             >
-              <span className="sw-choice-icon"><EffectIcons effects={card.effects} name={card.name} size={16} /></span>
+              <span className="sw-choice-icon"><EffectIcons effects={card.effects} size={16} /></span>
               Build {card.name}
             </button>
+            {freeBuild && (
+              <button
+                className={`sw-choice ${mode === 'free' ? 'on' : ''}`}
+                onClick={() => setMode('free')}
+                disabled={dup}
+                title="Statue of Zeus: once per Age, build a card for free"
+              >
+                <span className="sw-choice-icon"><WonderPowerIcon power="freeBuildPerAge" size={18} /></span>
+                Build free (once this Age)
+              </button>
+            )}
             <button
               className={`sw-choice ${mode === 'wonder' ? 'on' : ''}`}
               onClick={() => setMode('wonder')}
@@ -570,7 +746,7 @@ function HandPanel({
               title={canBuildAnotherStage ? '' : 'Your wonder is complete.'}
             >
               <span className="sw-choice-icon"><WonderStageIcon size={18} /></span>
-              {canBuildAnotherStage ? `Bury under stage ${stageIdx + 1}` : 'Wonder complete'}
+              {canBuildAnotherStage ? `Wonder stage ${stageIdx + 1}` : 'Wonder complete'}
             </button>
             <button className={`sw-choice ${mode === 'discard' ? 'on' : ''}`} onClick={() => setMode('discard')}>
               <span className="sw-choice-icon"><CoinIcon n={3} size={18} /></span>
@@ -580,12 +756,17 @@ function HandPanel({
 
           <div className="sw-plan">
             {mode === 'build' && <BuildSummary card={card} plan={buildPlan} />}
+            {mode === 'free' && (
+              <p className="sw-plan-row">
+                <WonderPowerIcon power="freeBuildPerAge" size={16} /> Build <strong>{card.name}</strong> without paying anything — your free build for Age {ROMAN[state.age]}.
+              </p>
+            )}
             {mode === 'wonder' && canBuildAnotherStage && <WonderSummary stage={wonder.stages[stageIdx]} plan={wonderPlan} />}
             {mode === 'discard' && <p className="sw-plan-row">Discard <strong>{card.name}</strong> face down and take <CoinIcon n={3} size={16} /> from the bank.</p>}
           </div>
 
           <div className="sw-actions">
-            <button onClick={submit} disabled={!canSubmit(card, me, mode, buildPlan, wonderPlan)}>
+            <button onClick={submit} disabled={!canSubmit(card, me, mode, buildPlan, wonderPlan, freeBuild)}>
               Confirm
             </button>
             <button className="secondary" onClick={() => { setSelectedCardId(null); setMode(null); }}>
@@ -601,20 +782,66 @@ function HandPanel({
 function canSubmit(
   card: SwCard | null,
   me: SwPlayer,
-  mode: 'build' | 'wonder' | 'discard' | null,
-  buildPlan: ReturnType<typeof computeBuildPlan> | null,
-  wonderPlan: ReturnType<typeof computeWonderPlan> | null,
+  mode: Mode | null,
+  buildPlan: PlanResult | null,
+  wonderPlan: PlanResult | null,
+  freeBuild: boolean,
 ): boolean {
   if (!card || !mode) return false;
   if (mode === 'discard') return true;
-  if (mode === 'build') {
-    if (me.tableau.some((t) => t.name === card.name)) return false;
-    return buildPlan?.canBuild === true;
-  }
-  if (mode === 'wonder') {
-    return wonderPlan?.canBuild === true;
-  }
+  const dup = me.tableau.some((t) => t.name === card.name);
+  if (mode === 'free') return freeBuild && !dup;
+  if (mode === 'build') return !dup && buildPlan?.canBuild === true;
+  if (mode === 'wonder') return wonderPlan?.canBuild === true;
   return false;
+}
+
+/** Halicarnassus: the discard pile, face up for its builder only. */
+function DiscardBuildPanel({ state, me, dispatch }: { state: SwState; me: SwPlayer | null; dispatch: (a: SwAction) => void }) {
+  const [selected, setSelected] = useState<number | null>(null);
+  const pickerId = state.discardBuildQueue?.[0] ?? null;
+  const picker = state.players.find((p) => p.id === pickerId);
+  const wonderName = picker ? wonderById(picker.wonderId).name : '';
+  if (!me || me.id !== pickerId) {
+    return (
+      <div className="sw-panel sw-hand-area">
+        <h3><span className="sw-h-icon"><WonderPowerIcon power="buildFromDiscard" size={20} /> {wonderName}</span></h3>
+        <p className="sw-hint">{seatName(state, pickerId)} is searching the discard pile for a card to build for free…</p>
+      </div>
+    );
+  }
+  const buildable = new Set(discardBuildOptions(state, me).map((c) => c.id));
+  const cards = [...state.discard].sort((a, b) => a.age - b.age || a.name.localeCompare(b.name));
+  const card = cards.find((c) => c.id === selected) ?? null;
+  return (
+    <div className="sw-panel sw-hand-area sw-discard-build">
+      <h3>
+        <span className="sw-h-icon"><WonderPowerIcon power="buildFromDiscard" size={20} /> {wonderName} · the discard pile ({cards.length})</span>
+        <span className="sw-hint">Build one of these cards for free. You can't take one you already have.</span>
+      </h3>
+      <div className="sw-hand">
+        {cards.map((c) => (
+          <CardFace
+            key={c.id}
+            card={c}
+            size="md"
+            selected={c.id === selected}
+            disabled={!buildable.has(c.id)}
+            status={buildable.has(c.id) ? { kind: 'free' } : { kind: 'owned' }}
+            onClick={buildable.has(c.id) ? () => setSelected(c.id) : undefined}
+          />
+        ))}
+      </div>
+      <div className="sw-actions">
+        <button disabled={!card} onClick={() => card && dispatch({ type: 'buildFromDiscard', playerId: me.id, cardId: card.id })}>
+          {card ? `Build ${card.name}` : 'Pick a card'}
+        </button>
+        <button className="secondary" onClick={() => dispatch({ type: 'buildFromDiscard', playerId: me.id, cardId: null })}>
+          Build nothing
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function Purchases({ plan }: { plan: PlanResult }) {
@@ -689,28 +916,30 @@ function MilitaryBanner({ state }: { state: SwState }) {
     <div className="sw-panel sw-military-banner">
       <h3><span className="sw-h-icon"><ShieldIcon size={22} /> Age {ROMAN[summary.age]} — military conflicts</span></h3>
       <p className="sw-hint">Every city compares shields with both neighbours: the stronger side takes a victory token, the weaker one a defeat token.</p>
-      <table className="sw-table">
-        <thead>
-          <tr><th>City</th><th><ShieldIcon size={16} /></th><th>vs west</th><th>vs east</th><th>This age</th></tr>
-        </thead>
-        <tbody>
-          {summary.perPlayer.map((row) => {
-            const p = state.players.find((x) => x.id === row.playerId);
-            const seat = state.seats.find((s) => s.id === row.playerId);
-            return (
-              <tr key={row.playerId}>
-                <td><span className="sw-dot" style={{ background: seat?.color ?? '#888' }} /> {seat?.name ?? row.playerId}</td>
-                <td>{p ? shieldsFor(p) : '—'}</td>
-                <td><ResultCell result={row.vsWest} age={summary.age} /></td>
-                <td><ResultCell result={row.vsEast} age={summary.age} /></td>
-                <td className={row.tokenGained > 0 ? 'sw-good' : row.tokenGained < 0 ? 'sw-bad' : ''}>
-                  {row.tokenGained > 0 ? `+${row.tokenGained}` : row.tokenGained}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+      <div className="sw-table-scroll">
+        <table className="sw-table">
+          <thead>
+            <tr><th>City</th><th><ShieldIcon size={16} /></th><th>vs west</th><th>vs east</th><th>This age</th></tr>
+          </thead>
+          <tbody>
+            {summary.perPlayer.map((row) => {
+              const p = state.players.find((x) => x.id === row.playerId);
+              const seat = state.seats.find((s) => s.id === row.playerId);
+              return (
+                <tr key={row.playerId}>
+                  <td><span className="sw-dot" style={{ background: seat?.color ?? '#888' }} /> {seat?.name ?? row.playerId}</td>
+                  <td>{p ? shieldsFor(p) : '—'}</td>
+                  <td><ResultCell result={row.vsWest} age={summary.age} /></td>
+                  <td><ResultCell result={row.vsEast} age={summary.age} /></td>
+                  <td className={row.tokenGained > 0 ? 'sw-good' : row.tokenGained < 0 ? 'sw-bad' : ''}>
+                    {row.tokenGained > 0 ? `+${row.tokenGained}` : row.tokenGained}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -719,10 +948,12 @@ const EXTRA_ICON: Record<string, SwCardColor> = { leaders: 'leader', cities: 'bl
 
 function GameOver({ state }: { state: SwState }) {
   const breakdown = state.finalScoringBreakdown ?? [];
-  const sorted = [...breakdown].sort((a, b) => b.total - a.total);
-  const winnerId = sorted[0]?.playerId ?? null;
-  const winnerSeat = state.seats.find((s) => s.id === winnerId);
-  const winner = state.players.find((p) => p.id === winnerId);
+  const { sorted, winnerIds } = rankRows(state, breakdown);
+  const winners = winnerIds.map((id) => state.players.find((p) => p.id === id)).filter((p): p is SwPlayer => !!p);
+  const top = sorted[0];
+  // Did the coins decide it?
+  const onCoins = winnerIds.length === 1 && sorted.length > 1 && sorted[1].total === top?.total;
+  const copies = breakdown.filter((r) => r.copiedGuild);
   // Collect extras columns from active expansions.
   const extraCategories = Array.from(new Set(
     getActiveExpansions(state.config).flatMap((e) => e.scoreCategories ?? [])
@@ -734,49 +965,66 @@ function GameOver({ state }: { state: SwState }) {
           <div className="sw-gameover-title">
             <VpIcon size={46} />
             <div>
-              <h2>{winnerSeat ? `${winnerSeat.name} wins!` : 'Match complete'}</h2>
-              {sorted[0] && <p className="sw-hint">{sorted[0].total} victory points{winner && <> · {wonderById(winner.wonderId).name}</>}</p>}
+              <h2>
+                {winners.length === 1
+                  ? `${seatName(state, winners[0].id)} wins!`
+                  : winners.length > 1 ? `${winners.map((w) => seatName(state, w.id)).join(' & ')} share the victory` : 'Match complete'}
+              </h2>
+              {top && (
+                <p className="sw-hint">
+                  {top.total} victory points
+                  {winners.length === 1 && <> · {wonderById(winners[0].wonderId).name}</>}
+                  {onCoins && <> · ahead on coins</>}
+                </p>
+              )}
             </div>
           </div>
-          <table className="sw-table sw-final-table">
-            <thead>
-              <tr>
-                <th>City</th>
-                <th title="Military"><ShieldIcon size={18} /></th>
-                <th title="Treasury (1 VP per 3 coins)"><CoinIcon size={18} /></th>
-                <th title="Wonder"><WonderStageIcon size={18} /></th>
-                <th title="Civilian"><ColorChip color="blue" size={18} /></th>
-                <th title="Commercial"><ColorChip color="yellow" size={18} /></th>
-                <th title="Guilds"><ColorChip color="purple" size={18} /></th>
-                <th title="Science"><ScienceIcon s="gear" size={18} /></th>
-                {extraCategories.map((c) => (
-                  <th key={c} title={c}>{EXTRA_ICON[c] ? <ColorChip color={EXTRA_ICON[c]} size={18} /> : <span style={{ textTransform: 'capitalize' }}>{c}</span>}</th>
-                ))}
-                <th title="Total"><VpIcon size={20} /></th>
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map((row) => {
-                const seat = state.seats.find((s) => s.id === row.playerId);
-                return (
-                  <tr key={row.playerId} className={row.playerId === winnerId ? 'sw-winner' : ''}>
-                    <td><span className="sw-dot" style={{ background: seat?.color ?? '#888' }} /> {seat?.name ?? row.playerId}</td>
-                    <td>{row.military}</td>
-                    <td>{row.treasury}</td>
-                    <td>{row.wonder}</td>
-                    <td>{row.civilian}</td>
-                    <td>{row.commercial}</td>
-                    <td>{row.guild}</td>
-                    <td>{row.science}</td>
-                    {extraCategories.map((c) => (
-                      <td key={c}>{row.extras?.[c] ?? 0}</td>
-                    ))}
-                    <td><strong>{row.total}</strong></td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <div className="sw-table-scroll">
+            <table className="sw-table sw-final-table">
+              <thead>
+                <tr>
+                  <th>City</th>
+                  <th title="Military"><ShieldIcon size={18} /></th>
+                  <th title="Treasury (1 VP per 3 coins)"><CoinIcon size={18} /></th>
+                  <th title="Wonder"><WonderStageIcon size={18} /></th>
+                  <th title="Civilian"><ColorChip color="blue" size={18} /></th>
+                  <th title="Commercial"><ColorChip color="yellow" size={18} /></th>
+                  <th title="Guilds"><ColorChip color="purple" size={18} /></th>
+                  <th title="Science"><ScienceIcon s="gear" size={18} /></th>
+                  {extraCategories.map((c) => (
+                    <th key={c} title={c}>{EXTRA_ICON[c] ? <ColorChip color={EXTRA_ICON[c]} size={18} /> : <span style={{ textTransform: 'capitalize' }}>{c}</span>}</th>
+                  ))}
+                  <th title="Total"><VpIcon size={20} /></th>
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map((row) => {
+                  const seat = state.seats.find((s) => s.id === row.playerId);
+                  return (
+                    <tr key={row.playerId} className={winnerIds.includes(row.playerId) ? 'sw-winner' : ''}>
+                      <td><span className="sw-dot" style={{ background: seat?.color ?? '#888' }} /> {seat?.name ?? row.playerId}</td>
+                      <td>{row.military}</td>
+                      <td>{row.treasury}</td>
+                      <td>{row.wonder}</td>
+                      <td>{row.civilian}</td>
+                      <td>{row.commercial}</td>
+                      <td title={row.copiedGuild ? `Includes the copied ${row.copiedGuild}` : undefined}>{row.guild}</td>
+                      <td>{row.science}</td>
+                      {extraCategories.map((c) => (
+                        <td key={c}>{row.extras?.[c] ?? 0}</td>
+                      ))}
+                      <td><strong>{row.total}</strong></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {copies.map((r) => (
+            <p key={r.playerId} className="sw-hint sw-final-note">
+              <WonderPowerIcon power="copyGuild" size={16} /> {seatName(state, r.playerId)}'s Statue of Zeus copies the {r.copiedGuild}.
+            </p>
+          ))}
         </div>
         <div className="sw-opponents">
           {sorted.map((row) => {
@@ -813,40 +1061,29 @@ interface PlanResult {
   totalCoins: number;
 }
 
+function fromPaymentPlan(plan: PaymentPlan): PlanResult {
+  if (plan.ok) {
+    return {
+      canBuild: true, chainFree: false,
+      fromWest: plan.payment.fromWest, fromEast: plan.payment.fromEast,
+      coinsToWest: plan.toWest, coinsToEast: plan.toEast,
+      totalCoins: plan.totalCoins,
+    };
+  }
+  return {
+    canBuild: false, chainFree: false,
+    reason: plan.reason === 'coins'
+      ? `Not enough coins (it costs ${plan.totalCoins}).`
+      : 'Neither you nor your neighbours produce what it needs.',
+    fromWest: [], fromEast: [], coinsToWest: 0, coinsToEast: 0, totalCoins: plan.totalCoins,
+  };
+}
+
 function computeBuildPlan(state: SwState, me: SwPlayer, card: SwCard): PlanResult {
-  // Chain free build.
   if (canChainBuild(me, card)) {
     return { canBuild: true, chainFree: true, fromWest: [], fromEast: [], coinsToWest: 0, coinsToEast: 0, totalCoins: 0 };
   }
-  const effCost = effectiveCostFor(state, me, { kind: 'card', card });
-  const sf = shortfall(state, me, effCost);
-  if (sf.selfCovers) {
-    const total = effCost.coins ?? 0;
-    if (me.coins < total) {
-      return { canBuild: false, chainFree: false, reason: 'Not enough coins.', fromWest: [], fromEast: [], coinsToWest: 0, coinsToEast: 0, totalCoins: total };
-    }
-    return { canBuild: true, chainFree: false, fromWest: [], fromEast: [], coinsToWest: 0, coinsToEast: 0, totalCoins: total };
-  }
-  const plan = suggestCheapestPurchase(state, me, sf.stillNeed);
-  if (!plan) {
-    return { canBuild: false, chainFree: false, reason: 'Neighbors cannot supply needed resources.', fromWest: [], fromEast: [], coinsToWest: 0, coinsToEast: 0, totalCoins: 0 };
-  }
-  const baseCoins = effCost.coins ?? 0;
-  const total = baseCoins + plan.coins;
-  if (me.coins < total) {
-    return { canBuild: false, chainFree: false, reason: 'Not enough coins.', fromWest: plan.fromWest, fromEast: plan.fromEast, coinsToWest: 0, coinsToEast: 0, totalCoins: total };
-  }
-  // Validate via reducer logic.
-  const v = validatePayment(state, me, effCost, { fromWest: plan.fromWest, fromEast: plan.fromEast, coins: 0 });
-  if (!v.ok) {
-    return { canBuild: false, chainFree: false, reason: v.error, fromWest: plan.fromWest, fromEast: plan.fromEast, coinsToWest: 0, coinsToEast: 0, totalCoins: total };
-  }
-  return {
-    canBuild: true, chainFree: false,
-    fromWest: plan.fromWest, fromEast: plan.fromEast,
-    coinsToWest: v.toWest, coinsToEast: v.toEast,
-    totalCoins: v.totalCoins,
-  };
+  return fromPaymentPlan(planPayment(state, me, effectiveCostFor(state, me, { kind: 'card', card })));
 }
 
 function computeWonderPlan(state: SwState, me: SwPlayer, stageIdx: number): PlanResult {
@@ -855,37 +1092,8 @@ function computeWonderPlan(state: SwState, me: SwPlayer, stageIdx: number): Plan
     return { canBuild: false, chainFree: false, reason: 'No more stages.', fromWest: [], fromEast: [], coinsToWest: 0, coinsToEast: 0, totalCoins: 0 };
   }
   const stage = wonder.stages[stageIdx];
-  const cost = effectiveCostFor(state, me, { kind: 'wonderStage', stageIndex: stageIdx, stage });
-  const sf = shortfall(state, me, cost);
-  if (sf.selfCovers) {
-    const total = cost.coins ?? 0;
-    if (me.coins < total) {
-      return { canBuild: false, chainFree: false, reason: 'Not enough coins.', fromWest: [], fromEast: [], coinsToWest: 0, coinsToEast: 0, totalCoins: total };
-    }
-    return { canBuild: true, chainFree: false, fromWest: [], fromEast: [], coinsToWest: 0, coinsToEast: 0, totalCoins: total };
-  }
-  const plan = suggestCheapestPurchase(state, me, sf.stillNeed);
-  if (!plan) {
-    return { canBuild: false, chainFree: false, reason: 'Neighbors cannot supply needed resources.', fromWest: [], fromEast: [], coinsToWest: 0, coinsToEast: 0, totalCoins: 0 };
-  }
-  const baseCoins = cost.coins ?? 0;
-  const total = baseCoins + plan.coins;
-  if (me.coins < total) {
-    return { canBuild: false, chainFree: false, reason: 'Not enough coins.', fromWest: plan.fromWest, fromEast: plan.fromEast, coinsToWest: 0, coinsToEast: 0, totalCoins: total };
-  }
-  const v = validatePayment(state, me, cost, { fromWest: plan.fromWest, fromEast: plan.fromEast, coins: 0 });
-  if (!v.ok) {
-    return { canBuild: false, chainFree: false, reason: v.error, fromWest: plan.fromWest, fromEast: plan.fromEast, coinsToWest: 0, coinsToEast: 0, totalCoins: total };
-  }
-  return {
-    canBuild: true, chainFree: false,
-    fromWest: plan.fromWest, fromEast: plan.fromEast,
-    coinsToWest: v.toWest, coinsToEast: v.toEast,
-    totalCoins: v.totalCoins,
-  };
+  return fromPaymentPlan(planPayment(state, me, effectiveCostFor(state, me, { kind: 'wonderStage', stageIndex: stageIdx, stage })));
 }
-
-void productionFor;
 
 export const bundle: GameUiBundle<SwState, SwAction, SwConfig> = {
   LobbyConfig,

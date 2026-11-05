@@ -25,12 +25,14 @@ export const sevenWondersModule: GameModule<SwState, SwAction, SwConfig> = {
     };
   },
 
-  validateConfig(config) {
+  validateConfig(config, seats) {
     const errors: string[] = [];
     if (config.wonderAssignment === 'preset') {
-      if (!config.presetWonders || config.presetWonders.length === 0) {
-        errors.push('Preset wonders required when wonder assignment is "preset".');
-      }
+      const names = (config.presetWonders ?? []).slice(0, seats?.length)
+        .filter((id) => WONDERS.some((w) => w.id === id))
+        .map((id) => WONDERS.find((w) => w.id === id)!.name);
+      const dup = names.find((n, i) => names.indexOf(n) !== i);
+      if (dup) errors.push(`Two seats can't both play ${dup}.`);
     }
     return errors;
   },
@@ -73,31 +75,34 @@ export const sevenWondersModule: GameModule<SwState, SwAction, SwConfig> = {
   },
 };
 
-/** Assign a wonder to each seat per config. Returns array of wonderIds parallel to seats. */
+/** Assign a wonder to each seat per config. Returns array of wonderIds parallel
+ *  to seats. With manual assignment a seat may name a wonder (and side); the
+ *  rest are dealt from the wonders nobody picked, sided per `wonderSide`. */
 function assignWonders(state: SwState, seats: Seat[]): string[] {
   const cfg = state.config;
-  if (cfg.wonderAssignment === 'preset' && cfg.presetWonders && cfg.presetWonders.length === seats.length) {
-    return cfg.presetWonders.slice();
-  }
-  // Random: shuffle all wonders, then for each seat pick side per config.
   const byName = new Map<string, { a: string; b: string }>();
   for (const w of WONDERS) {
     const slot = byName.get(w.name) ?? { a: '', b: '' };
     if (w.side === 'A') slot.a = w.id; else slot.b = w.id;
     byName.set(w.name, slot);
   }
-  const names = shuffle(state.rngState, Array.from(byName.keys()));
-  const out: string[] = [];
-  for (let i = 0; i < seats.length; i++) {
-    const slot = byName.get(names[i])!;
-    if (cfg.wonderSide === 'A') out.push(slot.a);
-    else if (cfg.wonderSide === 'B') out.push(slot.b);
-    else {
-      // random per seat — use seeded RNG, not Math.random (reducer must be pure)
-      out.push(rngInt(state.rngState, 2) === 0 ? slot.a : slot.b);
-    }
-  }
-  return out;
+  const preset = seats.map((_, i) => {
+    const id = cfg.wonderAssignment === 'preset' ? cfg.presetWonders?.[i] : undefined;
+    return WONDERS.find((w) => w.id === id) ?? null;
+  });
+  const taken = new Set(preset.filter((w) => w !== null).map((w) => w!.name));
+  // Random: shuffle the wonders nobody picked, then pick a side per config.
+  const names = shuffle(state.rngState, Array.from(byName.keys()).filter((n) => !taken.has(n)));
+  let next = 0;
+  return seats.map((_, i) => {
+    const fixed = preset[i];
+    if (fixed) return fixed.id;
+    const slot = byName.get(names[next++])!;
+    if (cfg.wonderSide === 'A') return slot.a;
+    if (cfg.wonderSide === 'B') return slot.b;
+    // random per seat — use seeded RNG, not Math.random (reducer must be pure)
+    return rngInt(state.rngState, 2) === 0 ? slot.a : slot.b;
+  });
 }
 
 /** Helper to attach seats and start the match. Called by the lobby on game start. */
@@ -113,6 +118,7 @@ export function attachSeatsAndStart(state: SwState, seats: Seat[]): SwState {
     coins: 3,
     militaryTokens: [],
     pendingPick: null,
+    freeBuildUsedAge: null,
     leaderHand: [],
     leaderTableau: [],
     leaderDraftPick: null,

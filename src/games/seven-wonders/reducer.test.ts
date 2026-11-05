@@ -2,14 +2,15 @@
 //
 // Focus: build the initial state for 3-7 player counts, drive a full match using
 // the AI as a stand-in, and confirm we land at gameOver with finalScores.
+// Rule-by-rule checks live in rules.test.ts.
 
 import { describe, it, expect } from 'vitest';
 import { sevenWondersModule, attachSeatsAndStart } from './module';
 import { applyAction } from './reducer';
-import { chooseAIAction } from './ai';
 import { wonderById } from './wonders';
 import type { SwState } from './types';
 import type { Seat } from '@/core/types';
+import { playOut } from './testSupport';
 
 function aiSeats(n: number): Seat[] {
   const out: Seat[] = [];
@@ -28,36 +29,8 @@ function makeState(n: number, seed = 7): SwState {
     seed, aiSeats(n));
 }
 
-/** Drive AI vs AI to gameOver or until step cap. */
-function runAIMatch(s: SwState, maxSteps = 600): SwState {
-  let steps = 0;
-  let cur = s;
-  while (cur.phase === 'playing' && steps < maxSteps) {
-    let advanced = false;
-    if (cur.subPhase === 'militaryEnd') {
-      cur = applyAction(cur, { type: 'continue' });
-      advanced = true;
-    } else if (cur.subPhase === 'picking') {
-      for (const p of cur.players) {
-        if (p.pendingPick !== null) continue;
-        const a = chooseAIAction(cur, p.id);
-        if (!a) {
-          // fallback: discard first card to make progress
-          cur = applyAction(cur, {
-            type: 'submitPick', playerId: p.id,
-            pick: { kind: 'discard', cardId: p.hand[0].id },
-          });
-        } else {
-          cur = applyAction(cur, a);
-        }
-        advanced = true;
-      }
-    }
-    if (!advanced) break;
-    steps += 1;
-  }
-  return cur;
-}
+/** Drive AI vs AI to gameOver. */
+const runAIMatch = (s: SwState) => playOut(s);
 
 describe('seven-wonders reducer', () => {
   it('initial state has 7 cards per player at start of Age I', () => {

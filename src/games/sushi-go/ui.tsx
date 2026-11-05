@@ -298,7 +298,7 @@ function GameView({
 
   if (state.phase === 'gameOver') {
     return (
-      <div className="ssp-layout">
+      <div className="sgp-layout">
         <div className="sgp"><GameOver state={state} /></div>
         <Sidebar state={state} mySeatName={mySeatName} />
       </div>
@@ -307,7 +307,7 @@ function GameView({
 
   if (state.subPhase === 'roundEnd') {
     return (
-      <div className="ssp-layout">
+      <div className="sgp-layout">
         <div className="sgp">
           <RoundSummary state={state} />
           <div style={{ display: 'flex', justifyContent: 'center', marginTop: 16 }}>
@@ -373,7 +373,7 @@ function GameView({
       : `Pick ${maxPick === 2 ? 'up to 2 (chopsticks)' : '1'} card${maxPick === 1 ? '' : 's'}.`;
 
   return (
-    <div className="ssp-layout">
+    <div className="sgp-layout">
       <div className="sgp">
         <div className="board">
           <div className="target-info">
@@ -485,6 +485,21 @@ function GameView({
                 })}
                 {me.hand.length === 0 && <p className="help">Empty hand.</p>}
               </div>
+              {/* Touch screens have no hover tooltips: the picked cards' rules show here instead. */}
+              {selected.length > 0 && (
+                <div className="pick-rules">
+                  {selected.map((id) => {
+                    const c = me.hand.find((h) => h.id === id);
+                    if (!c) return null;
+                    return (
+                      <div key={id}>
+                        <strong>{KIND_INFO[c.kind].label}{c.kind === 'fruit' ? ` · ${variantLabel(c)}` : ''}</strong>
+                        {' — '}{KIND_INFO[c.kind].rule}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
               {submitted && me.pendingPick && (
                 <div className="pending-pick">
                   <span style={{ fontSize: 12, opacity: 0.85 }}>
@@ -649,9 +664,11 @@ function PlayerStrip({
         </span>
       </header>
       <div className="table-strip">
-        {[...Array(player.hand.length)].map((_, i) => (
-          <FaceDownCard key={`fd-${i}`} size="small" />
-        ))}
+        <span className="backs">
+          {[...Array(player.hand.length)].map((_, i) => (
+            <FaceDownCard key={`fd-${i}`} size="small" />
+          ))}
+        </span>
         {player.table.map((c) => (
           <CardView key={c.id} card={c} size="small" />
         ))}

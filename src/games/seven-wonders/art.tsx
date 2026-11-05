@@ -398,6 +398,56 @@ export function AgeIcon({ age, size = 18 }: { age: 1 | 2 | 3; size?: number }) {
   );
 }
 
+export type WonderPower = 'buildFromDiscard' | 'playLastCard' | 'freeBuildPerAge' | 'copyGuild';
+
+const POWER_LABEL: Record<WonderPower, string> = {
+  buildFromDiscard: 'Build a card from the discard pile for free',
+  playLastCard: 'Play the 7th card of each Age',
+  freeBuildPerAge: 'Once per Age, build a card for free',
+  copyGuild: "Copy a neighbour's guild",
+};
+
+/** The base game's wonder powers (Halicarnassus, Babylon B, Olympia A / B). */
+export function WonderPowerIcon({ power, size = 18 }: { power: WonderPower; size?: number }) {
+  const card = (x: number, y: number, fill: string, rot = 0) => (
+    <rect x={x} y={y} width={8.4} height={12} rx={1.4} fill={fill} stroke={INK} strokeWidth={0.9} transform={rot ? `rotate(${rot} ${x + 4.2} ${y + 6})` : undefined} />
+  );
+  return (
+    <Icon size={size} title={POWER_LABEL[power]}>
+      {power === 'buildFromDiscard' && (
+        <g>
+          {/* the face-down pile, a card lifted off it */}
+          {card(2.4, 6.4, '#4a3a2a', -14)}
+          {card(5, 6.8, '#5c4632', -4)}
+          {card(9.2, 2.2, '#fbf3dd', 10)}
+          <path d="M13.4 13.6 V7.4 M11.2 9.6 L13.4 7.2 L15.6 9.6" {...line('#3f9a4c', 1.6)} />
+        </g>
+      )}
+      {power === 'playLastCard' && (
+        <g>
+          {card(5.8, 3.6, '#fbf3dd')}
+          <Num n={7} x={10} y={9.4} size={8.6} />
+          <path d="M4.4 17.4 H15.6" {...line('#3f9a4c', 1.6)} />
+        </g>
+      )}
+      {power === 'freeBuildPerAge' && (
+        <g>
+          {card(2.4, 3.4, '#fbf3dd')}
+          <circle cx={13.2} cy={12.4} r={4.6} fill={GOLD} stroke="#9a6d05" strokeWidth={0.9} />
+          <path d="M9.6 16 L16.8 8.8" {...line('#c03b32', 1.6)} />
+        </g>
+      )}
+      {power === 'copyGuild' && (
+        <g>
+          {card(2.6, 4.6, '#7c55b0', -10)}
+          {card(9, 3.4, '#a585d3', 8)}
+          <path d="M7.4 16.8 Q10 18.6 12.6 16.8 M11.2 15.6 L12.8 16.8 L11.4 18.2" {...line(INK, 1)} />
+        </g>
+      )}
+    </Icon>
+  );
+}
+
 // ===========================================================================
 // Card scenes (120 × 80)
 

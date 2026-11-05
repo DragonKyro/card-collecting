@@ -14,7 +14,7 @@
 //   - military track: 760 × 92 (19 spaces, −9 … +9).
 
 import type { ReactNode } from 'react';
-import type { DuelCardColor, DuelProgressTokenId, DuelResource, DuelScience } from './types';
+import type { DuelCardColor, DuelChainSymbol, DuelProgressTokenId, DuelResource, DuelScience } from './types';
 
 const INK = '#2b1d12';
 const FONT = 'ui-sans-serif, system-ui, sans-serif';
@@ -481,33 +481,15 @@ export function ScienceGlyph({ symbol, bare = false }: { symbol: DuelScience; ba
 
 function ScienceSymbol({ symbol }: { symbol: DuelScience }) {
   switch (symbol) {
-    case 'compass':
+    case 'globe': // armillary sphere
       return (
         <g>
-          <path d="M11.2 7.4 L6.8 18.4 M12.8 7.4 L17.2 18.4" {...line(INK, 2.4)} />
-          <path d="M11.2 7.4 L6.8 18.4 M12.8 7.4 L17.2 18.4" {...line('#b9884a', 1)} />
-          <path d="M8.6 14.2 Q12 16.6 15.4 14.2" {...line(INK, 1)} />
-          <circle cx={12} cy={6.2} r={2.1} fill={GOLD} {...LINE} />
-        </g>
-      );
-    case 'gear':
-      return <Gear x={12} y={12} r={7.4} fill="#6f6a5a" teeth={8} />;
-    case 'tablet':
-      return (
-        <g>
-          <path d="M6.8 19 V8.4 a5.2 4.4 0 0 1 10.4 0 V19 Z" fill="#b8ad96" {...LINE} />
-          <path d="M8.8 10 h6.4 M8.8 12.6 h6.4 M8.8 15.2 h4.4" {...line('#5f5545', 1)} />
-          <path d="M5.8 19 h12.4" {...line(INK, 1.4)} />
-        </g>
-      );
-    case 'lyre':
-      return (
-        <g>
-          <path d="M8.2 17.6 C4.8 13.4 6 7.6 8.8 5.2 M15.8 17.6 C19.2 13.4 18 7.6 15.2 5.2" {...line(INK, 2.6)} />
-          <path d="M8.2 17.6 C4.8 13.4 6 7.6 8.8 5.2 M15.8 17.6 C19.2 13.4 18 7.6 15.2 5.2" {...line(GOLD, 1.2)} />
-          <path d="M6.6 8.6 H17.4" {...line(INK, 1.6)} />
-          <path d="M10 8.6 V17 M12 8.6 V17 M14 8.6 V17" {...line(INK, 0.7)} />
-          <rect x={7.2} y={16.8} width={9.6} height={2.6} rx={1} fill={WOOD} {...THIN} />
+          <path d="M12 16.6 V18.8 M8.2 19.8 h7.6" {...line(INK, 1.8)} />
+          <circle cx={12} cy={10.2} r={6.4} fill="#eadbb0" {...LINE} />
+          <ellipse cx={12} cy={10.2} rx={6.4} ry={2.1} {...line(BRONZE, 1.2)} />
+          <ellipse cx={12} cy={10.2} rx={2.1} ry={6.4} {...line(BRONZE, 1.2)} />
+          <ellipse cx={12} cy={10.2} rx={6.4} ry={1.7} transform="rotate(-32 12 10.2)" {...line(INK, 0.9)} />
+          <circle cx={12} cy={10.2} r={1.4} fill={GOLD} {...THIN} />
         </g>
       );
     case 'wheel':
@@ -529,6 +511,35 @@ function ScienceSymbol({ symbol }: { symbol: DuelScience }) {
           <path d="M5 11.6 h14 c0 4.6 -3 7.6 -7 7.6 c-4 0 -7 -3 -7 -7.6 Z" fill="#a7a19a" {...LINE} />
           <path d="M7.4 14 c1.4 2.4 7.8 2.4 9.2 0" {...line('#d7d2cb', 0.9)} />
           <rect x={8.6} y={19} width={6.8} height={1.8} rx={0.6} fill="#8b857e" {...THIN} />
+        </g>
+      );
+    case 'plumb': // set square and plumb line
+      return (
+        <g>
+          <path d="M4.8 19.4 V5.2 L18.8 19.4 Z" fill="#d9bf86" {...LINE} />
+          <path d="M7.6 16.6 V11.8 L12.4 16.6 Z" fill="#f4ead0" {...THIN} />
+          <path d="M16.8 3.6 V10.6" {...line(INK, 0.8)} />
+          <path d="M15.2 10.4 h3.2 l-1.6 3.4 Z" fill={BRONZE} {...THIN} />
+        </g>
+      );
+    case 'quill': // quill and ink
+      return (
+        <g>
+          <path d="M10.4 15.2 C11.6 9.6 15.2 5.4 19.8 3.6 C19.2 8.4 16.2 12.8 11.6 15.6 Z" fill="#f7f2e6" {...LINE} />
+          <path d="M10.2 16.2 L17.6 6.2" {...line(INK, 0.7)} />
+          <path d="M5.4 20.4 h8.4 v-3.8 q0 -1.8 -1.8 -1.8 h-4.8 q-1.8 0 -1.8 1.8 Z" fill="#2f3d5f" {...LINE} />
+          <rect x={7.3} y={13.2} width={4.6} height={1.8} rx={0.6} fill="#1f2944" {...THIN} />
+        </g>
+      );
+    case 'law': // scales
+      return (
+        <g>
+          <path d="M12 5 V18.4 M8.2 19.6 h7.6" {...line(INK, 1.7)} />
+          <path d="M5.4 7.8 H18.6" {...line(INK, 1.4)} />
+          <path d="M5.4 7.8 L3.4 12.8 M5.4 7.8 L7.4 12.8 M18.6 7.8 L16.6 12.8 M18.6 7.8 L20.6 12.8" {...line(INK, 0.6)} />
+          <path d="M2.8 12.8 h5.2 a2.6 2 0 0 1 -5.2 0 Z" fill={BRONZE} {...THIN} />
+          <path d="M16 12.8 h5.2 a2.6 2 0 0 1 -5.2 0 Z" fill={BRONZE} {...THIN} />
+          <circle cx={12} cy={4.6} r={1.3} fill={GOLD} {...THIN} />
         </g>
       );
   }
@@ -596,17 +607,161 @@ export function DiscardPickGlyph() {
   );
 }
 
-/** Trade discount: the resources it covers, clustered (the card adds "= 1 coin"). */
-export function TradeGlyph({ kind }: { kind: 'raw' | 'manufactured' }) {
-  const rs: DuelResource[] = kind === 'raw' ? ['wood', 'stone', 'clay'] : ['glass', 'papyrus'];
-  const at = kind === 'raw' ? [[-0.6, -0.4], [11.2, -0.4], [5.3, 10.8]] : [[-0.4, 5.4], [11, 5.4]];
+/** Fixed trading price: the resources it covers, clustered (the card adds "= 1 coin"). */
+export function TradeGlyph({ resources }: { resources: readonly DuelResource[] }) {
+  const at = resources.length === 1 ? [[2.4, 2.4]] : resources.length === 2 ? [[-0.4, 5.4], [11, 5.4]] : [[-0.6, -0.4], [11.2, -0.4], [5.3, 10.8]];
+  const k = resources.length === 1 ? 0.8 : 0.56;
   return (
     <g>
-      {rs.map((r, i) => (
-        <g key={r} transform={`translate(${at[i][0]} ${at[i][1]}) scale(0.56)`}><ResourceGlyph r={r} /></g>
+      {resources.map((r, i) => (
+        <g key={r} transform={`translate(${at[i][0]} ${at[i][1]}) scale(${k})`}><ResourceGlyph r={r} /></g>
       ))}
     </g>
   );
+}
+
+/** "Discard one of your opponent's cards of this colour": the card, struck through. */
+export function DestroyGlyph({ color }: { color: DuelCardColor }) {
+  return (
+    <g>
+      <rect x={6.2} y={3} width={11.6} height={18} rx={2} fill={CARD_HEX[color]} {...LINE} />
+      <rect x={6.2} y={3} width={11.6} height={4.6} rx={2} fill="rgba(0,0,0,0.22)" />
+      <path d="M4.2 4.4 L19.8 19.6 M19.8 4.4 L4.2 19.6" {...line(INK, 3.6)} />
+      <path d="M4.2 4.4 L19.8 19.6 M19.8 4.4 L4.2 19.6" {...line('#ef5a44', 1.8)} />
+    </g>
+  );
+}
+
+/** A chain symbol, as printed on cards: cream on a dark disc. */
+export function ChainSymbolGlyph({ symbol }: { symbol: DuelChainSymbol }) {
+  return (
+    <g>
+      <circle cx={12} cy={12} r={10.8} fill="#4a3423" {...LINE} />
+      {chainMark(symbol)}
+    </g>
+  );
+}
+
+function chainMark(symbol: DuelChainSymbol): ReactNode {
+  const c = '#f6ead0';
+  const ink = '#4a3423';
+  switch (symbol) {
+    case 'horseshoe':
+      return (
+        <g>
+          <path d="M8 18.4 V11.4 a4 4 0 0 1 8 0 V18.4" {...line(c, 2.8)} />
+          <path d="M8 13.6 h0.01 M16 13.6 h0.01 M9.2 9 h0.01 M14.8 9 h0.01" {...line(ink, 1.1)} />
+        </g>
+      );
+    case 'sword':
+      return (
+        <g>
+          <path d="M12 3.8 L13.4 6.2 V14.2 H10.6 V6.2 Z" fill={c} />
+          <path d="M8.2 14.8 H15.8 M12 15 V19.8" {...line(c, 1.9)} />
+        </g>
+      );
+    case 'tower':
+      return (
+        <g>
+          <path d="M7.4 19.4 V8.4 H16.6 V19.4 Z" fill={c} />
+          <path d="M6.8 8.6 V5.2 H8.8 V6.8 H10.9 V5.2 H13.1 V6.8 H15.2 V5.2 H17.2 V8.6 Z" fill={c} />
+          <path d="M10.4 19.4 V15.6 a1.6 1.6 0 0 1 3.2 0 V19.4 Z" fill={ink} />
+        </g>
+      );
+    case 'target':
+      return (
+        <g>
+          <circle cx={12} cy={12} r={6.8} {...line(c, 1.7)} />
+          <circle cx={12} cy={12} r={3.6} {...line(c, 1.7)} />
+          <circle cx={12} cy={12} r={1.2} fill={c} />
+        </g>
+      );
+    case 'helmet':
+      return (
+        <g>
+          <path d="M6.4 17 C6.4 10 8.8 7 12 7 C15.2 7 17.6 10 17.6 17 H14.6 V13 H9.4 V17 Z" fill={c} />
+          <path d="M7.6 7.6 C9.2 3.8 14.8 3.8 16.4 7.6" {...line(c, 1.9)} />
+        </g>
+      );
+    case 'book':
+      return (
+        <g>
+          <path d="M4.4 7.4 C7 6.2 9.8 6.4 12 8 C14.2 6.4 17 6.2 19.6 7.4 V17.4 C17 16.4 14.2 16.6 12 18 C9.8 16.6 7 16.4 4.4 17.4 Z" fill={c} />
+          <path d="M12 8 V17.6" {...line(ink, 0.9)} />
+        </g>
+      );
+    case 'gear':
+      return <Gear x={12} y={12} r={6.6} fill={c} teeth={8} />;
+    case 'lyre':
+      return (
+        <g>
+          <path d="M8.4 17.6 C5.2 13.4 6.4 7.8 9 5.4 M15.6 17.6 C18.8 13.4 17.6 7.8 15 5.4" {...line(c, 1.9)} />
+          <path d="M6.8 8.8 H17.2 M10 8.8 V16.8 M12 8.8 V16.8 M14 8.8 V16.8" {...line(c, 0.9)} />
+          <rect x={7.6} y={16.6} width={8.8} height={2.4} rx={1} fill={c} />
+        </g>
+      );
+    case 'lamp':
+      return (
+        <g>
+          <path d="M4.6 15.2 C4.8 12.2 9 11.6 13 12.2 L19.2 10.8 L16.6 14.4 C15.2 16.6 11.2 17.4 8 17 C6 16.8 4.6 16.2 4.6 15.2 Z" fill={c} />
+          <path d="M19 9.8 C18.2 8.2 18.8 6.4 20 5.4 C20.6 7 21 8.6 19 9.8 Z" fill={FIRE_L} />
+          <path d="M8.4 17.2 L7.6 19.4 H13.4 L12.6 17.2" fill={c} />
+        </g>
+      );
+    case 'mask':
+      return (
+        <g>
+          <path d="M6 5.6 H18 V11 C18 15.6 15.4 18.8 12 18.8 C8.6 18.8 6 15.6 6 11 Z" fill={c} />
+          <ellipse cx={9.4} cy={10} rx={1.6} ry={1.1} fill={ink} />
+          <ellipse cx={14.6} cy={10} rx={1.6} ry={1.1} fill={ink} />
+          <path d="M9.2 14 Q12 16.6 14.8 14" {...line(ink, 1.2)} />
+        </g>
+      );
+    case 'moon':
+      return <path d="M15.6 4.8 A7.4 7.4 0 1 0 15.6 19.2 A5.8 5.8 0 1 1 15.6 4.8 Z" fill={c} />;
+    case 'drop':
+      return <path d="M12 4.2 C14.6 8.4 17.2 11.2 17.2 14.4 A5.2 5.2 0 0 1 6.8 14.4 C6.8 11.2 9.4 8.4 12 4.2 Z" fill={c} />;
+    case 'column':
+      return (
+        <g>
+          <path d="M7.2 5.4 H16.8 L15.6 7.6 H8.4 Z" fill={c} />
+          <path d="M9.2 7.6 H14.8 V17 H9.2 Z" fill={c} />
+          <path d="M11 8.4 V16.4 M13 8.4 V16.4" {...line(ink, 0.7)} />
+          <path d="M7.6 17.4 H16.4 V19.4 H7.6 Z" fill={c} />
+        </g>
+      );
+    case 'sun':
+      return (
+        <g>
+          <circle cx={12} cy={12} r={3.8} fill={c} />
+          {[0, 45, 90, 135, 180, 225, 270, 315].map((a) => (
+            <path key={a} d="M12 4.2 V6.6" transform={`rotate(${a} 12 12)`} {...line(c, 1.7)} />
+          ))}
+        </g>
+      );
+    case 'senate':
+      return (
+        <g>
+          <path d="M4.8 9.2 L12 4.6 L19.2 9.2 Z" fill={c} />
+          <path d="M7 10 V16.6 M10.3 10 V16.6 M13.7 10 V16.6 M17 10 V16.6" {...line(c, 1.7)} />
+          <path d="M4.8 17.4 H19.2 V19.4 H4.8 Z" fill={c} />
+        </g>
+      );
+    case 'jug':
+      return (
+        <g>
+          <path d="M10 4.8 H14 V7 C16.6 8.6 17.2 11.4 16.4 14.2 C15.6 17 13.8 19 12 19.4 C10.2 19 8.4 17 7.6 14.2 C6.8 11.4 7.4 8.6 10 7 Z" fill={c} />
+          <path d="M9.6 7.2 C6.6 6.8 6 10.6 8 11.6 M14.4 7.2 C17.4 6.8 18 10.6 16 11.6" {...line(c, 1.2)} />
+        </g>
+      );
+    case 'barrel':
+      return (
+        <g>
+          <path d="M7.6 5.2 H16.4 C17.9 9.4 17.9 14.6 16.4 18.8 H7.6 C6.1 14.6 6.1 9.4 7.6 5.2 Z" fill={c} />
+          <path d="M6.8 8.6 H17.2 M6.6 15.4 H17.4" {...line(ink, 1)} />
+        </g>
+      );
+  }
 }
 
 /** A generic progress token (score-table header). */
@@ -643,8 +798,17 @@ export function ShieldIcon({ size = 18, title = 'shield' }: { size?: number; tit
 export function LaurelIcon({ value, size = 18, title }: { value?: number | string; size?: number; title?: string }) {
   return <Icon size={size} title={title ?? (value === undefined ? 'victory points' : `${value} VP`)}><LaurelGlyph value={value} /></Icon>;
 }
+/** Names of the science symbols, for titles. */
+export const SCIENCE_NAMES: Record<DuelScience, string> = {
+  globe: 'armillary sphere', wheel: 'wheel', sundial: 'sundial', mortar: 'mortar and pestle',
+  plumb: 'plumb line and square', quill: 'quill and ink', law: 'scales (Law)',
+};
+
 export function ScienceIcon({ symbol, size = 18 }: { symbol: DuelScience; size?: number }) {
-  return <Icon size={size} title={symbol}><ScienceGlyph symbol={symbol} /></Icon>;
+  return <Icon size={size} title={SCIENCE_NAMES[symbol]}><ScienceGlyph symbol={symbol} /></Icon>;
+}
+export function ChainSymbolIcon({ symbol, size = 14, title }: { symbol: DuelChainSymbol; size?: number; title?: string }) {
+  return <Icon size={size} title={title ?? `chain: ${symbol}`}><ChainSymbolGlyph symbol={symbol} /></Icon>;
 }
 export function ChainIcon({ size = 14, title = 'chain' }: { size?: number; title?: string }) {
   return <Icon size={size} title={title}><ChainGlyph /></Icon>;
@@ -667,10 +831,12 @@ function cardScene(name: string, color: DuelCardColor, symbol?: DuelScience): Re
     case 'Lumber Yard': return <Forest />;
     case 'Logging Camp': return <Forest camp />;
     case 'Sawmill': return <Sawmill />;
-    case 'Clay Pool': return <ClayPit />;
+    case 'Clay Pool': return <ClayPit pool />;
+    case 'Clay Pit': return <ClayPit />;
     case 'Brickyard': return <Brickyard />;
     case 'Quarry': return <Quarry />;
     case 'Shelf Quarry': return <Quarry shelves />;
+    case 'Stone Pit': return <Quarry pit />;
     // gray
     case 'Glassworks': return <Glassworks />;
     case 'Glass-Blower': return <Glassworks blower />;
@@ -680,7 +846,6 @@ function cardScene(name: string, color: DuelCardColor, symbol?: DuelScience): Re
     case 'Theater': return <TheaterScene />;
     case 'Altar': return <AltarScene />;
     case 'Baths': return <BathsScene />;
-    case 'Pharmacist': return <PharmacistScene />;
     case 'Temple': return <TempleScene />;
     case 'Statue': return <StatueScene />;
     case 'Aqueduct': return <AqueductScene />;
@@ -689,11 +854,13 @@ function cardScene(name: string, color: DuelCardColor, symbol?: DuelScience): Re
     case 'Gardens': return <GardensScene />;
     case 'Senate': return <SenateScene />;
     case 'Town Hall': return <TownHallScene />;
+    case 'Palace': return <PalaceScene />;
+    case 'Courthouse': return <CourthouseScene />;
     case 'Obelisk': return <ObeliskScene />;
     // red
-    case 'Stockade': return <PalisadeScene />;
     case 'Palisade': return <PalisadeScene gate />;
     case 'Barracks': return <BarracksScene />;
+    case 'Garrison': return <BarracksScene fort />;
     case 'Guard Tower': return <GuardTowerScene />;
     case 'Walls': return <WallsScene />;
     case 'Fortifications': return <WallsScene towers />;
@@ -705,8 +872,8 @@ function cardScene(name: string, color: DuelCardColor, symbol?: DuelScience): Re
     case 'Arsenal': return <ArsenalScene />;
     // green
     case 'Apothecary': return <ApothecaryScene />;
-    case 'Dispensary': return <ApothecaryScene />;
-    case 'Bottling Plant': return <ApothecaryScene bottles />;
+    case 'Dispensary': return <ApothecaryScene bottles />;
+    case 'Pharmacist': return <PharmacistScene />;
     case 'Workshop': return <WorkshopScene />;
     case 'Laboratory': return <WorkshopScene lab />;
     case 'Scriptorium': return <LibraryScene />;
@@ -718,6 +885,7 @@ function cardScene(name: string, color: DuelCardColor, symbol?: DuelScience): Re
     case 'Brewery': return <BreweryScene />;
     case 'Stone Reserve': return <ReserveScene goods="stone" />;
     case 'Clay Reserve': return <ReserveScene goods="clay" />;
+    case 'Wood Reserve': return <ReserveScene goods="wood" />;
     case 'Forum': return <MarketScene />;
     case 'Customs House': return <MarketScene customs />;
     case 'Caravansery': return <CaravanScene />;
@@ -729,7 +897,7 @@ function cardScene(name: string, color: DuelCardColor, symbol?: DuelScience): Re
     case 'Arena': return <ArenaScene banner={GOLD} />;
   }
   if (color === 'purple') return <GuildHallScene name={name} />;
-  if (color === 'green') return <AcademyScene symbol={symbol ?? 'tablet'} />;
+  if (color === 'green') return <AcademyScene symbol={symbol ?? 'globe'} />;
   switch (color) {
     case 'brown': return <Quarry />;
     case 'gray': return <Glassworks />;
@@ -806,14 +974,15 @@ function Sawmill() {
   );
 }
 
-function ClayPit() {
+function ClayPit({ pool = false }: { pool?: boolean }) {
   return (
     <g>
       <Sky />
       <Hills y={56} fill="#b9cf86" />
       <Ground y={66} fill={DIRT} />
       <ellipse cx={42} cy={82} rx={36} ry={12} fill="#9c5a3a" {...LINE} />
-      <ellipse cx={42} cy={84} rx={24} ry={6} fill="#b56c45" />
+      <ellipse cx={42} cy={84} rx={24} ry={6} fill={pool ? '#8fb7b8' : '#b56c45'} />
+      {pool && <path d="M26 84 q4 -1.6 8 0 M44 86 q4 -1.6 8 0" {...line(WHITE, 0.9)} />}
       <path d="M28 82 q6 -2 12 0 M48 86 q6 -2 12 0" {...line('#d38c62', 1)} />
       {[[80, 72], [86, 74], [92, 72]].map(([x, y], i) => (
         <g key={i}>
@@ -847,7 +1016,7 @@ function Brickyard() {
   );
 }
 
-function Quarry({ shelves = false }: { shelves?: boolean }) {
+function Quarry({ shelves = false, pit = false }: { shelves?: boolean; pit?: boolean }) {
   return (
     <g>
       <Sky />
@@ -858,6 +1027,15 @@ function Quarry({ shelves = false }: { shelves?: boolean }) {
           <Box x={6} y={40} w={88} h={6} fill={STONE} thin />
           <Box x={2} y={54} w={96} h={6} fill={STONE} thin />
           <Box x={-2} y={68} w={104} h={6} fill={STONE} thin />
+        </g>
+      ) : pit ? (
+        <g>
+          <Shape d="M8 46 H92 L82 58 H18 Z" fill={STONE} />
+          <Shape d="M18 58 H82 L72 70 H28 Z" fill="#cbbd9c" />
+          <Shape d="M28 70 H72 L66 78 H34 Z" fill={SHADOW} />
+          <path d="M30 46 v12 M54 46 v12 M74 46 v12 M40 58 v12 M60 58 v12" {...line(SHADOW, 0.8)} />
+          <path d="M84 30 V58 M84 30 H66 M70 30 V44" {...line(DARKWOOD, 1.6)} />
+          <Box x={66} y={44} w={8} h={6} fill={STONE} thin />
         </g>
       ) : (
         <g>
@@ -1198,6 +1376,46 @@ function TownHallScene() {
   );
 }
 
+function PalaceScene() {
+  return (
+    <g>
+      <Sky color={SKY_WARM} />
+      <Cloud x={84} y={12} s={0.8} />
+      <Ground y={84} fill={STONE} />
+      <Box x={4} y={30} w={16} h={54} fill={STONE} />
+      <Box x={80} y={30} w={16} h={54} fill={STONE} />
+      <Poly points="2,31 12,18 22,31" fill={ROOF} />
+      <Poly points="78,31 88,18 98,31" fill={ROOF} />
+      <Shape d="M32 40 A18 16 0 0 1 68 40 Z" fill={GOLD} />
+      <path d="M50 24 V18" {...line(INK, 1.2)} />
+      <Box x={20} y={40} w={60} h={44} fill={MARBLE} />
+      <Box x={18} y={37} w={64} h={4} fill={STONE} />
+      <Colonnade x0={25} x1={75} y={44} h={30} n={6} w={4} fill={WHITE} />
+      <ArchHole x={44} w={12} top={60} bottom={84} fill={DARKWOOD} />
+      <Steps x={30} y={80} w={40} n={2} dy={2.2} />
+      {[8, 88].map((x) => <ArchHole key={x} x={x} w={8} top={44} bottom={56} fill="#7fa9bd" />)}
+      <Banner x={9} y={60} color={PURPLE} w={6} h={14} />
+      <Banner x={85} y={60} color={PURPLE} w={6} h={14} />
+    </g>
+  );
+}
+
+function CourthouseScene() {
+  return (
+    <g>
+      <Sky />
+      <Cloud x={20} y={14} s={0.8} />
+      <Ground y={82} fill={STONE} />
+      <Pediment x={14} y={24} w={72} h={16} />
+      <Box x={14} y={40} w={72} h={4} fill={STONE} />
+      <Box x={16} y={44} w={68} h={34} fill={MARBLE} />
+      <Colonnade x0={20} x1={80} y={44} h={34} n={6} w={4.2} />
+      <Steps x={12} y={78} w={76} n={2} dy={2.4} />
+      <g transform="translate(42 25) scale(0.66)"><ScienceSymbol symbol="law" /></g>
+    </g>
+  );
+}
+
 function ObeliskScene() {
   return (
     <g>
@@ -1257,12 +1475,20 @@ function Tent({ x, y, w, color }: XY & { w: number; color: string }) {
   );
 }
 
-function BarracksScene() {
+function BarracksScene({ fort = false }: { fort?: boolean }) {
   return (
     <g>
       <Sky />
       <Hills y={56} />
       <Ground y={76} fill={DIRT} />
+      {fort && (
+        <g>
+          {Array.from({ length: 11 }, (_, i) => (
+            <Poly key={i} points={`${-2 + i * 10},76 ${-2 + i * 10},${46 + (i % 3) * 2} ${3 + i * 10},${41 + (i % 3) * 2} ${8 + i * 10},${46 + (i % 3) * 2} ${8 + i * 10},76`} fill={i % 2 ? '#b07438' : WOOD} thin />
+          ))}
+          <Box x={-3} y={56} w={106} h={3} fill={DARKWOOD} thin />
+        </g>
+      )}
       <Tent x={4} y={80} w={40} color={RED} />
       <Tent x={46} y={74} w={28} color="#d9c08d" />
       {[78, 84, 90].map((x) => (
@@ -1678,7 +1904,7 @@ function BreweryScene() {
   );
 }
 
-function ReserveScene({ goods }: { goods: 'stone' | 'clay' }) {
+function ReserveScene({ goods }: { goods: 'stone' | 'clay' | 'wood' }) {
   return (
     <g>
       <Sky />
@@ -1686,7 +1912,9 @@ function ReserveScene({ goods }: { goods: 'stone' | 'clay' }) {
       <Box x={8} y={34} w={84} h={50} fill="#e3cfa6" />
       <Poly points="2,36 50,16 98,36" fill={ROOF} />
       <Box x={16} y={46} w={68} h={38} fill="#5c4532" />
-      {goods === 'stone'
+      {goods === 'wood'
+        ? <g><LogPile x={22} y={79} /><LogPile x={50} y={79} /></g>
+        : goods === 'stone'
         ? [[20, 84], [36, 84], [52, 84], [68, 84], [28, 72], [44, 72], [60, 72], [36, 60], [52, 60]].map(([x, y], i) => (
           <Box key={i} x={x} y={y - 12} w={15} h={12} rx={1} fill={i % 2 ? '#c5c9cd' : '#a3a7ab'} thin />
         ))
@@ -1867,9 +2095,9 @@ function guildEmblem(name: string): ReactNode {
     case 'Shipowners Guild': return <ResourceGlyph r="wood" />;
     case 'Builders Guild': return <WonderGlyph />;
     case 'Magistrates Guild': return <LaurelGlyph value="" />;
-    case 'Scientists Guild': return <ScienceGlyph symbol="gear" />;
+    case 'Scientists Guild': return <ScienceGlyph symbol="globe" />;
     case 'Tacticians Guild': return <ShieldGlyph />;
-    case 'Moneylenders Guild': return <CoinGlyph value="$" />;
+    case 'Moneylenders Guild': return <CoinGlyph value={3} />;
   }
   return <WonderGlyph />;
 }
@@ -1907,14 +2135,14 @@ function wonderScene(id: string): ReactNode {
   switch (id) {
     case 'pyramids': return <PyramidsWonder />;
     case 'mausoleum': return <MausoleumWonder />;
-    case 'lighthouse': return <PharosWonder />;
     case 'temple-of-artemis': return <ArtemisWonder />;
     case 'statue-of-zeus': return <ZeusWonder />;
     case 'colossus': return <ColossusWonder />;
     case 'great-library': return <LibraryWonder />;
     case 'hanging-gardens': return <GardensWonder />;
     case 'circus-maximus': return <CircusWonder />;
-    case 'great-lighthouse': return <PiraeusWonder />;
+    case 'great-lighthouse': return <PharosWonder />;
+    case 'piraeus': return <PiraeusWonder />;
     case 'sphinx': return <SphinxWonder />;
     case 'appian-way': return <AppianWonder />;
   }
@@ -2477,8 +2705,9 @@ export function MilitaryTrackArt({ pawn, awards, leftColor, rightColor }: {
   const laurel = (pos: number, v: number) => (
     <g key={`l${pos}`} transform={`translate(${xOf(pos) + 19 - 15} 1) scale(1.25)`}><LaurelGlyph value={v} /></g>
   );
-  const loot = (pos: number, v: number, show: boolean) => show && (
-    <g key={`t${pos}`} transform={`translate(${xOf(pos) + 19 - 14} 79)`}>
+  // A claimed token stays in the DOM, faded out, so it can fade (CSS) instead of popping.
+  const loot = (pos: number, v: number, show: boolean) => (
+    <g key={`t${pos}`} className={`swd-loot${show ? '' : ' taken'}`} transform={`translate(${xOf(pos) + 19 - 14} 79)`} aria-hidden={!show}>
       <rect x={0} y={0} width={28} height={22} rx={4} fill="#9b2f22" {...LINE} />
       <g transform="translate(4.4 1.4) scale(0.8)"><CoinGlyph value={v} negative /></g>
     </g>
@@ -2501,7 +2730,8 @@ export function MilitaryTrackArt({ pawn, awards, leftColor, rightColor }: {
       {loot(4, 2, !awards.p1At3)}
       {loot(7, 5, !awards.p1At6)}
       <line x1={xOf(0) + 19} y1={43} x2={xOf(0) + 19} y2={71} {...line('#b9a06a', 1)} strokeDasharray="2 2" />
-      <g transform={`translate(${px} 0)`}>
+      {/* Positioned with a CSS transform so it slides (swd-pawn's transition). */}
+      <g className="swd-pawn" style={{ transform: `translate(${px}px, 0px)` }}>
         <ellipse cx={0} cy={77} rx={10} ry={3} fill="rgba(0,0,0,0.3)" />
         <path d="M-8 40 L-6 32 H6 L8 40 V70 L5 76 H-5 L-8 70 Z" fill="#d12f26" {...LINE} strokeWidth={1.6} />
         <path d="M-6 32 H6 L4 28 H-4 Z" fill="#e85a48" {...LINE} />

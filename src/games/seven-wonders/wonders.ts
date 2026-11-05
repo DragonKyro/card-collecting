@@ -1,12 +1,15 @@
 // 7 Wonders — wonder boards. 7 wonders × 2 sides (A/B) = 14 boards.
 //
-// Each board has an initial resource production and 2–4 stages with their own
-// cost and effects. The base game's effects covered here are: VP, science,
-// shields, coins, raw discount (Olympia B does this), guild copy (NOT modeled —
-// Olympia B's "copy a guild" needs reducer support; we provide a stub that
-// counts no VP for now). Most boards work out of the box.
+// Each board has an initial resource production (which neighbours may buy) and
+// 2–4 stages with their own cost and effects. Stage production (Alexandria) is
+// for the owner only. The wonder powers are effect kinds of their own, read
+// where they apply: `scienceWild` (scoring), `buildFromDiscard` (reducer, end
+// of turn), `playLastCard` (reducer, 6th pick), `freeBuildPerAge` (pick
+// validation) and `copyGuild` (scoring).
+//
+// Costs and effects follow the first-edition boards.
 
-import type { SwWonder, SwResource } from './types';
+import type { SwCardEffect, SwPlayer, SwResource, SwWonder } from './types';
 
 const r = (...rs: SwResource[]): SwResource[] => rs;
 
@@ -82,7 +85,7 @@ export const WONDERS: SwWonder[] = [
     stages: [
       { cost: { resources: ['stone', 'stone'] }, effects: [{ kind: 'vp', vp: 3 }], text: '+3 VP' },
       { cost: { resources: ['wood', 'wood'] }, effects: [{ kind: 'coins', amount: 9 }], text: '+9 coins' },
-      { cost: { resources: ['papyrus', 'loom', 'glass'] }, effects: [{ kind: 'vp', vp: 7 }], text: '+7 VP' },
+      { cost: { resources: ['papyrus', 'papyrus'] }, effects: [{ kind: 'vp', vp: 7 }], text: '+7 VP' },
     ],
   },
   {
@@ -101,9 +104,7 @@ export const WONDERS: SwWonder[] = [
     initialProduction: [['wood']],
     stages: [
       { cost: { resources: ['wood', 'wood'] }, effects: [{ kind: 'vp', vp: 3 }], text: '+3 VP' },
-      // "Build 1 card free per age" — too complex; model as a 0-VP effect with a
-      // descriptive label. Engine doesn't apply this perk yet.
-      { cost: { resources: ['stone', 'stone'] }, effects: [], text: 'Build 1 card free per age (not modeled)' },
+      { cost: { resources: ['stone', 'stone'] }, effects: [{ kind: 'freeBuildPerAge' }], text: 'Once per Age, build a card for free' },
       { cost: { resources: ['ore', 'ore'] }, effects: [{ kind: 'vp', vp: 7 }], text: '+7 VP' },
     ],
   },
@@ -113,8 +114,7 @@ export const WONDERS: SwWonder[] = [
     stages: [
       { cost: { resources: ['wood', 'wood'] }, effects: [{ kind: 'tradeDiscountRaw', sides: ['both'] }], text: 'Raw resources from neighbors cost 1 coin' },
       { cost: { resources: ['stone', 'stone'] }, effects: [{ kind: 'vp', vp: 5 }], text: '+5 VP' },
-      // "Copy a guild from a neighbor" — modeled as 0 VP for now.
-      { cost: { resources: ['ore', 'ore', 'loom'] }, effects: [], text: 'Copy 1 guild from a neighbor (not modeled)' },
+      { cost: { resources: ['ore', 'ore', 'loom'] }, effects: [{ kind: 'copyGuild' }], text: 'At the end, copy a guild built by a neighbour' },
     ],
   },
 
@@ -124,18 +124,17 @@ export const WONDERS: SwWonder[] = [
     initialProduction: [['loom']],
     stages: [
       { cost: { resources: ['clay', 'clay'] }, effects: [{ kind: 'vp', vp: 3 }], text: '+3 VP' },
-      // "Build 1 card from discard for free" — too complex; not modeled.
-      { cost: { resources: ['ore', 'ore', 'ore'] }, effects: [], text: 'Build 1 card from discard for free (not modeled)' },
-      { cost: { resources: ['loom', 'glass', 'papyrus'] }, effects: [{ kind: 'vp', vp: 7 }], text: '+7 VP' },
+      { cost: { resources: ['ore', 'ore', 'ore'] }, effects: [{ kind: 'buildFromDiscard' }], text: 'Build a card from the discard pile for free' },
+      { cost: { resources: ['loom', 'loom'] }, effects: [{ kind: 'vp', vp: 7 }], text: '+7 VP' },
     ],
   },
   {
     id: 'halicarnassus-b', name: 'Mausoleum of Halicarnassus', side: 'B',
     initialProduction: [['loom']],
     stages: [
-      { cost: { resources: ['ore', 'ore'] }, effects: [{ kind: 'vp', vp: 2 }], text: 'Build 1 card from discard (not modeled) · +2 VP' },
-      { cost: { resources: ['clay', 'clay', 'clay'] }, effects: [{ kind: 'vp', vp: 1 }], text: 'Build 1 card from discard (not modeled) · +1 VP' },
-      { cost: { resources: ['papyrus', 'loom', 'glass'] }, effects: [], text: 'Build 1 card from discard (not modeled)' },
+      { cost: { resources: ['ore', 'ore'] }, effects: [{ kind: 'vp', vp: 2 }, { kind: 'buildFromDiscard' }], text: '+2 VP · build a card from the discard pile for free' },
+      { cost: { resources: ['clay', 'clay', 'clay'] }, effects: [{ kind: 'vp', vp: 1 }, { kind: 'buildFromDiscard' }], text: '+1 VP · build a card from the discard pile for free' },
+      { cost: { resources: ['papyrus', 'loom', 'glass'] }, effects: [{ kind: 'buildFromDiscard' }], text: 'Build a card from the discard pile for free' },
     ],
   },
 
@@ -145,8 +144,7 @@ export const WONDERS: SwWonder[] = [
     initialProduction: [['clay']],
     stages: [
       { cost: { resources: ['clay', 'clay'] }, effects: [{ kind: 'vp', vp: 3 }], text: '+3 VP' },
-      // "Play your last card each age instead of discarding" — not modeled.
-      { cost: { resources: ['wood', 'wood', 'wood'] }, effects: [], text: 'Play your last card each age (not modeled)' },
+      { cost: { resources: ['wood', 'wood', 'wood'] }, effects: [{ kind: 'scienceWild' }], text: 'A science symbol of your choice' },
       { cost: { resources: ['clay', 'clay', 'clay', 'clay'] }, effects: [{ kind: 'vp', vp: 7 }], text: '+7 VP' },
     ],
   },
@@ -154,9 +152,9 @@ export const WONDERS: SwWonder[] = [
     id: 'babylon-b', name: 'Hanging Gardens of Babylon', side: 'B',
     initialProduction: [['clay']],
     stages: [
-      { cost: { resources: ['loom', 'clay', 'clay'] }, effects: [{ kind: 'science', symbol: 'compass' }], text: 'Choose 1 science (compass placeholder) — not fully modeled' },
-      { cost: { resources: ['wood', 'wood', 'wood'] }, effects: [], text: 'Play your last card each age (not modeled)' },
-      { cost: { resources: ['clay', 'clay', 'clay', 'papyrus'] }, effects: [{ kind: 'science', symbol: 'gear' }], text: 'Choose 1 science (gear placeholder) — not fully modeled' },
+      { cost: { resources: ['clay', 'loom'] }, effects: [{ kind: 'vp', vp: 3 }], text: '+3 VP' },
+      { cost: { resources: ['wood', 'wood', 'glass'] }, effects: [{ kind: 'playLastCard' }], text: 'Play the 7th card of each Age instead of discarding it' },
+      { cost: { resources: ['clay', 'clay', 'clay', 'papyrus'] }, effects: [{ kind: 'scienceWild' }], text: 'A science symbol of your choice' },
     ],
   },
 ];
@@ -166,6 +164,18 @@ export function wonderById(id: string): SwWonder {
   const w = WONDERS.find((x) => x.id === id);
   if (!w) throw new Error(`Unknown wonder: ${id}`);
   return w;
+}
+
+/** Every effect of the stages a city has built, in stage order. */
+export function builtStageEffects(p: Pick<SwPlayer, 'wonderId' | 'wonderStagesBuilt'>): SwCardEffect[] {
+  return wonderById(p.wonderId).stages.slice(0, p.wonderStagesBuilt).flatMap((st) => st.effects);
+}
+
+export type SwWonderPower = 'buildFromDiscard' | 'playLastCard' | 'freeBuildPerAge' | 'copyGuild';
+
+/** True once a city has built a stage carrying the given wonder power. */
+export function hasWonderPower(p: Pick<SwPlayer, 'wonderId' | 'wonderStagesBuilt'>, power: SwWonderPower): boolean {
+  return builtStageEffects(p).some((e) => e.kind === power);
 }
 
 /** Build a list of (name, A, B) groupings — used in the lobby picker. */

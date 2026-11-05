@@ -16,8 +16,8 @@ import type {
   SwCard, SwCardEffect, SwCost, SwPayment, SwPlayer, SwProduction,
   SwResource, SwState,
 } from './types';
-import { RAW_RESOURCES, MANUFACTURED_RESOURCES } from './types';
-import { wonderById } from './wonders';
+import { RAW_RESOURCES } from './types';
+import { builtStageEffects, wonderById } from './wonders';
 import { getActiveExpansions } from './expansions/registry';
 import type { SwCostTarget } from './expansions/types';
 
@@ -49,10 +49,8 @@ export function productionFor(state: SwState, player: SwPlayer): ProductionSet {
   add(wonder.initialProduction);
 
   // Wonder stages built.
-  for (let i = 0; i < player.wonderStagesBuilt; i++) {
-    for (const eff of wonder.stages[i].effects) {
-      if (eff.kind === 'produce') add(eff.production);
-    }
+  for (const eff of builtStageEffects(player)) {
+    if (eff.kind === 'produce') add(eff.production);
   }
 
   // Tableau cards.
@@ -82,13 +80,10 @@ export function productionFor(state: SwState, player: SwPlayer): ProductionSet {
   return { fixed, choices };
 }
 
-/** Same as productionFor, but only the part that can be SOLD to neighbors —
- *  excludes the player's own wonder initial production AND excludes any
- *  resources from yellow commercial choice cards (Forum/Caravansery).
- *  Per the rulebook: only brown/gray production cards (single-resource AND
- *  multi-resource "choice" brown/gray) can be sold to neighbors; the wonder's
- *  starting resource cannot be sold, and yellow cards' choice resources are
- *  for personal use only. */
+/** The part of a city's production its neighbours may buy: the wonder's
+ *  starting resource and its brown / gray cards (choice cards included — each
+ *  buyer picks one of the options). Yellow cards' and wonder stages' production
+ *  is for the owner only. */
 export function sellableProductionFor(_state: SwState, player: SwPlayer): ProductionSet {
   const fixed = new Map<SwResource, number>();
   const choices: SwProduction[] = [];
@@ -103,7 +98,7 @@ export function sellableProductionFor(_state: SwState, player: SwPlayer): Produc
     }
   };
 
-  // Brown + gray cards in tableau are the sellable producers.
+  add(wonderById(player.wonderId).initialProduction);
   for (const c of player.tableau) {
     if (c.color !== 'brown' && c.color !== 'gray') continue;
     for (const eff of c.effects) {
@@ -156,14 +151,6 @@ function matchAssignment(prod: ProductionSet, required: SwResource[]): string[] 
   return tryAssign(0) ? assignment : null;
 }
 
-/** Can the player afford the cost entirely from self-production (no neighbor
- *  purchases)? Coin part of the cost is ignored — the caller checks coins. */
-export function canBuildFromSelf(state: SwState, player: SwPlayer, cost: SwCost): boolean {
-  if (!cost.resources || cost.resources.length === 0) return true;
-  const prod = productionFor(state, player);
-  return productionCanSupply(prod, cost.resources);
-}
-
 /** Does the player have an applicable trade discount with the given neighbor? */
 export function hasTradeDiscount(
   player: SwPlayer,
@@ -185,15 +172,12 @@ export function hasTradeDiscount(
     }
   }
   // Olympia B stage 1 grants raw discount on both sides.
-  const wonder = wonderById(player.wonderId);
-  for (let i = 0; i < player.wonderStagesBuilt; i++) {
-    for (const eff of wonder.stages[i].effects) {
-      if (resourceKind === 'raw' && eff.kind === 'tradeDiscountRaw') {
-        if (eff.sides.includes('both') || eff.sides.includes(side)) return true;
-      }
-      if (resourceKind === 'manufactured' && eff.kind === 'tradeDiscountManufactured') {
-        if (eff.sides.includes('both') || eff.sides.includes(side)) return true;
-      }
+  for (const eff of builtStageEffects(player)) {
+    if (resourceKind === 'raw' && eff.kind === 'tradeDiscountRaw') {
+      if (eff.sides.includes('both') || eff.sides.includes(side)) return true;
+    }
+    if (resourceKind === 'manufactured' && eff.kind === 'tradeDiscountManufactured') {
+      if (eff.sides.includes('both') || eff.sides.includes(side)) return true;
     }
   }
   return false;
@@ -273,7 +257,7 @@ export function validatePayment(
   for (const r of fromWest) toWest += neighborPurchasePrice(player, 'west', r);
   let toEast = 0;
   for (const r of fromEast) toEast += neighborPurchasePrice(player, 'east', r);
-  const totalCoins = baseCoins + toWest + toEast + (payment.coins ?? 0) - (payment.coins ?? 0);
+  const totalCoins = baseCoins + toWest + toEast;
 
   if (player.coins < totalCoins) {
     return { ok: false, error: `Not enough coins (${player.coins} < ${totalCoins}).` };
@@ -281,92 +265,73 @@ export function validatePayment(
   return { ok: true, totalCoins, toWest, toEast };
 }
 
-/** Cheapest neighbor-purchase plan to fill a multiset of resources, OR null
- *  if neighbors can't between them supply enough. Used by the UI to suggest a
- *  default payment when the player can't self-produce. */
-export function suggestCheapestPurchase(
-  state: SwState,
-  player: SwPlayer,
-  needed: SwResource[],
-): { fromWest: SwResource[]; fromEast: SwResource[]; coins: number } | null {
+export type PaymentPlan =
+  | { ok: true; payment: SwPayment; totalCoins: number; toWest: number; toEast: number }
+  /** `resources`: no split of the cost can be supplied. `coins`: the cheapest
+   *  one costs `totalCoins`, more than the player has. */
+  | { ok: false; reason: 'resources' | 'coins'; totalCoins: number };
+
+/** The cheapest legal way to pay `cost`: every split of its resources between
+ *  your own production and what each neighbour may sell is tried (a cost is at
+ *  most 7 units), pruned as soon as a part can't be supplied or costs more than
+ *  the best so far. Equal prices go to the plan that buys the fewest units,
+ *  then to the west neighbour. Used by the UI and the AI to build a payment. */
+export function planPayment(state: SwState, player: SwPlayer, cost: SwCost): PaymentPlan {
+  const baseCoins = cost.coins ?? 0;
+  const counts = new Map<SwResource, number>();
+  for (const r of cost.resources ?? []) counts.set(r, (counts.get(r) ?? 0) + 1);
+  const types = Array.from(counts.entries());
+
+  const self = productionFor(state, player);
   const { west, east } = neighborsOf(state, player.id);
   const westProd = sellableProductionFor(state, west);
   const eastProd = sellableProductionFor(state, east);
 
-  // Naive: assign each resource to whichever side is cheaper AND can supply.
-  // For ties, prefer the side with FEWER existing assignments to balance.
-  // Backtrack on failure.
+  const own: SwResource[] = [];
   const fromWest: SwResource[] = [];
   const fromEast: SwResource[] = [];
-  let coins = 0;
+  let best: { fromWest: SwResource[]; fromEast: SwResource[]; coins: number } | null = null;
 
-  // Track remaining capacity by simulating allocation against productionCanSupply.
-  const tryAssign = (i: number, westAssigned: SwResource[], eastAssigned: SwResource[]): boolean => {
-    if (i === needed.length) return true;
-    const r = needed[i];
-    const westPrice = neighborPurchasePrice(player, 'west', r);
-    const eastPrice = neighborPurchasePrice(player, 'east', r);
+  const pushN = (arr: SwResource[], r: SwResource, n: number) => { for (let i = 0; i < n; i++) arr.push(r); };
+  const popN = (arr: SwResource[], n: number) => { arr.length -= n; };
 
-    const orderedSides: Array<'west' | 'east'> = westPrice <= eastPrice
-      ? ['west', 'east']
-      : ['east', 'west'];
-    for (const side of orderedSides) {
-      const trialWest = side === 'west' ? [...westAssigned, r] : westAssigned;
-      const trialEast = side === 'east' ? [...eastAssigned, r] : eastAssigned;
-      if (!productionCanSupply(westProd, trialWest)) continue;
-      if (!productionCanSupply(eastProd, trialEast)) continue;
-      const price = side === 'west' ? westPrice : eastPrice;
-      coins += price;
-      if (side === 'west') fromWest.push(r); else fromEast.push(r);
-      if (tryAssign(i + 1, trialWest, trialEast)) return true;
-      coins -= price;
-      if (side === 'west') fromWest.pop(); else fromEast.pop();
+  const search = (ti: number, coins: number): void => {
+    if (best && coins > best.coins) return;
+    if (ti === types.length) {
+      const bought = fromWest.length + fromEast.length;
+      if (!best || coins < best.coins || bought < best.fromWest.length + best.fromEast.length) {
+        best = { fromWest: fromWest.slice(), fromEast: fromEast.slice(), coins };
+      }
+      return;
     }
-    return false;
+    const [r, k] = types[ti];
+    const pw = neighborPurchasePrice(player, 'west', r);
+    const pe = neighborPurchasePrice(player, 'east', r);
+    for (let mine = k; mine >= 0; mine--) {
+      pushN(own, r, mine);
+      if (productionCanSupply(self, own)) {
+        for (let w = k - mine; w >= 0; w--) {
+          const e = k - mine - w;
+          pushN(fromWest, r, w);
+          pushN(fromEast, r, e);
+          if (productionCanSupply(westProd, fromWest) && productionCanSupply(eastProd, fromEast)) {
+            search(ti + 1, coins + w * pw + e * pe);
+          }
+          popN(fromEast, e);
+          popN(fromWest, w);
+        }
+      }
+      popN(own, mine);
+    }
   };
+  search(0, 0);
 
-  if (!tryAssign(0, [], [])) return null;
-  return { fromWest, fromEast, coins };
-}
-
-/** Compute resources still needed after self-production assignments are taken
- *  greedily. Used by AI/UI: take the resources you DO produce off the cost,
- *  return what's left that must be bought. */
-export function shortfall(
-  state: SwState,
-  player: SwPlayer,
-  cost: SwCost,
-): { stillNeed: SwResource[]; selfCovers: boolean } {
-  const required = cost.resources ? cost.resources.slice() : [];
-  if (required.length === 0) return { stillNeed: [], selfCovers: true };
-  const prod = productionFor(state, player);
-  // Find an assignment that covers AS MUCH as possible. Try a quick pass: for
-  // each required resource, deduct one fixed; if not, try a choice. Anything
-  // unassigned is shortfall.
-  const fixedRem = new Map(prod.fixed);
-  const choices = prod.choices.map((c) => c.slice());
-  const stillNeed: SwResource[] = [];
-  for (const r of required) {
-    if ((fixedRem.get(r) ?? 0) > 0) {
-      fixedRem.set(r, (fixedRem.get(r) ?? 0) - 1);
-      continue;
-    }
-    // Pick the first choice source that includes this resource.
-    const idx = choices.findIndex((c) => c.includes(r));
-    if (idx !== -1) {
-      // Lock that choice to this resource (remove it from pool).
-      choices.splice(idx, 1);
-      continue;
-    }
-    stillNeed.push(r);
-  }
-  return { stillNeed, selfCovers: stillNeed.length === 0 };
-}
-
-/** Convenience: compute the resources a card or wonder stage costs. */
-export function costOfBuild(state: SwState, player: SwPlayer, card: SwCard): SwCost {
-  void state; void player;
-  return card.cost;
+  const found = best as { fromWest: SwResource[]; fromEast: SwResource[]; coins: number } | null;
+  if (!found) return { ok: false, reason: 'resources', totalCoins: baseCoins };
+  const payment: SwPayment = { fromWest: found.fromWest, fromEast: found.fromEast, coins: 0 };
+  const v = validatePayment(state, player, cost, payment);
+  if (!v.ok) return { ok: false, reason: 'coins', totalCoins: baseCoins + found.coins };
+  return { ok: true, payment, totalCoins: v.totalCoins, toWest: v.toWest, toEast: v.toEast };
 }
 
 /** Convenience: shields total for a player from cards + wonder stages + leaders. */
@@ -384,11 +349,8 @@ export function shieldsFor(player: SwPlayer): number {
       }
     }
   }
-  const wonder = wonderById(player.wonderId);
-  for (let i = 0; i < player.wonderStagesBuilt; i++) {
-    for (const eff of wonder.stages[i].effects) {
-      if (eff.kind === 'shields') s += eff.shields;
-    }
+  for (const eff of builtStageEffects(player)) {
+    if (eff.kind === 'shields') s += eff.shields;
   }
   return s;
 }
@@ -405,12 +367,6 @@ export function sumCoinsOnPlay(effects: SwCardEffect[]): number {
     if (eff.kind === 'coins') coins += eff.amount;
   }
   return coins;
-}
-
-/** True if a player has a wonder stage that supplies a "build from discard" effect.
- *  We don't model this yet — exported as a hook for future expansion. */
-export function hasBuildFromDiscard(_player: SwPlayer): boolean {
-  return false;
 }
 
 /** A player may build a card for free if they have any of its chain-from prereqs in their tableau. */
@@ -443,4 +399,3 @@ export function effectiveCostFor(
   return cost;
 }
 
-void MANUFACTURED_RESOURCES;

@@ -3,7 +3,8 @@
 import { describe, it, expect } from 'vitest';
 import { sevenWondersModule } from './module';
 import type { SwState, SwCard } from './types';
-import { scoreMatch } from './scoring';
+import { rankRows, scoreMatch } from './scoring';
+import { newMatch, realCard } from './testSupport';
 import type { Seat } from '@/core/types';
 
 function aiSeats(n: number): Seat[] {
@@ -92,5 +93,75 @@ describe('seven-wonders scoring', () => {
     const rows = scoreMatch(s);
     const r = rows.find((r) => r.playerId === s.players[0].id)!;
     expect(r.total).toBe(r.military + r.treasury + r.wonder + r.civilian + r.commercial + r.science + r.guild);
+  });
+});
+
+describe('seven-wonders scoring: wilds, guilds, ties', () => {
+  it('the Scientists Guild and Babylon add science symbols of their choice', () => {
+    const s = newMatch(3, { wonders: ['babylon-a', 'gizah-a', 'rhodes-a'] });
+    const me = s.players[0];
+    me.tableau = [greenCard(1, 'compass'), greenCard(2, 'gear')];
+    const science = () => scoreMatch(s).find((r) => r.playerId === me.id)!.science;
+    expect(science()).toBe(2);
+    me.tableau.push(realCard('Scientists Guild'));
+    expect(science()).toBe(1 + 1 + 1 + 7); // the wild completes the set
+    me.wonderStagesBuilt = 2; // Babylon A stage 2: a second wild
+    expect(science()).toBe(4 + 1 + 1 + 7); // best split: 2 compass, 1 gear, 1 tablet
+    expect(scoreMatch(s).find((r) => r.playerId === me.id)!.guild).toBe(0); // the guild's VP is science
+  });
+
+  it('Olympia B copies the neighbour guild worth the most to it', () => {
+    const s = newMatch(3, { wonders: ['olympia-b', 'gizah-a', 'rhodes-a'] });
+    const [me, east, west] = s.players;
+    me.wonderStagesBuilt = 3;
+    east.tableau.push(realCard('Spies Guild'), realCard('Stockade'), realCard('Barracks'), realCard('Guard Tower'));
+    west.tableau.push(realCard('Magistrates Guild'), realCard('Baths'));
+    const row = scoreMatch(s).find((r) => r.playerId === me.id)!;
+    expect(row.copiedGuild).toBe('Spies Guild');
+    expect(row.guild).toBe(3); // the 3 red cards next door, counted from Olympia's seat
+
+    me.wonderStagesBuilt = 2;
+    expect(scoreMatch(s).find((r) => r.playerId === me.id)!.copiedGuild).toBeUndefined();
+  });
+
+  it('a copied Scientists Guild is one more wild symbol', () => {
+    const s = newMatch(3, { wonders: ['olympia-b', 'gizah-a', 'rhodes-a'] });
+    const [me, east] = s.players;
+    me.wonderStagesBuilt = 3;
+    me.tableau = [greenCard(1, 'compass'), greenCard(2, 'gear')];
+    east.tableau.push(realCard('Scientists Guild'));
+    const row = scoreMatch(s).find((r) => r.playerId === me.id)!;
+    expect(row.copiedGuild).toBe('Scientists Guild');
+    expect(row.science).toBe(10);
+  });
+
+  it('the Strategists Guild counts every defeat token next door', () => {
+    const s = newMatch(3);
+    const [me, east, west] = s.players;
+    me.tableau.push(realCard('Strategists Guild'));
+    east.militaryTokens = [-1, -1, 3];
+    west.militaryTokens = [5, -1];
+    expect(scoreMatch(s).find((r) => r.playerId === me.id)!.guild).toBe(3);
+  });
+
+  it('Shipowners counts its own brown, gray and purple cards (itself included)', () => {
+    const s = newMatch(3);
+    const me = s.players[0];
+    me.tableau.push(realCard('Shipowners Guild'), realCard('Lumber Yard'), realCard('Loom'), realCard('Workers Guild'));
+    expect(scoreMatch(s).find((r) => r.playerId === me.id)!.guild).toBe(4);
+  });
+
+  it('a tie on points goes to the most coins; a tie on both is shared', () => {
+    const s = freshState(3);
+    const rows = s.players.map((p) => ({
+      playerId: p.id, military: 0, treasury: 0, wonder: 0, civilian: 10, commercial: 0, guild: 0, science: 0, total: 10,
+    }));
+    s.players[0].coins = 2; s.players[1].coins = 5; s.players[2].coins = 5;
+    rows[0].total = 11;
+    expect(rankRows(s, rows).winnerIds).toEqual(['p0']);
+    rows[0].total = 10;
+    const { sorted, winnerIds } = rankRows(s, rows);
+    expect(winnerIds).toEqual(['p1', 'p2']);
+    expect(sorted.map((r) => r.playerId)).toEqual(['p1', 'p2', 'p0']);
   });
 });

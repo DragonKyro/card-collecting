@@ -3,30 +3,33 @@
 //
 //   easy    easy-update100.json            update 100 of training/runs/ssp/main
 //   normal  normal-update1000.json         update 1000
-//   hard    hard-multi-update14000.json    update 14000 of training/runs/ssp/multi
+//   hard    hard-pepper-update17500.json   update 17500 of training/runs/ssp/pepper
 //
-// Easy and Normal were trained on 2-player Extra Salt matches only. Hard is
-// main's update 10000 (hard-update10000.json, kept here as the training
-// benchmark but no longer shipped) trained 4,000 more updates on 2, 3 and
-// 4-player matches. Head to head (2000 seat-swapped matches): normal beats
-// easy 61%, hard beats easy 76%, normal 65% and the old 2-player hard 53.5%;
-// all three beat random play ~100%. At a table of old-hard copies the new
-// hard wins 44.5% of 3-player matches (even: 33.3%) and 37.4% of 4-player
-// ones (even: 25%). (The main run began with 10 updates imitating a
-// since-removed heuristic; updates 100 and 1000 predate white counting for
-// mermaid claims.)
+// Easy and Normal were trained on 2-player Extra Salt matches only. Hard
+// descends from main's update 10000 (hard-update10000.json): 4,000 updates on
+// 2, 3 and 4-player matches (runs/ssp/multi, hard-multi-update14000.json),
+// then 3,500 on 2-4 players with and without Extra Pepper (runs/ssp/pepper).
+// Both earlier Hards stay here as training benchmarks but are no longer
+// shipped. Head to head (2000 seat-swapped 2-player Extra Salt matches):
+// normal beats easy 61%, hard beats easy 76%, normal 67% and the previous
+// hard 56%; all three beat random play ~100%. Against the previous hard on
+// fresh deals (3000 matches each) it wins 53.5% at 2 players, 35.6% at 3
+// (even: 33.3%) and 28.6% at 4 (even: 25%); with Extra Pepper 57.9%, 39.1%
+// and 31.2%. (The main run began with 10 updates imitating a since-removed
+// heuristic; updates 100 and 1000 predate white counting for mermaid claims.)
 //
-// Each file is ~1.3 MB. Vite emits it as a hashed asset (never inside a JS
+// Each file is ~1.7 MB. Vite emits it as a hashed asset (never inside a JS
 // chunk) and it's fetched once per page, on first use. The shell awaits
 // `prepareAiLevel` (via GameModule.prepare) before a match starts, so
 // `chooseLeveledAction` can always answer synchronously.
 //
-// None were trained with Extra Pepper (or the base game alone); they play
-// every supported setup legally (2–4 players, any expansions), just untuned
-// outside the ones above. Their Pepper-only action slots (Water Rodeo, Coral
-// Reef, Angelfish, the event choice) were added when they were upgraded to
-// action space v3 and taught to copy nn/fixedChoices.ts (training/ssp/teach.py);
-// everything else plays exactly as it was trained.
+// Every level plays every supported setup legally (2–4 players, any
+// expansions); none was trained on the base game alone. Easy and Normal never
+// saw Extra Pepper: their Pepper-only action slots (Water Rodeo, Coral Reef,
+// Angelfish, the event choice) were added when they were upgraded to action
+// space v3 and taught to copy nn/fixedChoices.ts (training/ssp/teach.py);
+// everything else plays exactly as it was trained. Hard started from the same
+// upgrade + teach and was then trained with Pepper.
 
 import type { PlayerId } from '@/core/types';
 import type { SspAction, SspAiLevel, SspConfig, SspState } from './types';
@@ -35,7 +38,7 @@ import { actWithPolicy } from './nn/agent';
 import { greedyPolicy, loadSspPolicy, type SspPolicyFile } from './nn/policy';
 import easyUrl from './policies/easy-update100.json?url';
 import normalUrl from './policies/normal-update1000.json?url';
-import hardUrl from './policies/hard-multi-update14000.json?url';
+import hardUrl from './policies/hard-pepper-update17500.json?url';
 
 export const AI_LEVELS: ReadonlyArray<{ id: SspAiLevel; label: string }> = [
   { id: 'easy', label: 'Easy' },

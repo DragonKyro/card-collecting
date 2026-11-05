@@ -19,14 +19,15 @@
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
 }
 .swd-game.swd-game-over { grid-template-columns: minmax(0, 1fr); }
+
+.swd-main { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.swd-side { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+/* After the base rules, so the side column really turns into a row. */
 @media (max-width: 1100px) {
   .swd-game { grid-template-columns: minmax(0, 1fr); }
   .swd-side { flex-direction: row; flex-wrap: wrap; }
   .swd-side-box { flex: 1 1 240px; }
 }
-
-.swd-main { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-.swd-side { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .swd-dim { opacity: 0.65; font-weight: 400; }
 
 /* ---------- Icons ---------- */
@@ -244,10 +245,16 @@
 .swd-wonder-desc.short { color: #f2a08c; }
 .swd-wonder.clickable { cursor: pointer; }
 .swd-wonder.pickable .swd-wonder-face { transition: transform 0.12s ease, box-shadow 0.12s ease; }
-.swd-wonder.pickable:hover .swd-wonder-face,
 .swd-wonder.pickable:focus-visible .swd-wonder-face {
   transform: translateY(-3px);
   box-shadow: 0 0 0 3px #ffd970, 0 8px 16px rgba(0, 0, 0, 0.5);
+}
+/* Hover lifts only where there is a hover: on touch they stick after a tap. */
+@media (hover: hover) {
+  .swd-wonder.pickable:hover .swd-wonder-face {
+    transform: translateY(-3px);
+    box-shadow: 0 0 0 3px #ffd970, 0 8px 16px rgba(0, 0, 0, 0.5);
+  }
 }
 .swd-wonder.locked { opacity: 0.6; }
 
@@ -348,17 +355,12 @@
 .swd-table-row { display: flex; gap: 18px; align-items: flex-start; justify-content: center; flex-wrap: wrap; }
 .swd-pyramid-wrap { display: flex; flex-direction: column; align-items: center; min-width: 0; }
 
-.swd-pyramid {
-  --swd-card-w: 84px;
-  --swd-card-h: 128px;
-  --swd-step-x: 90px;
-  --swd-step-y: 52px;
-  position: relative;
-  margin: 6px auto 0;
-}
+.swd-pyramid { position: relative; margin: 6px auto 0; }
 .swd-slot { position: absolute; transition: transform 0.12s ease; }
 .swd-slot.available .swd-card { box-shadow: 0 0 0 2px #ffd970, 0 4px 10px rgba(0, 0, 0, 0.55); }
-.swd-slot.pickable:hover { transform: translateY(-5px); }
+@media (hover: hover) {
+  .swd-slot.pickable:hover { transform: translateY(-5px); }
+}
 .swd-slot.pickable .swd-card:focus-visible { outline: 3px solid #7cc8ff; outline-offset: 1px; }
 .swd-slot.selected { transform: translateY(-8px); }
 .swd-slot.selected .swd-card { box-shadow: 0 0 0 3px #7cc8ff, 0 10px 18px rgba(0, 0, 0, 0.6); }
@@ -411,8 +413,10 @@
 }
 .swd-progress-choice strong { font: 700 15px/1.2 Georgia, 'Times New Roman', serif; }
 .swd-progress-choice.pickable { cursor: pointer; }
-.swd-progress-choice.pickable:hover,
 .swd-progress-choice.pickable:focus-visible { transform: translateY(-3px); box-shadow: 0 0 0 2px #ffd970; }
+@media (hover: hover) {
+  .swd-progress-choice.pickable:hover { transform: translateY(-3px); box-shadow: 0 0 0 2px #ffd970; }
+}
 .swd-progress-choice.locked { opacity: 0.6; }
 .swd-construct { display: flex; gap: 18px; align-items: flex-start; justify-content: center; flex-wrap: wrap; }
 .swd-construct-card { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 12px; opacity: 0.85; }
@@ -432,7 +436,7 @@
 .swd-offer-row { display: flex; gap: 8px; align-items: center; }
 .swd-offer-row strong { display: block; font-size: 13px; }
 .swd-offer-row span { display: block; font-size: 11px; line-height: 1.3; opacity: 0.75; }
-.swd-discard { display: flex; gap: 8px; align-items: center; font-size: 12px; }
+.swd-discard { display: flex; flex-wrap: wrap; gap: 3px; max-height: 160px; overflow-y: auto; }
 
 /* ---------- Game over ---------- */
 
@@ -449,6 +453,7 @@
 .swd-gameover-banner { display: flex; align-items: center; gap: 12px; }
 .swd-gameover-banner h2 { margin: 0; font: 700 26px/1.1 Georgia, 'Times New Roman', serif; }
 .swd-gameover-banner span { font-size: 13px; letter-spacing: 1px; text-transform: uppercase; opacity: 0.8; }
+.swd-score-wrap { max-width: 100%; overflow-x: auto; }
 .swd-score-table { border-collapse: collapse; font-size: 15px; }
 .swd-score-table th, .swd-score-table td {
   padding: 5px 10px;
@@ -462,3 +467,141 @@
 /* ---------- Lobby ---------- */
 
 .swd-lobby { padding: 8px; }
+
+/* ---------- Phones ---------- */
+
+@media (max-width: 600px) {
+  .swd-game { padding: 6px; gap: 8px; border-radius: 10px; }
+  .swd-main, .swd-side { gap: 8px; }
+
+  .swd-player { padding: 6px 8px; border-left-width: 5px; }
+  .swd-player-head { gap: 4px 10px; }
+  .swd-player-name { font-size: 15px; }
+  .swd-stat { font-size: 15px; }
+  .swd-player-body { gap: 8px; margin-top: 6px; }
+  .swd-city { flex-basis: 100%; }
+  .swd-player-wonders { gap: 6px; }
+
+  .swd-military { padding: 0; }
+  .swd-military-labels { font-size: 11px; }
+
+  .swd-table { padding: 8px 6px 10px; min-height: 0; border-radius: 10px; }
+  .swd-table-title { font-size: 16px; margin-bottom: 6px; text-align: center; }
+  .swd-table-row { gap: 10px; }
+  .swd-pyramid-wrap { width: 100%; }
+
+  /* The picked card beside its buttons, so the panel stays short. */
+  .swd-pick-panel { width: 100%; padding: 10px; }
+  .swd-pick-panel-card {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-rows: auto auto 1fr;
+    gap: 6px 10px;
+    align-items: start;
+  }
+  .swd-pick-panel-card > .swd-card { grid-row: 1 / span 3; zoom: 0.75; }
+  .swd-pick-panel-card .swd-pick-cost { align-items: flex-start; text-align: left; }
+  .swd-pick-panel-card .swd-pick-sub { justify-content: flex-start; }
+  .swd-pick-buttons button { padding: 7px 8px; gap: 4px; font-size: 12.5px; }
+
+  /* Two wonders a row: scale the card, keep the description's text size. */
+  .swd-wonder-grid { gap: 10px 8px; }
+  .swd-wonder-grid .swd-wonder-lg { zoom: 0.68; }
+  .swd-wonder-grid .swd-wonder-lg .swd-wonder-desc { font-size: 16px; }
+  .swd-construct { gap: 10px; }
+
+  .swd-progress-grid { gap: 8px; }
+  .swd-progress-choice { width: calc(50% - 4px); padding: 8px; }
+
+  .swd-gameover { padding: 10px 8px; gap: 10px; }
+  .swd-gameover-banner h2 { font-size: 22px; }
+  .swd-score-table { font-size: 13px; }
+  .swd-score-table th, .swd-score-table td { padding: 4px 3px; }
+  .swd-score-table th svg { width: 16px; height: 16px; }
+  .swd-score-table td:first-child { max-width: 72px; overflow: hidden; text-overflow: ellipsis; }
+}
+
+/* ---------- Decisions beside the pyramid ---------- */
+
+.swd-token-choices { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+.swd-token-choices .swd-progress-choice {
+  width: 100%;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  text-align: left;
+}
+.swd-token-choices .swd-progress-choice strong { display: block; font-size: 14px; }
+.swd-token-choices .swd-progress-choice span { display: block; font-size: 11px; line-height: 1.3; opacity: 0.8; }
+.swd-card-choices {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 4px;
+}
+.swd-card.pickable { cursor: pointer; box-shadow: 0 0 0 2px #ffd970, 0 3px 8px rgba(0, 0, 0, 0.5); }
+.swd-card.pickable:focus-visible { outline: 3px solid #7cc8ff; outline-offset: 1px; }
+@media (hover: hover) {
+  .swd-card.pickable:hover { transform: translateY(-3px); }
+}
+.swd-wonder-choices { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.swd-band.clickable { cursor: pointer; }
+
+/* ---------- History ---------- */
+
+.swd-log {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  line-height: 1.35;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.swd-log li:first-child { font-weight: 700; color: var(--swd-cream); }
+.swd-log li { opacity: 0.85; }
+
+/* ---------- Motion ---------- */
+
+/* The conflict pawn slides between spaces; a claimed looting token fades. */
+.swd-pawn { transition: transform 0.7s cubic-bezier(0.3, 0.7, 0.3, 1); }
+.swd-loot { transition: opacity 0.6s ease 0.4s; }
+.swd-loot.taken { opacity: 0; }
+
+/* Coin changes float off the counter. */
+.swd-coins { position: relative; }
+.swd-delta {
+  position: absolute;
+  left: 50%;
+  top: -4px;
+  pointer-events: none;
+  font: 800 14px/1 ui-sans-serif, system-ui, sans-serif;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.6);
+  animation: swd-float 1.4s ease-out forwards;
+}
+.swd-delta.up { color: #2f7d2c; }
+.swd-delta.down { color: #b2321f; }
+@keyframes swd-float {
+  0% { opacity: 0; transform: translate(-50%, 4px); }
+  15% { opacity: 1; transform: translate(-50%, -6px); }
+  100% { opacity: 0; transform: translate(-50%, -22px); }
+}
+
+/* Dealt-in wonders (the second draft group) fade up into place. */
+.swd-wonder-grid > .swd-wonder { animation: swd-deal 0.35s ease-out backwards; }
+@keyframes swd-deal {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .swd-pawn, .swd-loot { transition: none; }
+  .swd-delta, .swd-wonder-grid > .swd-wonder { animation: none; }
+}

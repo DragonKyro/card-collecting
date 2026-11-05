@@ -406,3 +406,23 @@
 @media (prefers-reduced-motion: reduce) {
   .jp-card.fresh, .jp-overlay, .jp-overlay-card, .jp-seal-pop { animation: none; }
 }
+
+/* ---------- phones ---------- */
+
+/* Smaller full-size cards: five market cards then sit side by side instead of
+ * hiding each other's labels, and a hand of five fits without overlapping. */
+@media (max-width: 600px) {
+  .jp-board { padding: 10px 8px; }
+  .jp-status { gap: 4px 12px; }
+  .jp-player { padding: 8px 8px 10px; }
+  .jp-card-normal { width: 64px; height: 90px; }
+  .jp-hand:not(.jp-hand-small) { --card-w: 64px; --min-gap: -46px; min-height: 102px; }
+  .jp-rug { margin: 10px 0; padding: 10px 6px 8px; }
+  .jp-market { min-height: 100px; }
+  .jp-market .jp-card + .jp-card {
+    margin-left: clamp(-40px, calc((100% - var(--n) * 64px) / max(var(--n) - 1, 1)), 8px);
+  }
+  .jp-deck, .jp-discard { width: 64px; height: 90px; }
+  .jp-overlay { padding: 16px 8px; }
+  .jp-overlay-card { padding: 14px 12px; }
+}

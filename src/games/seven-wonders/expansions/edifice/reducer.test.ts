@@ -83,6 +83,13 @@ describe('Edifice — reducer integration', () => {
             break;
           }
         }
+      } else if (s.activePlayerId) {
+        // Any other step (e.g. Halicarnassus' discard build) waits on one seat.
+        const a = baseAI(s, s.activePlayerId);
+        if (a) {
+          s = applyAction(s, a);
+          advanced = true;
+        }
       }
       if (!advanced) break;
     }

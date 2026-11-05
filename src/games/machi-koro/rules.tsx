@@ -70,7 +70,7 @@ function LmRow({ d }: { d: MkLandmarkDef }) {
 function OddsTable() {
   const pct = (p: number) => (p === 0 ? '—' : `${(p * 100).toFixed(1)}%`);
   return (
-    <table className="tight mk-rules-table">
+    <table className="tight mk-rules-table mk-odds">
       <thead>
         <tr><th>Total</th>{Array.from({ length: 12 }, (_, i) => <th key={i} className="num">{i + 1}</th>)}</tr>
       </thead>

@@ -186,6 +186,10 @@ function GameView({ state, localPlayerId, dispatch }: { state: MkState; localPla
     />
   );
 
+  // Shown in the market header, or (on phones) in the action panel pinned to
+  // the bottom of the screen — CSS picks one.
+  const dice = <DiceTray roll={lastRoll} added={rollIsCurrent ? state.turn.roll?.added ?? 0 : 0} current={rollIsCurrent} nameOf={nameOf} />;
+
   return (
     <FxProvider state={state} nameOf={nameOf}>
       <div className="mk-layout">
@@ -198,7 +202,7 @@ function GameView({ state, localPlayerId, dispatch }: { state: MkState; localPla
             selected={selected}
             canBuy={canBuy}
             onPick={onMarketClick}
-            dice={<DiceTray roll={lastRoll} added={rollIsCurrent ? state.turn.roll?.added ?? 0 : 0} current={rollIsCurrent} nameOf={nameOf} />}
+            dice={dice}
           />
         </main>
         <section className={`mk-bottom ${myTurn ? 'mine' : ''}`}>
@@ -214,6 +218,7 @@ function GameView({ state, localPlayerId, dispatch }: { state: MkState; localPla
             invest={invest}
             setInvest={setInvest}
             act={act}
+            dice={dice}
           />
         </section>
         <aside className="mk-side">
@@ -230,7 +235,7 @@ function GameView({ state, localPlayerId, dispatch }: { state: MkState; localPla
 
 // ---------- Action panel: status, prompt, actions ----------
 
-function TurnBar({ state, me, myTurn, nameOf, selected, give, take, invest, setInvest, act }: {
+function TurnBar({ state, me, myTurn, nameOf, selected, give, take, invest, setInvest, act, dice }: {
   state: MkState;
   me: MkPlayer | null;
   myTurn: boolean;
@@ -241,6 +246,7 @@ function TurnBar({ state, me, myTurn, nameOf, selected, give, take, invest, setI
   invest: boolean;
   setInvest: (on: boolean) => void;
   act: (a: MkMove) => void;
+  dice: ReactNode;
 }) {
   const R = rulesOf(state);
   const ed = state.config.edition;
@@ -440,7 +446,7 @@ function TurnBar({ state, me, myTurn, nameOf, selected, give, take, invest, setI
   }
 
   return (
-    <div className={`mk-turnbar ${myTurn ? 'mine' : ''}`}>
+    <div className={`mk-turnbar ${myTurn ? 'mine' : ''} ${state.phase === 'gameOver' ? 'over' : ''}`}>
       <span className="mk-phase">{phaseLabel}</span>
       {state.phase === 'playing' && (
         <span className="mk-whose">
@@ -451,6 +457,7 @@ function TurnBar({ state, me, myTurn, nameOf, selected, give, take, invest, setI
       )}
       <div className="mk-prompt">{prompt}</div>
       {buttons && <div className="mk-actions">{buttons}</div>}
+      <div className="mk-turnbar-dice">{dice}</div>
     </div>
   );
 }

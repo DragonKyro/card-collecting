@@ -96,7 +96,9 @@
 .mk-card-sm { width: 62px; height: 86px; border-radius: 7px; }
 .mk-card-xs { width: 40px; height: 52px; border-radius: 6px; border-width: 1.5px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35); }
 .mk-card.clickable { cursor: pointer; }
-.mk-card.clickable:hover { transform: translateY(-3px); box-shadow: 0 8px 16px rgba(0, 0, 0, 0.45); }
+@media (hover: hover) {
+  .mk-card.clickable:hover { transform: translateY(-3px); box-shadow: 0 8px 16px rgba(0, 0, 0, 0.45); }
+}
 
 .mk-card-band {
   background: var(--mk-band, #888);
@@ -296,6 +298,8 @@
 .mk-actions button svg { vertical-align: -2px; }
 .mk-invest-toggle { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--fg-muted); flex-basis: 100%; }
 .mk-ev { font-weight: 500; font-size: 11px; opacity: 0.7; margin-left: 4px; }
+/* The panel's own copy of the dice tray — phones only (see the end of the file). */
+.mk-turnbar-dice { display: none; }
 
 .mk-dice {
   display: flex;
@@ -630,6 +634,103 @@
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
   white-space: nowrap;
   z-index: 4;
+}
+
+/* ---------- Phones ---------- */
+
+/* One column: the market rows become swipeable strips, your town and the
+   others follow, and the action panel — carrying the dice — pins to the
+   bottom of the screen, so Roll / Build stay in reach while you browse. */
+@media (max-width: 600px) {
+  .mk-layout { display: flex; flex-direction: column; align-items: stretch; gap: 10px; }
+  /* The board is a <main>, so it also picks up the shell's main padding. */
+  .mk-layout > .mk-board { padding: 0; }
+  .mk-bottom { display: contents; }
+  .mk-town.own {
+    order: 1;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 8px 10px 10px;
+  }
+  .mk-side { order: 2; }
+  .mk-log-panel { order: 1; flex: none; max-height: 240px; }
+
+  .mk-turnbar {
+    order: 3;
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "phase dice" "whose dice" "prompt prompt" "actions actions";
+    align-items: center;
+    gap: 3px 10px;
+    padding: 8px 10px calc(10px + env(safe-area-inset-bottom, 0px));
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius) var(--radius) 0 0;
+    box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.45);
+  }
+  .mk-turnbar.over { position: static; border-radius: var(--radius); }
+  .mk-turnbar.mine { border-color: #f2c230; box-shadow: 0 0 0 1px rgba(242, 194, 48, 0.35), 0 -6px 22px rgba(242, 194, 48, 0.12); }
+  .mk-phase { grid-area: phase; font-size: 10px; }
+  .mk-whose { grid-area: whose; font-size: 15px; flex-wrap: wrap; gap: 4px 8px; }
+  .mk-prompt { grid-area: prompt; font-size: 12.5px; margin-top: 2px; }
+  /* Long choice lists (Renovation Company: one button per type) scroll
+     inside the panel instead of covering the screen. */
+  .mk-actions { grid-area: actions; gap: 6px; max-height: 34vh; overflow-y: auto; }
+  .mk-actions button { padding: 8px 11px; font-size: 13.5px; }
+  .mk-turnbar-dice { grid-area: dice; display: block; }
+  .mk-turnbar-dice .mk-dice { flex-direction: row; min-width: 0; gap: 8px; padding: 4px 8px; border-radius: 8px; }
+  .mk-turnbar-dice .mk-dice-row { gap: 5px; min-height: 30px; }
+  .mk-turnbar-dice .mk-die { width: 30px; height: 30px; }
+  .mk-turnbar-dice .mk-dice-label { font-size: 11px; line-height: 1.25; max-width: 96px; }
+  .mk-turnbar-dice .mk-total { font-size: 15px; }
+  .mk-turnbar-dice .mk-tag.hot { margin-left: 0; }
+  .mk-market-head .mk-dice { display: none; }
+
+  .mk-market { padding: 8px 10px 4px; }
+  .mk-market-head { margin-bottom: 0; }
+  .mk-market-head h3 { font-size: 13px; }
+  .mk-market-row { flex-direction: column; align-items: stretch; gap: 0; padding: 6px 0 0; }
+  .mk-row-label { flex-direction: row; width: auto; gap: 8px; }
+  .mk-row-label .mk-back { width: auto; height: 20px; flex-direction: row; gap: 5px; padding: 0 8px; border-radius: 5px; border-width: 1.5px; box-shadow: none; }
+  .mk-row-label .mk-back-label { font-size: 9px; }
+  .mk-row-label .mk-back-count { font-size: 12px; }
+  /* Swipe through a row; the next card peeks in at the edge. */
+  .mk-row-cards,
+  .mk-market.open .mk-row-cards,
+  .mk-market.marketplace .mk-row-cards {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    scroll-padding-inline: 10px;
+    scrollbar-width: none;
+    gap: 8px;
+    margin: 0 -10px;
+    padding: 7px 10px 8px;
+    align-items: flex-start;
+  }
+  .mk-row-cards::-webkit-scrollbar { display: none; }
+  .mk-slot { scroll-snap-align: start; }
+  .mk-slot.selected .mk-card { transform: none; }
+
+  .mk-gameover { padding: 14px 10px 12px; }
+  .mk-gameover h2 { font-size: 21px; }
+  .mk-standings { font-size: 12px; }
+  .mk-standings th, .mk-standings td { padding: 4px 5px; }
+  .mk-standings td:nth-child(2) { white-space: nowrap; }
+
+  .rules-modal-body table.mk-rules-table { font-size: 11px; }
+  .rules-modal-body .mk-rules-table th, .rules-modal-body .mk-rules-table td { padding: 3px 4px; }
+  .mk-rules-card { gap: 5px; }
+  .mk-rules-thumb { width: 36px; height: 24px; border-width: 1.5px; border-radius: 4px; }
+  /* Twelve totals don't fit across a phone: the odds table scrolls on its own. */
+  .rules-modal-body table.mk-odds { display: block; overflow-x: auto; }
+
+  .mk-fx-toast { width: max-content; max-width: calc(100vw - 24px); white-space: normal; text-align: center; font-size: 14px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

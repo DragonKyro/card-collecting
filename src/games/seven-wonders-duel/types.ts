@@ -1,23 +1,26 @@
 // 7 Wonders Duel — types.
 //
-// Standalone 2-player variant of 7 Wonders. Shares zero code with the base
-// 7 Wonders module: different draft (pyramid of mixed face-up/face-down
-// cards), 12 unique wonders (no A/B sides), 5 of 10 Progress Tokens per
-// match, single 9-position military track with two-sided pawn, and three
-// victory conditions (Civilian / Military Supremacy / Science Supremacy).
+// Standalone 2-player variant of 7 Wonders (base game, no expansions). Shares
+// zero code with the base 7 Wonders module: a pyramid draft of face-up and
+// face-down cards, 12 wonders (no A/B sides), 5 of 10 Progress tokens on the
+// board, one conflict pawn, and three victories (civilian / military
+// supremacy / scientific supremacy).
 //
-// Turn flow:
-//   1. setupMatch — deal Age 1 pyramid, draft wonders (4-4 alternating),
-//      draw 5 of 10 Progress Tokens.
-//   2. Each turn: active player picks an AVAILABLE card from the pyramid
-//      (no card on top of it). They then choose: build into tableau,
-//      bury under an unbuilt wonder, or discard for coins.
-//   3. Some cards/wonders push the military pawn or grant science symbols.
-//   4. Matching a 2nd science symbol of the same kind → pick a Progress
-//      Token from the central offer.
-//   5. 6 different science symbols collected → Science Supremacy victory.
-//      Military pawn at ±9 → Military Supremacy victory.
-//   6. After 3 ages of pyramid play, Civilian Victory by total VP.
+// Setup (rulebook): random first player; wonder draft in two groups of four
+// (first player picks 1, the other 2, first player the last; the second group
+// starts with the other player); 7 coins each; 5 Progress tokens on the
+// board, the other 5 boxed (the Great Library draws from them). Each age deals
+// 20 cards: Ages I and II drop 3 of 23 unseen; Age III drops 3 of its 20 and
+// adds 3 of the 7 Guilds.
+//
+// A turn: take an accessible card (nothing overlapping it) and build it,
+// discard it for 2 coins + 1 per yellow card, or use it to build a wonder.
+// Shields push the conflict pawn (looting tokens on the way, the capital wins);
+// each pair of matching science symbols takes a Progress token; six different
+// symbols win. Wonders may play again, destroy a card, build from the discard
+// or draw boxed Progress tokens. Only seven wonders get built — the eighth goes
+// back to the box. Between ages the militarily weaker player (the pawn on their
+// side; else whoever took the last card) chooses who starts.
 
 import type { Seat, PlayerId, GamePhase } from '@/core/types';
 import type { RngState } from '@/core/rng';
@@ -25,13 +28,13 @@ import type { RngState } from '@/core/rng';
 export type DuelAge = 1 | 2 | 3;
 
 export type DuelCardColor =
-  | 'brown'    // raw materials (Age I/II)
-  | 'gray'     // manufactured (Age I/II)
-  | 'blue'     // civilian VPs
-  | 'yellow'   // commercial (income/discounts/VP)
-  | 'red'      // military shields → military pawn advance
-  | 'green'    // science symbols
-  | 'purple';  // guild (Age III only)
+  | 'brown'    // raw materials
+  | 'gray'     // manufactured goods
+  | 'blue'     // civilian
+  | 'yellow'   // commercial
+  | 'red'      // military
+  | 'green'    // scientific
+  | 'purple';  // guilds (Age III)
 
 // ---------- Resources ----------
 
@@ -44,21 +47,38 @@ export const DUEL_MANU_RESOURCES: readonly DuelManufacturedResource[] = ['glass'
 export const DUEL_ALL_RESOURCES: readonly DuelResource[] =
   [...DUEL_RAW_RESOURCES, ...DUEL_MANU_RESOURCES];
 
-/** A production source: list of length 1 = fixed; longer = "choose one each turn". */
+/** A production source: length 1 = that resource; longer = one of them each turn. */
 export type DuelProduction = readonly DuelResource[];
 
 // ---------- Science symbols ----------
 //
-// Duel has 7 distinct science symbols: the 3 base 7W symbols plus 4 unique
-// to Duel. Two matching symbols → pick a Progress Token. 6 DIFFERENT symbols
-// → Science Supremacy victory.
+// Six symbols sit on the green cards, each on exactly two of them; the
+// seventh (the scales) is only on the Law token. A pair takes a Progress
+// token; six different symbols is Scientific Supremacy.
 
 export type DuelScience =
-  | 'compass' | 'gear' | 'tablet'
-  | 'lyre'    | 'wheel' | 'sundial' | 'mortar';
+  | 'globe'    // armillary sphere
+  | 'wheel'
+  | 'sundial'
+  | 'mortar'   // mortar and pestle
+  | 'plumb'    // plumb line and set square
+  | 'quill'    // quill and ink
+  | 'law';     // scales — the Law token
 
-export const DUEL_ALL_SCIENCE: readonly DuelScience[] =
-  ['compass', 'gear', 'tablet', 'lyre', 'wheel', 'sundial', 'mortar'];
+export const DUEL_CARD_SCIENCE: readonly DuelScience[] =
+  ['globe', 'wheel', 'sundial', 'mortar', 'plumb', 'quill'];
+export const DUEL_ALL_SCIENCE: readonly DuelScience[] = [...DUEL_CARD_SCIENCE, 'law'];
+
+// ---------- Chain symbols ----------
+//
+// A card showing a chain symbol (top right) makes the later card with the
+// same symbol in its cost free. Each symbol links exactly two cards.
+
+export type DuelChainSymbol =
+  | 'horseshoe' | 'sword' | 'tower' | 'target' | 'helmet'   // military
+  | 'book' | 'gear' | 'lyre' | 'lamp'                       // scientific
+  | 'mask' | 'moon' | 'drop' | 'column' | 'sun' | 'senate'  // civilian
+  | 'jug' | 'barrel';                                       // commercial
 
 // ---------- Card effects ----------
 
@@ -67,35 +87,29 @@ export interface DuelCost {
   resources?: DuelResource[];
 }
 
+/** What a commercial card or a guild counts. */
+export type DuelCount =
+  | { kind: 'color'; colors: DuelCardColor[] }
+  | { kind: 'wonders' }
+  | { kind: 'coins' };   // sets of 3 coins
+
 export type DuelCardEffect =
-  // Resource production. Choice sources can supply any one listed.
+  // Resource production; a multi-resource entry is a choice each turn.
   | { kind: 'produce'; production: DuelProduction[] }
-  // Immediate coin income.
+  // Coins once, when built.
   | { kind: 'coins'; amount: number }
-  // Shields → push military pawn toward opponent's capital.
+  // Shields — the conflict pawn moves that many spaces toward the opponent.
   | { kind: 'shields'; shields: number }
-  // Civilian VPs (blue cards).
+  // Victory points at the end.
   | { kind: 'vp'; vp: number }
-  // Science symbol (green cards).
   | { kind: 'science'; symbol: DuelScience }
-  // Trade discount: pay 1 (not 2 + opponent production) for the listed resource kind.
-  | { kind: 'tradeDiscountRaw' }
-  | { kind: 'tradeDiscountManufactured' }
-  // End-game VPs based on what you/opponent built.
-  | { kind: 'endVp';
-      from: 'self' | 'opponent' | 'both';
-      countWhat:
-        | { kind: 'cardColor'; color: DuelCardColor }
-        | { kind: 'wonderStages' }
-        | { kind: 'coins' };
-      coinsPerOnPlay?: number;
-      vpPer?: number;
-    }
-  // Yellow: force opponent to discard coins on play.
-  | { kind: 'forceOpponentDiscardCoins'; amount: number }
-  // Yellow: gain coins per matching card color on play (self or opponent).
-  | { kind: 'gainCoinsPerCardColor'; from: 'self' | 'opponent'; color: DuelCardColor; per: number }
-  ;
+  // Trading: these resources cost you exactly 1 coin each.
+  | { kind: 'tradeFixed'; resources: DuelResource[] }
+  // Age III commercial: coins once, per matching item in your own city.
+  | { kind: 'coinsPer'; what: DuelCount; per: number }
+  // Guild: coins once and VP at the end, per matching item in the city that
+  // has the most of them.
+  | { kind: 'guild'; what: DuelCount; coinsPer: number; vpPer: number };
 
 export interface DuelCard {
   id: number;
@@ -103,62 +117,60 @@ export interface DuelCard {
   age: DuelAge;
   color: DuelCardColor;
   cost: DuelCost;
-  /** Cards from a previous age whose owner may build this for free. */
-  chainFrom?: string[];
-  /** Names of cards in a later age this chains TO (informational). */
-  chainTo?: string[];
+  /** Name of the earlier card that makes this one free. */
+  chainFrom?: string;
+  /** Chain symbol printed in the cost column (needs a card showing it). */
+  chainCost?: DuelChainSymbol;
+  /** Chain symbol this card shows (makes a later card free). */
+  chain?: DuelChainSymbol;
   effects: DuelCardEffect[];
 }
 
 // ---------- Wonders ----------
 
-export interface DuelWonderStageEffect {
-  /** Effects identical to card effects, plus wonder-only "extra turn" / "destroy"
-   *  effects that are deferred to v2. */
-  kind:
-    | 'vp' | 'coins' | 'shields' | 'produce' | 'science'
-    | 'tradeDiscountRaw' | 'tradeDiscountManufactured'
-    | 'forceOpponentDiscardCoins' | 'extraTurn' | 'pickFromDiscard';
-  vp?: number;
-  coins?: number;
-  shields?: number;
-  production?: DuelProduction[];
-  symbol?: DuelScience;
-  amount?: number;
-}
+export type DuelWonderEffect =
+  | { kind: 'vp'; vp: number }
+  | { kind: 'coins'; amount: number }
+  | { kind: 'shields'; shields: number }
+  | { kind: 'produce'; production: DuelProduction[] }
+  | { kind: 'opponentLosesCoins'; amount: number }
+  /** Take another turn straight away. */
+  | { kind: 'playAgain' }
+  /** Put a card of this colour from the opponent's city on the discard pile. */
+  | { kind: 'destroy'; color: 'brown' | 'gray' }
+  /** Build any discarded card for free. */
+  | { kind: 'buildFromDiscard' }
+  /** Draw 3 of the boxed Progress tokens, keep one. */
+  | { kind: 'progressFromBox' };
 
 export interface DuelWonder {
   id: string;       // 'pyramids', 'mausoleum', etc.
   name: string;
   cost: DuelCost;
-  effects: DuelWonderStageEffect[];
+  effects: DuelWonderEffect[];
   description: string;
 }
 
 export interface DuelWonderState {
   wonderId: string;
   built: boolean;
-  /** id of the card buried under this wonder (UI only — face-down). */
+  /** Card tucked under the built wonder (face down). */
   buriedCardId: number | null;
 }
 
 // ---------- Progress tokens ----------
-//
-// Each Progress Token is one of the 10 base tokens. 5 of 10 are randomly
-// drawn at match setup. Tokens are claimed by matching a 2nd science symbol
-// (player picks one from the central offer, removed from offer).
 
 export type DuelProgressTokenId =
-  | 'agriculture'   // +6 coins, +4 VP on claim
-  | 'architecture'  // wonder cost: -2 resources of any kind
-  | 'economy'       // gain coins opponent pays for trade
-  | 'law'           // counts as a wild science symbol
-  | 'masonry'       // blue card cost: -2 resources
-  | 'mathematics'   // +3 VP per progress token at endgame
-  | 'philosophy'    // +7 VP at endgame
-  | 'strategy'      // red cards' shields counted +1 for military
-  | 'theology'      // wonders grant an extra turn
-  | 'urbanism';     // +6 coins, +chain-free discount on chain builds
+  | 'agriculture'   // 6 coins now, 4 VP
+  | 'architecture'  // wonders cost 2 fewer resources
+  | 'economy'       // the opponent's trading coins come to you
+  | 'law'           // a science symbol (the scales)
+  | 'masonry'       // blue cards cost 2 fewer resources
+  | 'mathematics'   // 3 VP per Progress token owned
+  | 'philosophy'    // 7 VP
+  | 'strategy'      // each new red card: +1 shield
+  | 'theology'      // every wonder you build plays again
+  | 'urbanism';     // 6 coins now; 4 coins per chain build
 
 export interface DuelProgressToken {
   id: DuelProgressTokenId;
@@ -174,22 +186,23 @@ export interface DuelPyramidSlot {
   cardId: number;
   faceUp: boolean;
   taken: boolean;
-  /** Indices of slots covering this slot. This slot becomes face-up when ALL
-   *  of its covering slots are taken. (Empty for top-row slots.) */
+  /** Slots overlapping this one (in the next row toward the players). It can
+   *  be taken — and a face-down card turns up — once all of them are gone. */
   coveredBy: number[];
-  /** Indices of slots THIS slot covers. (Information only — used for layout.) */
-  covers: number[];
-  /** Display position. */
+  /** Row, 0 = farthest from the players (taken last); the last row starts accessible. */
   row: number;
-  col: number;
+  /** Horizontal position in half-card steps, 0 = the centre line. */
+  x: number;
 }
 
 // ---------- Wonder draft ----------
 
 export interface DuelWonderDraft {
-  /** 8 wonders dealt for drafting; ordered list of pickable wonders. */
-  pool: string[];        // wonderIds; entries get removed as picked
-  /** Pick sequence — array of seatIdx (0 or 1). Length 8 = 4+4. */
+  /** The revealed group of 4 still to pick from. */
+  pool: string[];
+  /** The second group, face down until the first is gone. */
+  next: string[];
+  /** Picking seat for each of the 8 picks. */
   pickOrder: (0 | 1)[];
   /** Index into pickOrder. */
   pickIdx: number;
@@ -199,35 +212,41 @@ export interface DuelWonderDraft {
 
 export interface DuelPlayer {
   id: PlayerId;
-  /** Cards built into the tableau. */
+  /** Cards built into the city. */
   tableau: DuelCard[];
-  /** Wonders owned (and whether each is built). */
+  /** Wonders owned, built or not (the 8th is removed once 7 are built). */
   wonders: DuelWonderState[];
   coins: number;
-  /** Progress tokens earned. */
   progressTokens: DuelProgressTokenId[];
 }
 
 // ---------- Config ----------
 
 export interface DuelConfig {
-  /** Random seed for pyramid card placement. */
   variant?: 'base';
 }
 
 // ---------- Sub-phase + state ----------
 
 export type DuelSubPhase =
-  | 'wonderDraft'        // pre-game, 8 wonders → 4-4 alternating draft
-  | 'turn'               // main play, active seat picks pyramid card
-  | 'progressPick'       // active seat picks a token after science match
-  | 'wonderConstruct'    // active seat is burying a card — must pick which unbuilt wonder
-  | 'discardPick'        // (reserved for v2 — Mausoleum-style "pick from discard")
-  | 'finalScoring'       // gameOver, final scoring computed
-  ;
+  | 'wonderDraft'    // before Age I: 8 wonders, two groups of 4
+  | 'turn'           // the active seat takes a pyramid card
+  | 'progressPick'   // a science pair: take a Progress token from the board
+  | 'libraryPick'    // The Great Library: keep 1 of 3 boxed tokens
+  | 'destroyCard'    // Circus Maximus / Statue of Zeus: discard an opponent's card
+  | 'discardBuild'   // The Mausoleum: build a discarded card for free
+  | 'chooseStarter'  // between ages: the weaker player picks who starts
+  | 'finalScoring';  // game over
+
+/** A decision an effect has queued for a seat; resolved in order before the turn ends. */
+export type DuelPending =
+  | { kind: 'progress'; seatIdx: 0 | 1 }
+  | { kind: 'library'; seatIdx: 0 | 1; options: DuelProgressTokenId[] }
+  | { kind: 'destroy'; seatIdx: 0 | 1; color: 'brown' | 'gray' }
+  | { kind: 'discardBuild'; seatIdx: 0 | 1 };
 
 export interface DuelMilitaryAwards {
-  /** Set to true when the corresponding threshold has been awarded. */
+  /** Looting tokens already taken: p1 = pushed by seat 0 (toward seat 1), p2 = by seat 1. */
   p1At3: boolean; p1At6: boolean;
   p2At3: boolean; p2At6: boolean;
 }
@@ -239,13 +258,14 @@ export interface DuelFinalScoringRow {
   commercial: number;
   guild: number;
   wonders: number;
+  progress: number;
   treasury: number;
   military: number;
-  progress: number;
   total: number;
-  /** Tiebreak data: coins held at game end. */
   coinsAtEnd: number;
 }
+
+export type DuelEndReason = 'civilian' | 'military' | 'science';
 
 export interface DuelState {
   phase: GamePhase;
@@ -260,32 +280,35 @@ export interface DuelState {
   players: [DuelPlayer, DuelPlayer];
   /** Seat index of the active player. */
   activeSeatIdx: 0 | 1;
+  /** Seat drawn to draft first and start Age I. */
+  firstSeatIdx: 0 | 1;
 
-  /** Current age's pyramid. Empty between ages / before game starts. */
+  /** Current age's pyramid. */
   pyramid: DuelPyramidSlot[];
-  /** Card data for cards in the pyramid + already-taken cards. */
+  /** Every card dealt so far, by id. */
   cardsById: Record<number, DuelCard>;
-  /** Cards discarded (visible to all players). */
+  /** Discarded and destroyed cards, oldest first (public). */
   discard: DuelCard[];
 
-  /** Military track: -9 (p1 capital, p2 wins) … +9 (p2 capital, p1 wins). */
+  /** Conflict pawn: −9 (seat 0's capital) … +9 (seat 1's capital). */
   militaryPawn: number;
   militaryAwards: DuelMilitaryAwards;
 
-  /** Progress tokens currently available in the central offer. */
+  /** Progress tokens on the board. */
   progressOffer: DuelProgressTokenId[];
-  /** When set, the active seat must pick a progress token before continuing. */
-  pendingProgressPick: { seatIdx: 0 | 1 } | null;
+  /** The 5 tokens left in the box at setup (hidden; the Great Library draws here). */
+  progressBox: DuelProgressTokenId[];
 
-  /** Wonder draft state when subPhase === 'wonderDraft'. */
+  /** Queued decisions; the head one is the current sub-phase. */
+  pending: DuelPending[];
+  /** The active seat plays again once this turn's decisions are done. */
+  replay: boolean;
+
   wonderDraft: DuelWonderDraft | null;
 
-  /** When set (subPhase 'wonderConstruct'), the active seat is burying this card. */
-  pendingWonderBury: { cardId: number; seatIdx: 0 | 1 } | null;
-
   finalScoringBreakdown: DuelFinalScoringRow[] | null;
-  endReason: 'civilian' | 'military' | 'science' | null;
-  /** The seat index that won. -1 if civilian-tied (winner = highest coins; if tied → first). */
+  endReason: DuelEndReason | null;
+  /** Winning seat; null on a shared civilian victory. */
   winnerSeatIdx: 0 | 1 | null;
 
   log: DuelLogEntry[];
@@ -297,29 +320,38 @@ export interface DuelState {
 export type DuelLogEntry =
   | { seq: number; age: DuelAge; kind: 'wonderDrafted'; playerId: PlayerId; wonderId: string }
   | { seq: number; age: DuelAge; kind: 'ageStart' }
-  | { seq: number; age: DuelAge; kind: 'cardBuilt'; playerId: PlayerId; cardName: string }
-  | { seq: number; age: DuelAge; kind: 'cardBuried'; playerId: PlayerId; wonderName: string; buriedCardName: string }
-  | { seq: number; age: DuelAge; kind: 'cardDiscarded'; playerId: PlayerId; cardName: string; coinsGained: number }
+  | { seq: number; age: DuelAge; kind: 'starterChosen'; playerId: PlayerId; starterId: PlayerId }
+  | { seq: number; age: DuelAge; kind: 'cardBuilt'; playerId: PlayerId; cardId: number; cardName: string; paid: number; chained: boolean; fromDiscard?: boolean }
+  | { seq: number; age: DuelAge; kind: 'wonderBuilt'; playerId: PlayerId; wonderId: string; cardId: number; paid: number }
+  | { seq: number; age: DuelAge; kind: 'cardDiscarded'; playerId: PlayerId; cardId: number; cardName: string; coinsGained: number }
+  | { seq: number; age: DuelAge; kind: 'cardDestroyed'; playerId: PlayerId; ownerId: PlayerId; cardId: number; cardName: string }
   | { seq: number; age: DuelAge; kind: 'militaryAdvance'; playerId: PlayerId; amount: number; newPawn: number }
-  | { seq: number; age: DuelAge; kind: 'progressTaken'; playerId: PlayerId; tokenId: DuelProgressTokenId }
-  | { seq: number; age: DuelAge; kind: 'gameEnd'; reason: 'civilian' | 'military' | 'science'; winnerId: PlayerId | null };
+  | { seq: number; age: DuelAge; kind: 'looted'; playerId: PlayerId; coins: number }
+  | { seq: number; age: DuelAge; kind: 'coinsLost'; playerId: PlayerId; coins: number }
+  | { seq: number; age: DuelAge; kind: 'progressTaken'; playerId: PlayerId; tokenId: DuelProgressTokenId; fromBox: boolean }
+  | { seq: number; age: DuelAge; kind: 'wonderRemoved'; playerId: PlayerId; wonderId: string }
+  | { seq: number; age: DuelAge; kind: 'playAgain'; playerId: PlayerId }
+  | { seq: number; age: DuelAge; kind: 'gameEnd'; reason: DuelEndReason; winnerId: PlayerId | null };
 
 // ---------- Actions ----------
+//
+// Payment is never part of an action: the reducer pays the cheapest way
+// (own production first, the two cheapest-to-skip resources under Masonry /
+// Architecture, the rest bought at 2 + the opponent's brown/gray production).
 
 export type DuelAction =
-  /** Wonder draft pick during 'wonderDraft' subphase. */
   | { type: 'submitWonderDraft'; playerId: PlayerId; wonderId: string }
-  /** Take a card from the pyramid AND build it into the tableau. */
-  | { type: 'takeAndBuild'; playerId: PlayerId; cardId: number;
-      /** Resources paid via opponent purchase (each unit = 2 + opp.production of that resource). */
-      purchase: DuelResource[]; }
-  /** Take a card from the pyramid AND bury it under a wonder (later picks the wonder). */
-  | { type: 'takeAndBury'; playerId: PlayerId; cardId: number }
-  /** Take a card from the pyramid AND discard it for coins. */
+  /** Take an accessible card and build it into your city. */
+  | { type: 'takeAndBuild'; playerId: PlayerId; cardId: number }
+  /** Take an accessible card and tuck it under one of your wonders to build it. */
+  | { type: 'takeAndWonder'; playerId: PlayerId; cardId: number; wonderId: string }
+  /** Take an accessible card and discard it for coins. */
   | { type: 'takeAndDiscard'; playerId: PlayerId; cardId: number }
-  /** During 'wonderConstruct' — pick which unbuilt wonder to bury the card under. */
-  | { type: 'chooseWonderToBury'; playerId: PlayerId; wonderId: string;
-      purchase: DuelResource[]; }
-  /** During 'progressPick' — pick a token from the offer. */
+  /** 'progressPick' / 'libraryPick'. */
   | { type: 'chooseProgressToken'; playerId: PlayerId; tokenId: DuelProgressTokenId }
-  ;
+  /** 'destroyCard' — a card in the opponent's city. */
+  | { type: 'destroyCard'; playerId: PlayerId; cardId: number }
+  /** 'discardBuild' — a card from the discard pile. */
+  | { type: 'buildFromDiscard'; playerId: PlayerId; cardId: number }
+  /** 'chooseStarter' — who takes the first card of the new age. */
+  | { type: 'chooseStarter'; playerId: PlayerId; starterId: PlayerId };

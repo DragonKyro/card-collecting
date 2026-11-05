@@ -238,7 +238,11 @@
 }
 
 .ssp .card.selectable { cursor: pointer; }
-.ssp .card.selectable:hover { transform: translateY(-3px); box-shadow: 0 5px 0 var(--paper-edge); }
+/* Hover lifts only where there's a real hover — on a touch screen the lift
+   sticks after a tap and reads as "selected". */
+@media (hover: hover) {
+  .ssp .card.selectable:hover { transform: translateY(-3px); box-shadow: 0 5px 0 var(--paper-edge); }
+}
 
 .ssp .card.selected,
 .ssp .card.selected.selectable:hover {
@@ -906,7 +910,9 @@
   align-items: start;
 }
 @media (max-width: 1000px) {
-  .ssp-layout { grid-template-columns: 1fr; }
+  /* minmax(0, …): wide content (the match-stats tab bar) scrolls inside its
+     own box instead of stretching the column past the screen. */
+  .ssp-layout { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* Right sidebar */
@@ -1058,9 +1064,11 @@
 .ssp .deck-stack.clickable, .ssp .pile.clickable {
   cursor: pointer;
 }
-.ssp .deck-stack.clickable:hover, .ssp .pile.clickable:hover {
-  background: rgba(255,255,255,0.08);
-  transform: translateY(-2px);
+@media (hover: hover) {
+  .ssp .deck-stack.clickable:hover, .ssp .pile.clickable:hover {
+    background: rgba(255,255,255,0.08);
+    transform: translateY(-2px);
+  }
 }
 .ssp .pile.target-discard {
   outline: 2px dashed var(--yellow);
@@ -1093,4 +1101,81 @@
   color: rgba(255,255,255,0.9);
   text-align: center;
   margin-bottom: 8px;
+}
+
+/* ---------- phones ---------- */
+
+@media (max-width: 600px) {
+  .ssp .board { gap: 10px; padding: 10px; border-radius: 10px; }
+  .ssp .target-info { font-size: 12px; gap: 4px 10px; margin-bottom: 0; }
+  .ssp .match-progress { gap: 4px; }
+  .ssp .match-progress-pill { padding: 2px 8px; font-size: 11px; }
+  .ssp-event-banner { padding: 6px 10px; margin: 0; gap: 4px 8px; }
+
+  .ssp .opponents { gap: 8px; }
+  .ssp .player-strip { padding: 6px 8px; }
+  /* The shell's `.app-shell header` rule pads and rules every <header>; a
+     strip's name row needs none of that height. */
+  .ssp .player-strip header { padding: 0 0 4px; margin-bottom: 4px; font-size: 14px; }
+  .ssp .player-strip .table-strip { margin-top: 0; }
+
+  .ssp .center { gap: 6px; }
+  .ssp .deck-stack, .ssp .pile { padding: 4px; }
+
+  .ssp .hand-area { padding: 10px 8px; }
+  .ssp .hand-area h3 { flex-wrap: wrap; gap: 4px; }
+  .ssp-color-strip { margin-left: 0; }
+  /* 5px gaps: five cards to a row down to a 360px screen. */
+  .ssp .hand-area .cards { gap: 5px; min-height: 92px; }
+  .ssp .actions { gap: 6px; margin-top: 10px; min-height: 40px; }
+  /* Buttons fill each wrapped row: wide, even tap targets. */
+  .ssp .actions button { flex: 1 1 auto; padding: 9px 12px; }
+
+  /* The keep-a-card and dig-into-a-pile choosers sit at the bottom of the
+     screen, not of the board: the board is taller than a phone, and the
+     piles you click next have to stay in view. */
+  .ssp .pending-draw,
+  .ssp .crab-overlay {
+    position: fixed;
+    left: 50%;
+    bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+    transform: translateX(-50%);
+    width: calc(100vw - 20px);
+    max-width: 440px;
+    min-width: 0;
+    max-height: 55vh;
+    max-height: 55dvh;
+    overflow-y: auto;
+    padding: 10px 12px;
+    z-index: 150;
+  }
+
+  .ssp-lastchance-card { padding: 16px 20px; max-width: calc(100% - 24px); }
+  .ssp-lastchance-eyebrow { font-size: 18px; letter-spacing: 3px; }
+  .ssp-lastchance-name { font-size: 30px; }
+
+  .ssp .round-summary { padding: 12px; }
+  .ssp .round-summary h2 { font-size: 20px; }
+  .ssp .round-summary-header button { padding: 8px 12px; }
+  .ssp .round-summary td, .ssp .round-summary th { padding: 5px 4px; }
+  .ssp .round-summary-player .table-strip { gap: 4px; padding: 4px; }
+
+  .ssp .ssp-winner-banner { padding: 16px 12px; }
+  .ssp .ssp-winner-name { font-size: 26px; }
+
+  .ssp .ssp-stats { padding: 12px; margin-top: 12px; }
+  .ssp .ssp-stats-tabs button { padding: 8px 10px; }
+  .ssp .ssp-stats-panel { min-height: 0; }
+  /* Legend under the chart, as wrapping chips, so the plot keeps the width. */
+  .ssp .ssp-svg-chart { flex-direction: column; }
+  .ssp .ssp-svg-legend {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 2px 12px;
+    min-width: 0;
+    max-width: none;
+    padding: 0;
+  }
+
+  .ssp-sidebar { max-height: min(80vh, 420px); }
 }

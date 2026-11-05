@@ -179,13 +179,13 @@ export function GameHost({ onExit, onReturnToLobby }: Props) {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 12 }}>
-        <strong>{module.name}</strong>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+      <div className="game-host-bar">
+        <strong className="game-host-title">{module.name}</strong>
+        <div className="game-host-actions">
           {role !== 'solo' && roomCode && (
             <span className="net-pill">
               <span className={`net-dot net-dot-${role}`} />
-              {role} · room <code>{roomCode}</code>
+              <span className="net-pill-role">{role} · room</span> <code>{roomCode}</code>
             </span>
           )}
           {canPlayAgain && (
@@ -202,7 +202,7 @@ export function GameHost({ onExit, onReturnToLobby }: Props) {
               onExit();
             }}
           >
-            Leave game
+            Leave<span className="game-host-wide"> game</span>
           </button>
         </div>
       </div>

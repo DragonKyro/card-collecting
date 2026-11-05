@@ -52,7 +52,7 @@ export function SetSidebar({
         )}
       </div>
 
-      <div className="set-panel">
+      <div className={`set-panel set-players${multiSeat ? ' is-shared' : ''}`}>
         <h4 className="set-panel-h">{multiSeat ? 'Players' : 'Score'}</h4>
         <ul className="set-score-list">
           {state.seats.map((seat, i) => {
