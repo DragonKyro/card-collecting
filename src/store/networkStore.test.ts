@@ -157,15 +157,16 @@ describe('joining a room', () => {
   });
 
   it('making a room clears rooms over a week old that nobody is in', async () => {
-    const week = 7 * 24 * 60 * 60 * 1000;
+    const day = 24 * 60 * 60 * 1000;
     const { host: a, code: stale } = await hostRoom('Ann');
     a.net().leaveRoom();
     const { code: busy } = await hostRoom('Bea'); // still connected
     const { host: c, code: fresh } = await hostRoom('Cy');
     c.net().leaveRoom();
     await flush();
-    fakeServer().rooms.get(stale)!.meta.createdAt -= week + 1000;
-    fakeServer().rooms.get(busy)!.meta.createdAt -= week + 1000;
+    // Made 8 days ago: their (UTC) day ended over a week ago.
+    fakeServer().rooms.get(stale)!.meta.createdAt -= 8 * day;
+    fakeServer().rooms.get(busy)!.meta.createdAt -= 8 * day;
     await hostRoom('Dee');
     expect(fakeServer().rooms.has(stale)).toBe(false);
     expect(fakeServer().rooms.has(busy)).toBe(true);

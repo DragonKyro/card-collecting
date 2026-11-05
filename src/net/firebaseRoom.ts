@@ -1,6 +1,12 @@
 // The real RoomTransport: Firebase Realtime Database (project
-// card-collecting-4772c). Loaded lazily (dynamic import from networkStore) so
-// the Firebase SDK only downloads when someone goes online.
+// github-games-e7c7d, shared with other web apps). Loaded lazily (dynamic
+// import from networkStore) so the Firebase SDK only downloads when someone
+// goes online.
+//
+// The database is shared, so everything this app stores lives under one
+// top-level key, DB_ROOT ("card-collecting"), and database.rules.json only
+// covers that key (scripts/merge-db-rules.mjs merges it into the live rules on
+// deploy). The paths below are relative to it.
 //
 // Each device signs in anonymously and silently (no account, no prompt); the
 // uid exists only so the security rules (database.rules.json) can tie writes
@@ -14,20 +20,26 @@
 //   chat/      pushId → JSON string of ChatMessage
 //   presence/  pushId → { uid, uuid, name }                removed by onDisconnect
 //
-// plus roomIndex/{CODE} → createdAt, written with the room. Rooms are cleared
-// a week after they're made: each new room's host deletes up to SWEEP_BATCH
-// week-old rooms nobody is connected to (sweepStaleRooms). The rules let
-// anyone delete such a room, and let the index be queried only for week-old
-// entries, so it can't be used to find live rooms.
+// plus, written atomically with each room, a per-day index for clean-up:
+//
+//   roomDays/{day}          → when that (UTC) day ends     anyone can read: no codes
+//   roomIndex/{day}/{CODE}  → true                         readable only a week after the day ends
+//
+// Rooms are cleared a week after their day ends: each new room's host runs
+// sweepStaleRooms over the SWEEP_DAYS oldest days. The rules let anyone delete
+// a room over a week old that nobody is connected to, and never expose the
+// codes of younger rooms. (Rules can't range-check a query's bounds: an index
+// sorted by time, readable only with `query.endAt <= now - week`, is refused
+// outright. Hence day buckets.)
 //
 // Payloads are JSON strings: the database drops empty arrays / objects and
 // turns arrays into keyed objects, which would corrupt game data.
 //
 // Usage is billed by bytes stored and downloaded, plus open connections (the
-// free plan allows 100), not by operation count. So payloads carry only what
-// devices read (a start record is createInitialState's inputs, not the
-// state), and the database connection is closed whenever this device isn't in
-// a room.
+// free plan allows 100, across every app on the database), not by operation
+// count. So payloads carry only what devices read (a start record is
+// createInitialState's inputs, not the state), and the database connection is
+// closed whenever this device isn't in a room.
 
 import { getApps, initializeApp, type FirebaseApp } from 'firebase/app';
 import {
@@ -42,7 +54,6 @@ import {
   type Persistence,
 } from 'firebase/auth';
 import {
-  endAt,
   get,
   getDatabase,
   goOffline,
@@ -67,8 +78,9 @@ import {
 } from 'firebase/database';
 import { freshTabMode } from './identity';
 import {
+  DAY_MS,
   ROOM_LIFETIME_MS,
-  SWEEP_BATCH,
+  SWEEP_DAYS,
   ServerUnreachableError,
   decodeAction,
   encodeAction,
@@ -83,17 +95,25 @@ import {
 import type { ChatMessage, LobbyState, Presence, RoomMeta, StartRecord } from './types';
 
 // Public by design: a web app's Firebase config identifies the project, it
-// grants nothing. Access is decided by the security rules.
+// grants nothing. Access is decided by the security rules. (The "Card
+// Collecting" web app registered in the project; only the database and Auth
+// are used.)
 export const FIREBASE_CONFIG = {
-  apiKey: 'AIzaSyB0MTcf5sZIwoZjJiBUcM0wsImGPASjQ0U',
-  authDomain: 'card-collecting-4772c.firebaseapp.com',
-  databaseURL: 'https://card-collecting-4772c-default-rtdb.firebaseio.com',
-  projectId: 'card-collecting-4772c',
-  appId: '1:101699945698:web:73b2e3272cf1df0ad94abb',
+  apiKey: 'AIzaSyAmAirzwcz926PyKh-bfUUIn7OSkcve6tI',
+  authDomain: 'github-games-e7c7d.firebaseapp.com',
+  databaseURL: 'https://github-games-e7c7d-default-rtdb.firebaseio.com',
+  projectId: 'github-games-e7c7d',
+  appId: '1:879254296864:web:5b93e3bb2be8068b8f1f45',
 };
 
+/**
+ * This app's top-level key in the shared database: every path it reads or
+ * writes is under it (must match the key in database.rules.json).
+ */
+export const DB_ROOT = 'card-collecting';
+
 /** Bump when the room layout changes (also checked by the rules). */
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 /** How long to wait for sign-in or the first read before calling the server unreachable. */
 const SERVER_TIMEOUT_MS = 15000;
@@ -105,29 +125,44 @@ function serverTimeOffset(db: Database): Promise<number> {
   });
 }
 
+/** The (UTC) day bucket a room made at server time `serverNow` goes in. */
+function dayBucket(serverNow: number): { day: string; endsAt: number } {
+  const day = Math.floor(serverNow / DAY_MS);
+  return { day: String(day), endsAt: (day + 1) * DAY_MS };
+}
+
 /**
- * Delete up to SWEEP_BATCH rooms made over a week ago. One at a time, so a
- * room the rules keep (someone is still connected to it) doesn't block the
- * rest; it's tried again by a later sweep. Resolves with the codes removed.
+ * Delete the rooms of every day (among the SWEEP_DAYS oldest) that ended over
+ * a week ago, then the emptied days. One room at a time, so a room the rules
+ * keep (someone is still connected to it) doesn't block the rest; it keeps its
+ * day too, to be tried by a later sweep. Resolves with the codes removed.
  */
 export async function sweepStaleRooms(db: Database): Promise<string[]> {
-  // A minute's margin so a fast local clock can't ask for entries the rules
+  // A minute's margin so a fast local clock can't ask for a day the rules
   // still consider fresh.
   const cutoff = Date.now() + (await serverTimeOffset(db)) - ROOM_LIFETIME_MS - 60_000;
-  const snap = await get(query(ref(db, 'roomIndex'), orderByValue(), endAt(cutoff), limitToFirst(SWEEP_BATCH)));
-  const codes: string[] = [];
-  snap.forEach((c) => {
-    if (c.key) codes.push(c.key);
+  const days = await get(query(ref(db, `${DB_ROOT}/roomDays`), orderByValue(), limitToFirst(SWEEP_DAYS)));
+  const stale: string[] = [];
+  days.forEach((d) => {
+    if (d.key && Number(d.val()) <= cutoff) stale.push(d.key);
   });
   const removed: string[] = [];
-  await Promise.all(
-    codes.map((code) =>
-      update(ref(db), { [`rooms/${code}`]: null, [`roomIndex/${code}`]: null }).then(
-        () => removed.push(code),
-        () => {}, // still in use: kept for now
+  for (const day of stale) {
+    const codes: string[] = [];
+    (await get(ref(db, `${DB_ROOT}/roomIndex/${day}`))).forEach((c) => {
+      if (c.key) codes.push(c.key);
+    });
+    let kept = 0;
+    await Promise.all(
+      codes.map((code) =>
+        update(ref(db, DB_ROOT), { [`rooms/${code}`]: null, [`roomIndex/${day}/${code}`]: null }).then(
+          () => removed.push(code),
+          () => kept++, // still in use: kept for now
+        ),
       ),
-    ),
-  );
+    );
+    if (kept === 0) await remove(ref(db, `${DB_ROOT}/roomDays/${day}`)).catch(() => {});
+  }
   return removed;
 }
 
@@ -236,7 +271,7 @@ export function createFirebaseTransport(opts: FirebaseTransportOptions = {}): Fi
   function openRoom(code: string, meta: RoomMeta, myUid: string, me: Presence, events: RoomEvents): RoomConnection {
     const db = connect();
     openRooms++;
-    const base = `rooms/${code}`;
+    const base = `${DB_ROOT}/rooms/${code}`;
     const offs: Unsubscribe[] = [];
     let presenceRef: DatabaseReference | null = null;
     let closed = false;
@@ -385,10 +420,11 @@ export function createFirebaseTransport(opts: FirebaseTransportOptions = {}): Fi
     createRoom: async (code, meta, lobby, me, events) => {
       const myUid = await uid();
       const db = connect();
+      const { day, endsAt } = dayBucket(Date.now() + (await serverTimeOffset(db)));
       try {
-        // The room and its index entry, atomically.
+        // The room and its index entries, atomically.
         await withTimeout(
-          update(ref(db), {
+          update(ref(db, DB_ROOT), {
             [`rooms/${code}`]: {
               meta: {
                 hostUuid: meta.hostUuid,
@@ -399,13 +435,14 @@ export function createFirebaseTransport(opts: FirebaseTransportOptions = {}): Fi
               },
               lobby: JSON.stringify(lobby),
             },
-            [`roomIndex/${code}`]: serverTimestamp(),
+            [`roomIndex/${day}/${code}`]: true,
+            [`roomDays/${day}`]: endsAt,
           }),
           'creating the room',
         );
       } catch (e) {
         disconnectIfIdle();
-        // The rules refuse to overwrite a live room: the code is taken.
+        // The rules refuse to overwrite an existing room: the code is taken.
         if (isPermissionDenied(e)) return null;
         throw unreachable(e);
       }
@@ -420,7 +457,7 @@ export function createFirebaseTransport(opts: FirebaseTransportOptions = {}): Fi
       const db = connect();
       let snap: DataSnapshot;
       try {
-        snap = await withTimeout(get(ref(db, `rooms/${code}/meta`)), 'looking up the room');
+        snap = await withTimeout(get(ref(db, `${DB_ROOT}/rooms/${code}/meta`)), 'looking up the room');
       } catch (e) {
         disconnectIfIdle();
         throw unreachable(e);
