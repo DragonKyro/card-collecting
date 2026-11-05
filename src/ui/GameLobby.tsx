@@ -1,52 +1,17 @@
-// Seat builder + game-specific config. Hot-seat and online flows live side by side:
-//
-//   - Hot-seat: seats are local-only, all isLocal=true. "Start (hot-seat)"
-//     loads the game directly into the gameStore.
-//   - Online host: opens a Trystero room with a generated code, broadcasts the
-//     lobby on every change, and on Start ships the opening state to peers.
-//   - Online guest: joins by code, lobby arrives over the wire (rendered
-//     read-only), claims a seat by setting that seat's id to their own uuid.
-//
-// The host stays authoritative — any seat edit on the host's UI broadcasts;
-// guests editing their seat is just a "claim a seat" UX (uuid swap on host's
-// side, mediated by a `claimSeat` chat-ish trick is overkill — for v1 the host
-// arranges seats and guests just connect).
+// The local lobby: seat builder + game-specific config for hot-seat / AI
+// play, plus "Host online", which opens a room carrying these options and AI
+// seats over (the online lobby itself is OnlineLobby, routed by App while
+// this device is in a room).
 
 import { useEffect, useMemo, useState } from 'react';
 import type { AnyGameModule, GameStateShape, GameUiBundle } from '@/core/module';
 import type { Seat } from '@/core/types';
 import { randomSeed } from '@/core/rng';
+import { SEAT_COLORS } from '@/core/seatColors';
 import { useGameStore } from '@/store/gameStore';
-import { useNetworkStore } from '@/store/networkStore';
+import { useNetworkStore, warmUpNetwork } from '@/store/networkStore';
 import { getOrCreateUuid } from '@/net/identity';
-import type { LobbyState } from '@/net/types';
-
-// Catan-inspired palette: 14 distinguishable colors players can choose from.
-// Hex values mirror the Catan project's PLAYER_COLOR_HEX so the same seat color
-// reads the same across both apps.
-const COLORS: readonly string[] = [
-  '#e64a4a', // red
-  '#3a6ec9', // blue
-  '#f37025', // orange
-  '#f0f0f0', // white
-  '#8a47c4', // purple
-  '#e85a9c', // pink
-  '#1abc9c', // teal
-  '#f5b223', // gold
-  '#6dc960', // lime
-  '#6e4a2c', // brown
-  '#4a4a4a', // black
-  '#2e7d3a', // forest
-  '#c89fe8', // lavender
-  '#7e2a2a', // maroon
-];
-const COLOR_LABELS: Record<string, string> = {
-  '#e64a4a': 'Red',     '#3a6ec9': 'Blue',     '#f37025': 'Orange',
-  '#f0f0f0': 'White',   '#8a47c4': 'Purple',   '#e85a9c': 'Pink',
-  '#1abc9c': 'Teal',    '#f5b223': 'Gold',     '#6dc960': 'Lime',
-  '#6e4a2c': 'Brown',   '#4a4a4a': 'Black',    '#2e7d3a': 'Forest',
-  '#c89fe8': 'Lavender','#7e2a2a': 'Maroon',
-};
+import { ColorSwatchPicker, RulesModal } from './lobbyParts';
 
 interface Props {
   module: AnyGameModule;
@@ -59,42 +24,21 @@ interface Props {
 
 export function GameLobby({ module, initial, onBack, onStart }: Props) {
   const localUuid = useMemo(() => getOrCreateUuid(), []);
-  const role = useNetworkStore((s) => s.role);
-  const status = useNetworkStore((s) => s.status);
-  const errorMessage = useNetworkStore((s) => s.errorMessage);
-  const roomCode = useNetworkStore((s) => s.roomCode);
-  const remoteLobby = useNetworkStore((s) => s.lobby);
-  const peers = useNetworkStore((s) => s.peers);
-  const broadcastLobby = useNetworkStore((s) => s.broadcastLobby);
-  const broadcastStart = useNetworkStore((s) => s.broadcastStart);
-  const sendChat = useNetworkStore((s) => s.sendChat);
-  const chat = useNetworkStore((s) => s.chat);
+  const savedName = useNetworkStore((s) => s.myDisplayName);
 
-  const isOnlineHost = role === 'host';
-  const isOnlineGuest = role === 'guest' || role === 'spectator';
-  const isOnline = isOnlineHost || isOnlineGuest;
-
-  // Local-only seat list for the hot-seat path (and host's initial state before
-  // anyone joins). Once online, the host's seats live on networkStore.lobby.
-  // Seat 0 defaults to the human local player; seats added beyond default to AI.
-  // Returning from a match re-seeds from that match's lineup instead.
-  const [hotSeats, setHotSeats] = useState<Seat[]>(() => initial?.seats ?? [
-    { id: localUuid, name: 'You', color: COLORS[0], isAI: false, isLocal: true },
-    { id: 'seat-1', name: 'Player 2', color: COLORS[1], isAI: true, isLocal: true },
+  // Seat 0 defaults to the human local player; seats added beyond default to
+  // AI. Returning from a match re-seeds from that match's lineup instead.
+  const [seats, setSeats] = useState<Seat[]>(() => initial?.seats ?? [
+    { id: localUuid, name: 'You', color: SEAT_COLORS[0]!, isAI: false, isLocal: true },
+    { id: 'seat-1', name: 'Player 2', color: SEAT_COLORS[1]!, isAI: true, isLocal: true },
   ]);
-
-  // The "live" seat list: guests read the host's broadcast lobby; everyone else
-  // (solo + host) edits their own hotSeats and (if hosting) broadcasts on change.
-  const seats: Seat[] = isOnlineGuest && remoteLobby ? remoteLobby.seats : hotSeats;
-
   const [config, setConfig] = useState<unknown>(() =>
     initial ? initial.config : module.defaultConfig(seats));
   const [bundle, setBundle] = useState<GameUiBundle<GameStateShape, unknown, unknown> | null>(null);
-  const [joinCode, setJoinCode] = useState('');
   /** True while module.prepare (e.g. loading AI policy files) runs before a start. */
   const [preparing, setPreparing] = useState(false);
-  const [localName, setLocalName] = useState('You');
   const [showRules, setShowRules] = useState(false);
+  const [hostName, setHostName] = useState(savedName);
 
   useEffect(() => {
     let cancelled = false;
@@ -104,116 +48,57 @@ export function GameLobby({ module, initial, onBack, onStart }: Props) {
     return () => { cancelled = true; };
   }, [module]);
 
-  // When acting as host with the lobby up, every seat-list change rebroadcasts.
-  useEffect(() => {
-    if (!isOnlineHost) return;
-    const lobby: LobbyState = {
-      gameId: module.id,
-      seats: hotSeats,
-      configJson: JSON.stringify(config),
-      hostUuid: localUuid,
-    };
-    broadcastLobby(lobby);
-  }, [isOnlineHost, hotSeats, config, module.id, localUuid, broadcastLobby]);
-
   function addSeat() {
     if (seats.length >= module.maxPlayers) return;
-    // Newly added seats beyond the local-player slot default to AI for a
-    // friction-free solo start; users can toggle them back to humans for
-    // hot-seat play.
+    // Newly added seats default to AI for a friction-free solo start; users
+    // can toggle them back to humans for hot-seat play.
     const newSeat: Seat = {
       id: `seat-${seats.length}-${Math.floor(performance.now())}`,
       name: `Player ${seats.length + 1}`,
-      color: COLORS[seats.length % COLORS.length],
+      color: SEAT_COLORS[seats.length % SEAT_COLORS.length]!,
       isAI: true,
-      isLocal: !isOnline,
+      isLocal: true,
     };
-    setHotSeats([...seats, newSeat]);
+    setSeats([...seats, newSeat]);
   }
 
   function removeSeat(id: string) {
     if (seats.length <= module.minPlayers) return;
-    setHotSeats(seats.filter((s) => s.id !== id));
+    setSeats(seats.filter((s) => s.id !== id));
   }
 
   function updateSeat(id: string, patch: Partial<Seat>) {
-    setHotSeats(seats.map((s) => (s.id === id ? { ...s, ...patch } : s)));
-  }
-
-  /** Run the module's pre-match setup; false (after telling the user) if it failed. */
-  async function prepareMatch(matchSeats: Seat[]): Promise<boolean> {
-    if (!module.prepare) return true;
-    setPreparing(true);
-    try {
-      await module.prepare(config, matchSeats);
-      return true;
-    } catch (e) {
-      alert('Could not load the AI: ' + (e as Error).message);
-      return false;
-    } finally {
-      setPreparing(false);
-    }
+    setSeats(seats.map((s) => (s.id === id ? { ...s, ...patch } : s)));
   }
 
   async function startLocal() {
     const errors = module.validateConfig(config, seats);
     if (errors.length) { alert(errors.join('\n')); return; }
-    if (!(await prepareMatch(seats))) return;
+    if (module.prepare) {
+      setPreparing(true);
+      try {
+        await module.prepare(config, seats);
+      } catch (e) {
+        alert('Could not load the AI: ' + (e as Error).message);
+        return;
+      } finally {
+        setPreparing(false);
+      }
+    }
     const seed = randomSeed();
-    const initial = module.createInitialState(config, seed, seats);
-    useGameStore.getState().loadGame(module, initial, localUuid, { config, seats });
+    const initialState = module.createInitialState(config, seed, seats);
+    useGameStore.getState().loadGame(module, initialState, localUuid, { config, seats });
     onStart();
   }
 
-  async function hostOnline() {
-    const initialSeat = hotSeats[0] ?? {
-      id: localUuid, name: localName, color: COLORS[0], isAI: false, isLocal: true,
-    };
-    initialSeat.name = localName || initialSeat.name;
-    initialSeat.id = localUuid;
-    try {
-      await useNetworkStore.getState().hostRoom(module.id, initialSeat);
-      // Sync our local seats list to start with the same host seat.
-      setHotSeats([{ ...initialSeat, id: localUuid, isLocal: true }]);
-    } catch (e) {
-      alert('Could not start room: ' + (e as Error).message);
-    }
+  function hostOnline() {
+    const name = hostName.trim();
+    if (name) void useNetworkStore.getState().createRoom(module.id, name, { config, seats });
   }
-
-  async function joinOnline() {
-    if (!joinCode.trim()) return;
-    try {
-      await useNetworkStore.getState().joinRoom(joinCode.trim().toUpperCase(), localName || 'Guest');
-    } catch (e) {
-      alert('Could not join room: ' + (e as Error).message);
-    }
-  }
-
-  async function startOnline() {
-    if (!isOnlineHost) return;
-    const errors = module.validateConfig(config, hotSeats);
-    if (errors.length) { alert(errors.join('\n')); return; }
-    if (!(await prepareMatch(hotSeats))) return;
-    const seed = randomSeed();
-    const initial = module.createInitialState(config, seed, hotSeats);
-    const seatUuids = hotSeats.map((s) => s.id);
-    useGameStore.getState().loadGame(module, initial, localUuid, { config, seats: hotSeats });
-    broadcastStart(initial, seatUuids);
-    onStart();
-  }
-
-  // Guests jump to the playing screen once the host starts the game; the start
-  // handler in networkStore already loaded gameStore for them. Host / solo never
-  // jump here (a host returning from a match has also cleared gameStore).
-  const guestGameLoaded = useGameStore((s) => s.state !== null && s.module !== null);
-  useEffect(() => {
-    if (isOnlineGuest && guestGameLoaded) onStart();
-  }, [isOnlineGuest, guestGameLoaded, onStart]);
 
   const LobbyConfigComponent = bundle?.LobbyConfig;
   const RulesComponent = bundle?.Rules;
-  const canStartOnline = isOnlineHost && hotSeats.length >= module.minPlayers;
-  const canStartLocal = !isOnline && hotSeats.length >= module.minPlayers;
+  const canStart = seats.length >= module.minPlayers;
 
   return (
     <div className="lobby-single">
@@ -229,290 +114,84 @@ export function GameLobby({ module, initial, onBack, onStart }: Props) {
 
         {/* ----- seats ----- */}
         <h4 className="lobby-section-h">Seats</h4>
-        {isOnlineHost && (
-          <p className="lobby-hint">
-            Assign each seat to a connected peer (or leave it as AI / unassigned).
-          </p>
-        )}
         <div className="seat-list">
-          {seats.map((s) => {
-            const isHostEditable = !isOnline || (isOnlineHost);
-            const assignedToConnectedPeer = isOnline && peers[s.id] !== undefined;
-            return (
-              <div key={s.id} className="seat-row">
-                <ColorSwatchPicker
-                  value={s.color}
-                  takenBy={Object.fromEntries(seats.filter((x) => x.id !== s.id).map((x) => [x.color, x.name]))}
-                  disabled={!isHostEditable}
-                  onChange={(newColor) => updateSeat(s.id, { color: newColor })}
-                />
+          {seats.map((s) => (
+            <div key={s.id} className="seat-row">
+              <ColorSwatchPicker
+                value={s.color}
+                takenBy={Object.fromEntries(seats.filter((x) => x.id !== s.id).map((x) => [x.color, x.name]))}
+                onChange={(newColor) => updateSeat(s.id, { color: newColor })}
+              />
+              <input
+                className="seat-name"
+                value={s.name}
+                onChange={(e) => updateSeat(s.id, { name: e.target.value })}
+              />
+              <label style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
                 <input
-                  className="seat-name"
-                  value={s.name}
-                  onChange={(e) => updateSeat(s.id, { name: e.target.value })}
-                  disabled={!isHostEditable}
+                  type="checkbox"
+                  checked={s.isAI}
+                  onChange={(e) => updateSeat(s.id, { isAI: e.target.checked })}
                 />
-                {isOnlineHost && (
-                  <select
-                    value={assignedToConnectedPeer ? s.id : ''}
-                    onChange={(e) => {
-                      const newId = e.target.value || `seat-${s.id}-open-${Math.floor(performance.now())}`;
-                      const name = e.target.value ? (peers[e.target.value] ?? s.name) : s.name;
-                      setHotSeats(seats.map((x) => x.id === s.id ? { ...x, id: newId, name, isAI: false, isLocal: newId === localUuid } : x));
-                    }}
-                    style={{ width: 140 }}
-                    title="Assign seat to peer"
-                  >
-                    <option value="">— open —</option>
-                    {Object.entries(peers).map(([uuid, name]) => {
-                      const taken = seats.some((other) => other.id === uuid && other.id !== s.id);
-                      return (
-                        <option key={uuid} value={uuid} disabled={taken}>
-                          {name}{uuid === localUuid ? ' (you)' : ''}{taken ? ' — taken' : ''}
-                        </option>
-                      );
-                    })}
-                  </select>
-                )}
-                <label style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                  <input
-                    type="checkbox"
-                    checked={s.isAI}
-                    onChange={(e) => updateSeat(s.id, { isAI: e.target.checked })}
-                    disabled={!isHostEditable}
-                  />
-                  AI
-                </label>
-                <button
-                  className="secondary"
-                  onClick={() => removeSeat(s.id)}
-                  disabled={!isHostEditable || seats.length <= module.minPlayers}
-                >×</button>
-              </div>
-            );
-          })}
+                AI
+              </label>
+              <button
+                className="secondary"
+                onClick={() => removeSeat(s.id)}
+                disabled={seats.length <= module.minPlayers}
+              >×</button>
+            </div>
+          ))}
         </div>
-        {(!isOnline || isOnlineHost) && (
-          <button
-            className="secondary"
-            onClick={addSeat}
-            disabled={seats.length >= module.maxPlayers}
-            style={{ marginTop: 8 }}
-          >
-            + Add seat
-          </button>
-        )}
+        <button
+          className="secondary"
+          onClick={addSeat}
+          disabled={seats.length >= module.maxPlayers}
+          style={{ marginTop: 8 }}
+        >
+          + Add seat
+        </button>
 
         {/* ----- game-specific options ----- */}
-        {LobbyConfigComponent && !isOnlineGuest && (
+        {LobbyConfigComponent && (
           <>
             <h4 className="lobby-section-h">Options</h4>
             <LobbyConfigComponent config={config} seats={seats} onChange={setConfig} />
           </>
         )}
-        {isOnlineGuest && (
-          <div style={{ marginTop: 12, padding: 12, background: 'var(--bg-hover)', borderRadius: 8 }}>
-            <p style={{ margin: 0, fontSize: 13, color: 'var(--fg-muted)' }}>
-              Waiting for host to configure and start the match.
-            </p>
-          </div>
-        )}
 
-        {/* ----- launch buttons ----- */}
+        {/* ----- launch ----- */}
         <div style={{ marginTop: 16, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {!isOnline && (
-            <>
-              <button onClick={startLocal} disabled={!canStartLocal || preparing}>
-                {preparing ? 'Loading AI…' : 'Start (hot-seat)'}
-              </button>
-              {module.onlineSupported !== false && (
-                <button className="secondary" onClick={hostOnline} disabled={status === 'connecting'}>
-                  {status === 'connecting' ? 'Connecting…' : 'Host online'}
-                </button>
-              )}
-            </>
-          )}
-          {isOnlineHost && (
-            <>
-              <button onClick={startOnline} disabled={!canStartOnline || preparing}>
-                {preparing ? 'Loading AI…' : 'Start match'}
-              </button>
-              <button className="secondary" onClick={() => { useNetworkStore.getState().leave(); }}>
-                End room
-              </button>
-            </>
-          )}
-          {isOnlineGuest && (
-            <button className="secondary" onClick={() => { useNetworkStore.getState().leave(); onBack(); }}>
-              Leave room
-            </button>
-          )}
+          <button onClick={startLocal} disabled={!canStart || preparing}>
+            {preparing ? 'Loading AI…' : 'Start (hot-seat)'}
+          </button>
         </div>
 
-        {/* ----- join box (only visible when not yet in a room) ----- */}
-        {!isOnline && (
+        {/* ----- host online ----- */}
+        {module.onlineSupported !== false && (
           <div className="online-join">
-            <h4>Join a room</h4>
-            <div className="online-join-row">
+            <h4>Play online</h4>
+            <p className="lobby-hint">
+              Open a room with these options and AI seats; friends join from their own devices with the room code.
+            </p>
+            <div className="online-join-row" onPointerEnter={warmUpNetwork} onFocus={warmUpNetwork}>
               <input
                 placeholder="Your name"
-                value={localName}
-                onChange={(e) => setLocalName(e.target.value)}
+                value={hostName}
+                maxLength={24}
+                onChange={(e) => setHostName(e.target.value)}
               />
-              <input
-                className="online-join-code"
-                placeholder="ROOM CODE"
-                value={joinCode}
-                onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-                maxLength={8}
-              />
-              <button className="secondary" onClick={joinOnline} disabled={status === 'connecting' || !joinCode.trim()}>
-                Join
+              <button className="secondary" onClick={hostOnline} disabled={!hostName.trim()} title={hostName.trim() ? undefined : 'Enter the name friends will see'}>
+                Host online
               </button>
-            </div>
-            {errorMessage && <div className="online-error">{errorMessage}</div>}
-          </div>
-        )}
-
-        {/* ----- room info while online ----- */}
-        {isOnline && roomCode && (
-          <div className="online-info">
-            <div>
-              <span className="online-label">Room code</span>
-              <code className="room-code">{roomCode}</code>
-              <button
-                className="secondary tiny"
-                onClick={() => { void navigator.clipboard?.writeText(roomCode); }}
-                title="Copy code"
-              >
-                Copy
-              </button>
-            </div>
-            <div style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
-              Connected as <strong>{role}</strong>. Peers: {Object.keys(peers).length}.
-            </div>
-            <div className="online-peers">
-              <h4>People in room</h4>
-              <ul>
-                {Object.entries(peers).map(([uuid, name]) => (
-                  <li key={uuid}>
-                    <span className={`peer-dot ${seats.some((s) => s.id === uuid) ? 'seated' : 'spectator'}`} />
-                    {name} {uuid === localUuid && <em>(you)</em>}
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div className="lobby-chat">
-              <h4>Lobby chat</h4>
-              <div className="lobby-chat-log">
-                {chat.slice(-6).map((m) => (
-                  <div key={`${m.byUuid}-${m.ts}`}>
-                    <strong>{peers[m.byUuid] ?? 'Player'}:</strong> {m.text}
-                  </div>
-                ))}
-              </div>
-              <ChatInput onSend={sendChat} />
             </div>
           </div>
         )}
       </section>
 
       {showRules && RulesComponent && (
-        <div className="rules-modal-backdrop" onClick={() => setShowRules(false)}>
-          <div className="rules-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="rules-modal-header">
-              <h3>{module.name} — Rules</h3>
-              <button className="secondary" onClick={() => setShowRules(false)}>Close</button>
-            </div>
-            <div className="rules-modal-body">
-              <RulesComponent />
-            </div>
-          </div>
-        </div>
+        <RulesModal title={module.name} Rules={RulesComponent} onClose={() => setShowRules(false)} />
       )}
     </div>
-  );
-}
-
-function ChatInput({ onSend }: { onSend: (s: string) => void }) {
-  const [v, setV] = useState('');
-  return (
-    <form
-      onSubmit={(e) => { e.preventDefault(); if (v.trim()) { onSend(v); setV(''); } }}
-      style={{ display: 'flex', gap: 6, marginTop: 4 }}
-    >
-      <input value={v} onChange={(e) => setV(e.target.value)} placeholder="Chat…" maxLength={200} style={{ flex: 1 }} />
-      <button type="submit" disabled={!v.trim()}>Send</button>
-    </form>
-  );
-}
-
-/** Clickable seat-color picker. Shows the current swatch; clicking opens a
- *  small popover grid of the 14 palette colors. Colors already used by OTHER
- *  seats are dimmed + show a tooltip indicating which seat took them. */
-function ColorSwatchPicker({ value, takenBy, disabled, onChange }: {
-  value: string;
-  takenBy: Record<string, string>;
-  disabled?: boolean;
-  onChange: (c: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <span style={{ position: 'relative', display: 'inline-flex' }}>
-      <button
-        type="button"
-        className="swatch swatch-button"
-        onClick={() => !disabled && setOpen((v) => !v)}
-        disabled={disabled}
-        title={COLOR_LABELS[value] ?? value}
-        style={{
-          background: value,
-          width: 18, height: 18, borderRadius: 3, border: '1px solid rgba(0,0,0,0.25)',
-          padding: 0, cursor: disabled ? 'default' : 'pointer',
-        }}
-      />
-      {open && !disabled && (
-        <>
-          <div
-            onClick={() => setOpen(false)}
-            style={{ position: 'fixed', inset: 0, zIndex: 10 }}
-          />
-          <div
-            style={{
-              position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 11,
-              background: 'var(--bg-elevated, #1e1c2e)',
-              border: '1px solid rgba(255,255,255,0.15)',
-              borderRadius: 6,
-              padding: 6,
-              boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
-              display: 'grid',
-              gridTemplateColumns: 'repeat(7, 22px)',
-              gap: 4,
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {COLORS.map((c) => {
-              const taken = takenBy[c];
-              return (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => { onChange(c); setOpen(false); }}
-                  title={taken ? `${COLOR_LABELS[c]} — taken by ${taken}` : COLOR_LABELS[c]}
-                  disabled={!!taken}
-                  style={{
-                    width: 22, height: 22, borderRadius: 3, padding: 0,
-                    background: c,
-                    border: c === value ? '2px solid #fff' : '1px solid rgba(0,0,0,0.25)',
-                    cursor: taken ? 'not-allowed' : 'pointer',
-                    opacity: taken ? 0.3 : 1,
-                  }}
-                />
-              );
-            })}
-          </div>
-        </>
-      )}
-    </span>
   );
 }

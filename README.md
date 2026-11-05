@@ -2,7 +2,7 @@
 
 **▶ Play it live: <https://dragonkyro.github.io/card-collecting/>**
 
-A multi-game web app for **card-collecting games** where the objective is to maximize points in your own hand while minimizing points in your opponents'. Hosted on GitHub Pages, no backend, peer-to-peer multiplayer via WebRTC.
+A multi-game web app for **card-collecting games** where the objective is to maximize points in your own hand while minimizing points in your opponents'. Hosted on GitHub Pages; online play with friends runs through a Firebase Realtime Database (no server code of our own).
 
 Shipping targets:
 - **Sushi Go! Party** (incl. menu builder, not just the base set)
@@ -22,7 +22,7 @@ Shipping targets:
 | Build | Vite + TypeScript |
 | UI | React 19 |
 | State | Zustand |
-| Multiplayer | Trystero (WebRTC over BitTorrent trackers — no backend) |
+| Multiplayer | Firebase Realtime Database + anonymous Auth (project `card-collecting-4772c`; security rules only, no server code) |
 | Tests | Vitest |
 | Hosting | GitHub Pages (static) |
 
@@ -31,9 +31,9 @@ Shipping targets:
 ```
 src/
   core/         GameModule contract, RNG, shared types. Game-agnostic.
-  net/          Trystero wrapper, stable identity, wire envelopes.
-  store/        Zustand stores (gameStore, networkStore).
-  ui/           Shell — App, GameLobby, GameHost, theme.
+  net/          Room transport (Firebase + an in-memory fake for tests), identity, room links, wire types.
+  store/        Zustand stores (gameStore, networkStore) + ActionSync (the online action log).
+  ui/           Shell — App, GameLobby (local), OnlineLobby, GameHost, chat, theme.
   games/
     registry.ts                 List of all GameModules.
     sushi-go/                   Sushi Go! Party.
@@ -50,20 +50,21 @@ Each game lives in its own folder behind the `GameModule<S, A, C>` contract from
 
 ## Multiplayer model
 
-- Full state replication: every peer holds the full `GameState` and runs the same pure `applyAction` reducer.
-- Actions (not diffs) are broadcast over Trystero channels. Randomness is decided by the acting player and folded into the action payload so peers reduce identically.
-- Lobby is host-authoritative. Host broadcasts the opening state at start; mid-game joiners get a snapshot addressed to their peer id.
-- Stable identity is a `localStorage` UUID exchanged over the `hello` channel. `?fresh` switches to `sessionStorage` for local two-window testing.
-- Channels: `hello` (uuid + name), `lobby` (host → all), `start` (host → all), `action` (peer → all), `snap` (host → newcomer), `chat`. Trystero loads as a separate chunk so the solo/hot-seat bundle stays small.
+- **Firebase Realtime Database** (instance `card-collecting-4772c-default-rtdb`), reached with the Firebase JS SDK over one WebSocket on port 443, so it works on cellular and locked-down networks. It replaced peer-to-peer WebRTC (Trystero), which never connected reliably: strict NAT with no TURN server, flaky trackers, phones dropping sockets in the background. The SDK loads as its own chunk (~77 KB gzip) only when someone goes online; solo and hot-seat play never download it or hold a connection.
+- **Identity**: each device signs in to Firebase **anonymously and silently** (no account, no prompt) only so the security rules can tie writes to a device. Seats belong to the device's `localStorage` UUID; `?fresh` moves the UUID and the sign-in to `sessionStorage` for two-window local testing.
+- **A room** (`rooms/{CODE}`) holds its `meta`, a `lobby` (seats, game, options — edited by transaction), one entry per match under `matches/` (a write-once `start` record + a write-once `actions` log), `chat` and `presence`. The start record carries `createInitialState`'s inputs (game, options, seed, seats), not the state, so it's a few hundred bytes.
+- **The action log is the source of truth.** Every device builds the opening state from the start record and applies the logged moves in slot order, so all devices reduce identically (randomness is in `state.rngState` or in the action). Your own moves show at once; if another device's move takes the log slot first (two players acting at the same moment), your device rolls back, applies theirs, and replays yours on top — or drops it with a message if it's no longer legal.
+- **Rejoin and spectate for free**: a device that reloads or loses signal replays the current match from the log and is back in its seat; anyone else who joins mid-match watches. The room code rides in the URL (`?room=ABCD`), so a reload or an invite link rejoins.
+- Security rules are in `database.rules.json` (deploy with `npx firebase-tools deploy --only database`). Rooms are swept a week after they're made.
 - No accounts, no matchmaking, no anti-cheat — friends-only.
 
 ### Online flow
 
-1. **Host online** mints a 6-character room code and joins a Trystero room (app id `card-collecting-v1`, password = room code). The host configures the menu/options and assigns each seat to a connected peer via a dropdown.
-2. **Join** by entering the room code on the lobby screen. The host sees you appear in the peer list and can drop you into any open seat.
-3. **Start** broadcasts the opening `GameState` + the `seat → uuid` map. Each peer's reducer runs identically off that state; subsequent actions are envelopes `{ byUuid, actionJson }` applied through the same `applyAction`.
-4. **Mid-game join**: the host responds to a new arrival's `hello` with a targeted snapshot. If the joiner's uuid matches a seat they become a guest; otherwise they're a spectator.
-5. **AI in online**: only the host runs the AI driver. The driver fires whenever `state.activePlayerId` resolves to an AI seat — reducers park `activePlayerId` on the next un-acted AI seat during simultaneous-pick or "click-through" phases (e.g. Sushi Go selection, 7 Wonders military summary in all-AI matches) so the driver picks up without a human click. If the host disconnects, AI seats freeze.
+1. **Host online** from a game's lobby (enter your name): opens a room with a 4-character code, carrying the lobby's options and AI seats over. Share the code or the invite link.
+2. **Join** from the game picker with your name and the code. You take a free seat (or watch, if the table is full). Everyone sets their own seat's name and color; the host picks the game and options (guests see them read-only), adds / removes AI seats, and starts.
+3. **Start**: everyone's device builds the same opening and plays through the shared action log.
+4. **Play again** starts a fresh match for the whole room; **Lobby** takes everyone back to change the game, options or seats (Sushi Go always goes back to the lobby so the menu can change).
+5. **AI in online**: only the host's device runs the AI seats (a host that reloads picks them up again). If the host is gone, AI seats wait for them.
 
 ## Commands
 
@@ -73,7 +74,11 @@ npm run build       # tsc typecheck + vite build → dist/
 npm run typecheck   # tsc no-emit
 npm run test        # vitest watch
 npm run test:run    # vitest single run
+FIREBASE_LIVE=1 npx vitest run src/store/networkStore.live.test.ts   # online play against the real Firebase project
+npx firebase-tools deploy --only database                            # deploy database.rules.json
 ```
+
+`npm run test:run` covers online play against an in-memory server (`src/net/fakeTransport.ts`), including whole matches of the heuristic-AI games. The live test prints the room codes it used; remove them with `MSYS_NO_PATHCONV=1 npx firebase-tools database:remove /rooms/<CODE> --force` (Git Bash needs `MSYS_NO_PATHCONV=1` for database paths).
 
 ## Deployment
 
@@ -88,12 +93,12 @@ npm run test:run    # vitest single run
 - [x] Vite + React 19 + TypeScript scaffold, `GameModule` contract, Zustand stores, seeded RNG
 - [x] GitHub Pages deploy on every push to `main`
 - [x] Game picker, lobby (seat builder + each game's options) and hot-seat play with a pass-the-device screen
-- [x] Online play over Trystero: room codes, host-authoritative lobby, action broadcast, snapshot on join, spectators
-- [x] Lobby chat and in-game chat
+- [x] Online play over Firebase Realtime Database: room codes + invite links, self-seating lobby (the host sets game, options, AI seats), write-once action log with rollback on races, rejoin after a reload or dropped signal, spectators, play again / back to the lobby
+- [x] Lobby chat and in-game chat (kept in the room, so rejoiners see it)
 - [x] Host-only AI driver, so AI seats play in online matches too
 - [x] A rules book for every game (the in-game Rules button)
 - [ ] Hot-seat with two or more human seats in Sushi Go, and in the 7 Wonders Leaders draft / leader play: only AI seats are handed the turn, so the second human never gets the device and the match stalls (fixed for base 7 Wonders)
-- [ ] Host hand-off: if the online host disconnects, AI seats freeze
+- [ ] Host hand-off: if the online host disconnects, AI seats wait until the host's device rejoins
 - [ ] Per-seat AI difficulty (today one level covers every AI seat; needs a game-agnostic seat field)
 
 ### Sushi Go! Party

@@ -445,16 +445,56 @@ input, select {
   font-size: 13px;
 }
 
-.online-info {
-  margin-top: 16px;
-  padding: 12px;
-  background: var(--bg-hover);
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+.join-room-box {
+  max-width: 760px;
+  margin: 0 auto 18px;
 }
+
+.online-status p { color: var(--fg-muted); }
+
+.online-lobby-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.online-lobby-head h3 { margin: 0; }
+.online-game-select { font-size: 16px; font-weight: 700; padding: 6px 10px; }
+.online-room { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.online-room .room-code { margin-right: 2px; }
+
+.online-seat-name { padding: 6px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.online-seat-tags { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.online-tag {
+  font-size: 11px;
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 7px;
+  white-space: nowrap;
+}
+.online-tag.offline { color: var(--warning); border-color: var(--warning); }
+
+/* Guests see the host's options through a disabled fieldset. */
+.online-options { border: 0; padding: 0; margin: 0; min-width: 0; }
+.online-options:disabled { opacity: 0.75; }
+
+.chat-system { color: var(--fg-muted); font-style: italic; }
+
+.net-pill-warn { color: var(--warning); border-color: var(--warning); }
+
+.net-banner {
+  margin: 0 0 10px;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--warning);
+  background: rgba(255, 184, 77, 0.12);
+  color: var(--warning);
+  font-size: 13px;
+}
+.net-banner-notice { border-color: var(--accent); background: rgba(106, 160, 255, 0.12); color: var(--fg); cursor: pointer; }
 
 .online-label {
   font-size: 11px;

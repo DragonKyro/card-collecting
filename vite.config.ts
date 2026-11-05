@@ -4,6 +4,11 @@ import { fileURLToPath, URL } from 'node:url';
 
 export default defineConfig({
   base: '/card-collecting/',
+  // Online rooms record the build that made them, so devices on another
+  // build get a warning (see networkStore).
+  define: {
+    __APP_BUILD__: JSON.stringify(process.env.GITHUB_SHA?.slice(0, 7) ?? 'dev'),
+  },
   plugins: [react()],
   resolve: {
     alias: {

@@ -19,7 +19,7 @@ import './sushi-go.css';
 
 const CATEGORIES_ORDERED: SushiGoCategory[] = ['nigiri', 'roll', 'appetizer', 'special', 'dessert'];
 
-function LobbyConfig({ config, seats, onChange }: { config: SushiGoConfig; seats: Seat[]; onChange: (c: SushiGoConfig) => void }) {
+function LobbyConfig({ config, seats, onChange, readOnly }: { config: SushiGoConfig; seats: Seat[]; onChange: (c: SushiGoConfig) => void; readOnly?: boolean }) {
   const playerCount = seats.length;
   const byCat: Record<SushiGoCategory, SushiGoCardKind[]> = useMemo(() => {
     const m: Record<SushiGoCategory, SushiGoCardKind[]> = { nigiri: [], roll: [], appetizer: [], special: [], dessert: [] };
@@ -32,8 +32,8 @@ function LobbyConfig({ config, seats, onChange }: { config: SushiGoConfig; seats
   // Start fetching the chosen level's policy while the lobby is still open
   // (the Start button awaits it either way).
   useEffect(() => {
-    if (hasAI) prepareAiLevel(level).catch(() => {});
-  }, [hasAI, level]);
+    if (hasAI && !readOnly) prepareAiLevel(level).catch(() => {});
+  }, [hasAI, level, readOnly]);
   const isSelected = (k: SushiGoCardKind) => config.menu.includes(k);
   const togglePick = (k: SushiGoCardKind) => {
     const cat = KIND_INFO[k].category;

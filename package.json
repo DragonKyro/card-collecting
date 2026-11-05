@@ -20,9 +20,9 @@
     "jaipur:eval": "npm run jaipur:build && node training/jaipur/dist/jaipur-eval.mjs"
   },
   "dependencies": {
+    "firebase": "^12.19.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "trystero": "^0.20.0",
     "zustand": "^5.0.2"
   },
   "devDependencies": {

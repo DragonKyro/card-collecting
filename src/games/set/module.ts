@@ -1,9 +1,10 @@
 // Set module.
 //
 // Solo / shared-screen only for now: no chooseAIAction (Set has no turn order for
-// an AI driver to hook into) and no online support (a real-time race needs
-// host-authoritative claim arbitration, which the action-broadcast net layer
-// can't provide yet — see CLAUDE.md).
+// an AI driver to hook into) and no online support (the selection is shared
+// state built card by card, so two players selecting at once would trample
+// each other; a claim needs to be one action — see "Set online racing" in
+// CLAUDE.md).
 
 import type { GameModule } from '@/core/module';
 import type { Seat } from '@/core/types';
@@ -21,7 +22,7 @@ export const setModule: GameModule<SetState, SetAction, SetConfig> = {
   tagline: 'Spot the pattern. Three cards, four features, one answer.',
   minPlayers: MIN_PLAYERS,
   maxPlayers: MAX_PLAYERS,
-  // Real-time claims can't be arbitrated by the action-broadcast net layer yet.
+  // Real-time claims are shared card-by-card selections: not raceable online yet.
   onlineSupported: false,
 
   defaultConfig(_seats: Seat[]): SetConfig {

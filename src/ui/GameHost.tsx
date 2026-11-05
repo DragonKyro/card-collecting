@@ -9,34 +9,46 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useGameStore } from '@/store/gameStore';
-import { useNetworkStore } from '@/store/networkStore';
+import { offlineSeats, useNetworkStore } from '@/store/networkStore';
 import type { GameUiBundle, GameStateShape } from '@/core/module';
 import type { Seat } from '@/core/types';
 import { randomSeed } from '@/core/rng';
 import { ChatPanel } from './ChatPanel';
+import { RulesModal } from './lobbyParts';
 
 interface Props {
   onExit(): void;
   /** "Play again" for modules with `replayInLobby`: back to that game's lobby
-   *  with the finished match's config + seats pre-filled. */
+   *  with the finished match's config + seats pre-filled. (Local play only;
+   *  online, the room's lobby keeps the options.) */
   onReturnToLobby(gameId: string, initial: { config: unknown; seats: Seat[] }): void;
 }
+
+/** How long this device's link may be down before the "Reconnecting…" banner shows. */
+const RECONNECT_BANNER_MS = 2000;
 
 export function GameHost({ onExit, onReturnToLobby }: Props) {
   const module = useGameStore((s) => s.module);
   const state = useGameStore((s) => s.state);
   const localPlayerId = useGameStore((s) => s.localPlayerId);
+  const aiReady = useGameStore((s) => s.aiReady);
   const dispatch = useGameStore((s) => s.dispatch);
   const role = useNetworkStore((s) => s.role);
   const roomCode = useNetworkStore((s) => s.roomCode);
+  const onlineUuids = useNetworkStore((s) => s.onlineUuids);
+  const serverConnected = useNetworkStore((s) => s.serverConnected);
+  const notice = useNetworkStore((s) => s.notice);
   const [bundle, setBundle] = useState<GameUiBundle<GameStateShape, unknown, unknown> | null>(null);
   const [rulesOpen, setRulesOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [linkDownLong, setLinkDownLong] = useState(false);
   const tickingRef = useRef(false);
   // Hot-seat "pass the device" gate. When the active human seat changes,
   // we cover the board until the new player explicitly hits Ready, so the
   // previous player doesn't see their hand. Tracks the last seat we cleared.
   const [passShownFor, setPassShownFor] = useState<string | null>(null);
   const lastClearedSeat = useRef<string | null>(null);
+  const online = role !== 'solo';
 
   useEffect(() => {
     let cancelled = false;
@@ -47,17 +59,30 @@ export function GameHost({ onExit, onReturnToLobby }: Props) {
     return () => { cancelled = true; };
   }, [module]);
 
+  useEffect(() => {
+    if (serverConnected) { setLinkDownLong(false); return; }
+    const t = setTimeout(() => setLinkDownLong(true), RECONNECT_BANNER_MS);
+    return () => clearTimeout(t);
+  }, [serverConnected]);
+
+  useEffect(() => {
+    if (!notice) return;
+    const t = setTimeout(() => useNetworkStore.getState().dismissNotice(), 6000);
+    return () => clearTimeout(t);
+  }, [notice]);
+
   // AI driver: if the active player is an AI seat, run its chooseAIAction.
-  // In online matches only the host drives AI — otherwise multiple peers would
-  // each dispatch the same AI action.
+  // In online matches only the host drives AI — otherwise multiple devices
+  // would each dispatch the same AI action. A host that rejoined mid-match
+  // waits for the module's `prepare` (aiReady) first.
   //
   // Tick delay is tuned to the audience:
   //   - All-AI matches (no humans): 80ms — basically as fast as React can
   //     render. The user is watching a demo, not following individual moves.
   //   - At least one human seat present: 380ms — slow enough to follow the
-  //     AI's move + animation, fast enough not to feel laggy. (Was 650ms.)
+  //     AI's move + animation, fast enough not to feel laggy.
   useEffect(() => {
-    if (!module || !state || !module.chooseAIAction) return;
+    if (!module || !state || !module.chooseAIAction || !aiReady) return;
     if (role === 'guest' || role === 'spectator') return;
     if (tickingRef.current) return;
     const active = state.activePlayerId;
@@ -83,7 +108,7 @@ export function GameHost({ onExit, onReturnToLobby }: Props) {
       }
     }, delay);
     return () => { clearTimeout(timer); tickingRef.current = false; };
-  }, [module, state, role]);
+  }, [module, state, role, aiReady]);
 
   if (!module || !state) {
     return (
@@ -96,7 +121,7 @@ export function GameHost({ onExit, onReturnToLobby }: Props) {
 
   const GameView = bundle?.GameView;
   // Spectators see the game but can't act; nuke dispatch to a no-op so an
-  // accidental click can't mutate local-only state.
+  // accidental click can't change the local copy.
   const effectiveDispatch = role === 'spectator' ? () => {} : dispatch;
 
   // In hot-seat (solo), every human seat shares the same device. The store's
@@ -140,23 +165,34 @@ export function GameHost({ onExit, onReturnToLobby }: Props) {
 
   const RulesComponent = bundle?.Rules;
   const isGameOver = state.phase === 'gameOver';
-  // In online matches only the host re-rolls a new game; guests just wait for
-  // the host's `start` broadcast (the existing channel handler reloads the
-  // gameStore on their end). In solo / hot-seat anyone can hit Play Again.
+  // Online, only the host starts the next match; everyone else follows it
+  // (the room's lobby says which match is on). Solo, anyone can.
   const canPlayAgain = isGameOver && (role === 'solo' || role === 'host');
+  const away = online ? offlineSeats(state.seats, onlineUuids) : [];
 
   async function playAgain() {
-    if (!canPlayAgain) return;
+    if (!canPlayAgain || busy) return;
     const cur = useGameStore.getState();
-    if (!cur.module || !cur.matchConfig) {
+    if (!cur.module) return;
+    if (role === 'host') {
+      const net = useNetworkStore.getState();
+      // A replayInLobby game re-deals from the lobby so options can change first.
+      if (cur.module.replayInLobby) {
+        net.hostReturnToLobby();
+        return;
+      }
+      setBusy(true);
+      const err = await net.hostPlayAgain();
+      setBusy(false);
+      if (err) alert(err);
+      return;
+    }
+    if (!cur.matchConfig) {
       alert('Cannot replay — original match config not available.');
       return;
     }
     const cfg = cur.matchConfig as { config: unknown; seats: Seat[] };
     if (cur.module.replayInLobby) {
-      // Re-deal from the lobby so options can change first. A host keeps the
-      // room open: the lobby rebroadcasts on mount, and guests sit on their
-      // game-over screen until the next `start` reloads them.
       useGameStore.getState().clear();
       onReturnToLobby(cur.module.id, cfg);
       return;
@@ -170,11 +206,15 @@ export function GameHost({ onExit, onReturnToLobby }: Props) {
     const seed = randomSeed();
     const initial = cur.module.createInitialState(cfg.config, seed, cfg.seats);
     cur.loadGame(cur.module, initial, cur.localPlayerId, cfg);
-    if (role === 'host') {
-      // Re-broadcast to keep guests in sync.
-      const seatUuids = cfg.seats.map((s) => s.id);
-      useNetworkStore.getState().broadcastStart(initial, seatUuids);
+  }
+
+  function leave() {
+    if (online) {
+      useNetworkStore.getState().leaveRoom();
+      return;
     }
+    useGameStore.getState().clear();
+    onExit();
   }
 
   return (
@@ -182,48 +222,50 @@ export function GameHost({ onExit, onReturnToLobby }: Props) {
       <div className="game-host-bar">
         <strong className="game-host-title">{module.name}</strong>
         <div className="game-host-actions">
-          {role !== 'solo' && roomCode && (
-            <span className="net-pill">
+          {online && roomCode && (
+            <span className="net-pill" title={role === 'spectator' ? 'Watching: you have no seat in this match' : undefined}>
               <span className={`net-dot net-dot-${role}`} />
-              <span className="net-pill-role">{role} · room</span> <code>{roomCode}</code>
+              <span className="net-pill-role">{role === 'spectator' ? 'watching' : role} · room</span> <code>{roomCode}</code>
+            </span>
+          )}
+          {away.length > 0 && !isGameOver && (
+            <span className="net-pill net-pill-warn" title="Their moves wait until they reconnect">
+              {away.map((s) => s.name).join(', ')} offline
             </span>
           )}
           {canPlayAgain && (
-            <button onClick={playAgain}>🔁 Play again</button>
+            <button onClick={playAgain} disabled={busy}>🔁 Play again</button>
+          )}
+          {isGameOver && role === 'host' && !module.replayInLobby && (
+            <button className="secondary" onClick={() => useNetworkStore.getState().hostReturnToLobby()}>Lobby</button>
+          )}
+          {isGameOver && (role === 'guest' || role === 'spectator') && (
+            <span className="net-pill">Waiting for the host…</span>
           )}
           {RulesComponent && (
             <button className="secondary" onClick={() => setRulesOpen(true)}>📖 Rules</button>
           )}
-          <button
-            className="secondary"
-            onClick={() => {
-              useNetworkStore.getState().leave();
-              useGameStore.getState().clear();
-              onExit();
-            }}
-          >
-            Leave<span className="game-host-wide"> game</span>
+          <button className="secondary" onClick={leave}>
+            Leave<span className="game-host-wide"> {online ? 'room' : 'game'}</span>
           </button>
         </div>
       </div>
+      {online && linkDownLong && (
+        <div className="net-banner">Reconnecting to the game server… your moves will go through once it's back.</div>
+      )}
+      {notice && (
+        <div className="net-banner net-banner-notice" role="status" onClick={() => useNetworkStore.getState().dismissNotice()}>
+          {notice}
+        </div>
+      )}
       {GameView ? (
         <GameView state={state} localPlayerId={effectiveLocalPlayerId} dispatch={effectiveDispatch} />
       ) : (
         <p>Loading…</p>
       )}
-      {role !== 'solo' && <ChatPanel />}
+      {online && <ChatPanel />}
       {rulesOpen && RulesComponent && (
-        <div className="rules-modal-backdrop" onClick={() => setRulesOpen(false)}>
-          <div className="rules-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="rules-modal-header">
-              <h3>{module.name} — Rules</h3>
-              <button className="secondary" onClick={() => setRulesOpen(false)}>Close</button>
-            </div>
-            <div className="rules-modal-body">
-              <RulesComponent />
-            </div>
-          </div>
-        </div>
+        <RulesModal title={module.name} Rules={RulesComponent} onClose={() => setRulesOpen(false)} />
       )}
       {passSeat && (
         <div className="hotseat-pass-backdrop">

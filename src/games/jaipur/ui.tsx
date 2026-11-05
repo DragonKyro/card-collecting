@@ -37,7 +37,7 @@ import './jaipur.css';
 // ---------------------------------------------------------------------------
 // Lobby
 
-function LobbyConfig({ config, seats, onChange }: { config: JaipurConfig; seats: Seat[]; onChange: (c: JaipurConfig) => void }) {
+function LobbyConfig({ config, seats, onChange, readOnly }: { config: JaipurConfig; seats: Seat[]; onChange: (c: JaipurConfig) => void; readOnly?: boolean }) {
   const options: Array<{ seals: number; label: string }> = [
     { seals: 1, label: 'Single round' },
     { seals: 2, label: 'Best of 3' },
@@ -48,8 +48,8 @@ function LobbyConfig({ config, seats, onChange }: { config: JaipurConfig; seats:
   // Start fetching the level's policy while the lobby is still open (the
   // Start button awaits it either way).
   useEffect(() => {
-    if (hasAI) void import('./aiLevels').then((m) => m.prepareAiLevel(level)).catch(() => {});
-  }, [hasAI, level]);
+    if (hasAI && !readOnly) void import('./aiLevels').then((m) => m.prepareAiLevel(level)).catch(() => {});
+  }, [hasAI, level, readOnly]);
   return (
     <div className="game-config">
       {hasAI && AI_LEVELS.length > 1 && (

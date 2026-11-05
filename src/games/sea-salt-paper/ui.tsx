@@ -18,7 +18,7 @@ import { useSspTiming, formatElapsed } from './timingStore';
 import { AI_LEVELS, aiLevelOf, prepareAiLevel } from './aiLevels';
 import './ssp.css';
 
-function LobbyConfig({ config, seats, onChange }: { config: SspConfig; seats: Seat[]; onChange: (c: SspConfig) => void }) {
+function LobbyConfig({ config, seats, onChange, readOnly }: { config: SspConfig; seats: Seat[]; onChange: (c: SspConfig) => void; readOnly?: boolean }) {
   const exp = config.expansions ?? {};
   const setExp = (patch: Partial<NonNullable<SspConfig['expansions']>>) =>
     onChange({ ...config, expansions: { ...exp, ...patch } });
@@ -27,8 +27,8 @@ function LobbyConfig({ config, seats, onChange }: { config: SspConfig; seats: Se
   // Start fetching the chosen level's policy while the lobby is still open
   // (the Start button awaits it either way).
   useEffect(() => {
-    if (hasAI) prepareAiLevel(level).catch(() => {});
-  }, [hasAI, level]);
+    if (hasAI && !readOnly) prepareAiLevel(level).catch(() => {});
+  }, [hasAI, level, readOnly]);
   return (
     <div className="game-config">
       {hasAI && (
