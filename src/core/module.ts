@@ -4,8 +4,8 @@
 // register it in src/games/registry.ts.
 //
 // Game-specific types are parameterized as <S, A, C>:
-//   S — full GameState for this game (must be JSON-serializable for netcode/save)
-//   A — Action union for this game (must be JSON-serializable for netcode)
+//   S — full GameState for this game (must be JSON-serializable)
+//   A — Action union for this game (must be JSON-serializable: online moves are logged as JSON)
 //   C — Config / setup options chosen in the lobby (seat list, expansions, etc.)
 //
 // Invariants every module must uphold:
@@ -14,9 +14,10 @@
 //     mulberry32 in src/core/rng.ts). Randomness chosen by the acting player
 //     (deal, draw) must be folded into the action payload so all peers reduce
 //     identically.
-//   - createInitialState must accept a seed so peers agree on opening state.
-//   - Player visibility (hidden hands) is a UI concern: the full GameState is
-//     replicated to every peer. We rely on friends-only honor, no anti-cheat.
+//   - createInitialState must be pure given (config, seed, seats): online, every
+//     device builds the opening state itself from the room's start record.
+//   - Player visibility (hidden hands) is a UI concern: every device holds the
+//     full GameState. We rely on friends-only honor, no anti-cheat.
 
 import type { PlayerId, Seat, GamePhase } from './types';
 export type { Seat };
@@ -48,9 +49,10 @@ export interface GameModule<
   /** Allowed player counts (inclusive). */
   readonly minPlayers: number;
   readonly maxPlayers: number;
-  /** Set false for games whose action model can't survive the action-broadcast
-   *  net layer (real-time races need host-authoritative arbitration). The lobby
-   *  then hides "Host online" for this game. Defaults to true. */
+  /** Set false for games whose action model can't survive the online action
+   *  log (real-time races need host-authoritative arbitration). The lobby then
+   *  hides "Host online" for this game and an online room can't switch to it.
+   *  Defaults to true. */
   readonly onlineSupported?: boolean;
   /** Set true to have the game-over "Play again" button return to the lobby
    *  with the finished match's config and seats pre-filled (so options can be
@@ -59,8 +61,18 @@ export interface GameModule<
   readonly replayInLobby?: boolean;
   /** Set false for games with no hidden information (every card and coin is
    *  public): hot-seat play then skips the "pass the device" screen between
-   *  human turns. Defaults to true. */
-  readonly hiddenInfo?: boolean;
+   *  human turns. Defaults to true. A function decides per match (it is
+   *  handed the match state), for games whose options add hidden
+   *  information. */
+  readonly hiddenInfo?: boolean | ((state: S) => boolean);
+
+  /** Strengths an AI seat can play at, easiest first. With two or more, the
+   *  lobby gives every AI seat its own picker and stores the choice in
+   *  `seat.aiLevel`, which the module's AI reads back off `state.seats`
+   *  (and `prepare` off `seats`). Absent = the AI has one strength. */
+  readonly aiLevels?: ReadonlyArray<{ id: string; label: string }>;
+  /** The level of an AI seat that names none. Defaults to the last listed. */
+  readonly defaultAiLevel?: string;
 
   /** Build the lobby config component's initial value. Pure. */
   defaultConfig(seats: Seat[]): C;
@@ -105,6 +117,10 @@ export interface GameUiBundle<S, A, C> {
     config: C;
     seats: Seat[];
     onChange: (config: C) => void;
+    /** Set for an online guest, who sees the host's options but can't change
+     *  them (the shell also wraps the form in a disabled fieldset). Skip work
+     *  only the AI-driving device needs, like prefetching AI policies. */
+    readOnly?: boolean;
   }>;
   GameView: React.ComponentType<{
     state: S;

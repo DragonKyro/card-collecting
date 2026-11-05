@@ -9,8 +9,9 @@
 //
 // Multi-part answers are asked one part at a time, carrying a SushiGoDraft
 // between policy calls (it changes no game state): a pick is first card →
-// chopsticks' second card or `done` → `spoon:yes` / `spoon:no`, each part
-// only when it applies; a takeout box flips one face at a time until `done`.
+// chopsticks' second card or `done` (when it applies); a spoon, after the
+// reveal, is `spoon:yes` (then the card to name) / `spoon:no` (keep it); a
+// takeout box flips one face at a time until `done`.
 //
 // The mask and decoder are functions of SushiGoObservation only.
 // actions.test.ts plays every legal slot sequence against the reducer.
@@ -19,7 +20,7 @@ import type { SushiGoAction, SushiGoCard, SushiGoCardKind } from '../types';
 import { ALL_KINDS, variantsOf } from '../cards';
 import { effectiveCard } from '../scoring';
 import { FACES, FACE_COUNT, faceIndex } from './faces';
-import type { SushiGoDecision, SushiGoDraft, SushiGoObservation } from './observation';
+import type { SushiGoDraft, SushiGoObservation } from './observation';
 
 /** Bump when slots are added, removed or reordered — trained weights are tied to it. */
 export const ACTION_SPACE_VERSION = 1;
@@ -34,6 +35,7 @@ export const ASK_ANY_KINDS: readonly SushiGoCardKind[] = ALL_KINDS.filter((k) =>
 export const SLOT_ASK_ANY = ASK_ANY_KINDS.map((k) => slot(`askAny:${k}`));
 /** No chopsticks second card / no more flips. */
 export const SLOT_DONE = slot('done');
+/** Use the spoon this turn / keep it. */
 export const SLOT_SPOON_YES = slot('spoon:yes');
 export const SLOT_SPOON_NO = slot('spoon:no');
 
@@ -66,18 +68,18 @@ export function legalMask(obs: SushiGoObservation): Uint8Array {
   };
   switch (d.type) {
     case 'pick':
-      if (d.stage === 'spoon') {
-        mask[SLOT_SPOON_YES] = 1;
-        mask[SLOT_SPOON_NO] = 1;
-      } else {
-        faces(without(obs.hand, d.chosen));
-        if (d.stage === 'second') mask[SLOT_DONE] = 1;
-      }
+      faces(without(obs.hand, d.chosen));
+      if (d.stage === 'second') mask[SLOT_DONE] = 1;
       break;
     case 'copy':
       faces(d.targets.map(effectiveCard));
       break;
     case 'spoon': {
+      if (d.stage === 'use') {
+        mask[SLOT_SPOON_YES] = 1;
+        mask[SLOT_SPOON_NO] = 1;
+        break;
+      }
       const onMenu = new Set(obs.menu);
       FACES.forEach((f, i) => { if (onMenu.has(f.kind)) mask[SLOT_FACE[i]] = 1; });
       ASK_ANY_KINDS.forEach((k, i) => { if (onMenu.has(k)) mask[SLOT_ASK_ANY[i]] = 1; });
@@ -107,14 +109,19 @@ export function decodeSlot(obs: SushiGoObservation, slotIndex: number): SlotDeci
   switch (d.type) {
     case 'pick': {
       const chosen = d.chosen.map((c) => c.id);
-      if (d.stage === 'spoon') return submit(obs, chosen, slotIndex === SLOT_SPOON_YES);
-      if (slotIndex === SLOT_DONE) return afterPick(obs, d, { cards: chosen, secondDone: true });
+      if (slotIndex === SLOT_DONE) return submit(obs, chosen);
       const card = cardOfFace(without(obs.hand, d.chosen), f)!;
-      return afterPick(obs, d, { cards: [...chosen, card.id], secondDone: d.stage === 'second' });
+      const cards = [...chosen, card.id];
+      return d.stage === 'first' && d.canChopsticks ? { type: 'draft', draft: { cards } } : submit(obs, cards);
     }
     case 'copy':
       return { type: 'copyCard', playerId, targetId: cardOfFace(d.targets, f, true)!.id };
     case 'spoon': {
+      if (d.stage === 'use') {
+        return slotIndex === SLOT_SPOON_YES
+          ? { type: 'draft', draft: { cards: [], spoonUsed: true } }
+          : { type: 'keepSpoon', playerId };
+      }
       if (f >= 0) {
         const face = FACES[f];
         return { type: 'askSpoon', playerId, kind: face.kind, ...(face.variant !== undefined ? { variant: face.variant } : {}) };
@@ -137,19 +144,12 @@ export function decodeSlot(obs: SushiGoObservation, slotIndex: number): SlotDeci
   }
 }
 
-/** After a pick part: ask the next part that applies, or submit. */
-function afterPick(obs: SushiGoObservation, d: Extract<SushiGoDecision, { type: 'pick' }>, draft: SushiGoDraft): SlotDecision {
-  if (draft.cards.length === 1 && d.canChopsticks && !draft.secondDone) return { type: 'draft', draft };
-  if (d.canSpoon) return { type: 'draft', draft: { ...draft, secondDone: true } };
-  return submit(obs, draft.cards, false);
-}
-
-function submit(obs: SushiGoObservation, cardIds: number[], useSpoon: boolean): SushiGoAction {
+function submit(obs: SushiGoObservation, cardIds: number[]): SushiGoAction {
   let ids = cardIds;
   // Wasabi picked with a nigiri goes down first, so the nigiri lands on it.
   if (ids.length === 2) {
     const [a, b] = ids.map((id) => obs.hand.find((c) => c.id === id)!);
     if (a.kind === 'nigiri' && b.kind === 'wasabi') ids = [ids[1], ids[0]];
   }
-  return { type: 'submitPick', playerId: obs.viewerId, cardIds: ids, ...(useSpoon ? { useSpoon: true } : {}) };
+  return { type: 'submitPick', playerId: obs.viewerId, cardIds: ids };
 }

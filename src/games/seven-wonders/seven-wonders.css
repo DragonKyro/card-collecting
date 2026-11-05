@@ -147,7 +147,9 @@
 .sw-cardface-md { width: 116px; border-width: 2px; }
 .sw-cardface.sw-c-leader { border-color: #b89a5e; }
 .sw-cardface.clickable { cursor: pointer; }
-.sw-cardface.clickable:hover { transform: translateY(-4px); box-shadow: 0 10px 18px rgba(0, 0, 0, 0.5); }
+@media (hover: hover) {
+  .sw-cardface.clickable:hover { transform: translateY(-4px); box-shadow: 0 10px 18px rgba(0, 0, 0, 0.5); }
+}
 .sw-cardface.clickable:focus-visible { outline: 2px solid var(--gold, #ffd257); outline-offset: 2px; }
 .sw-cardface.selected {
   transform: translateY(-6px);
@@ -389,7 +391,7 @@
 
 .sw .sw-opponents {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(330px, 100%), 1fr));
   gap: 10px;
 }
 
@@ -470,8 +472,35 @@
 
 .sw .sw-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 
+/* ---------- last turn: what each city did, and what's new ---------- */
+
+.sw .sw-opp-last { margin: -2px 0 0; font-size: 11.5px; font-style: italic; opacity: 0.8; }
+.sw .sw-final-note { display: flex; align-items: center; gap: 6px; margin: 8px 0 0; }
+
+/* Cards built on the last turn drop into their column and glow; a stage built
+   on it glows on the board and on the neighbour strip's pips. */
+@media (prefers-reduced-motion: no-preference) {
+  .sw-band.sw-fresh { animation: sw-band-in 0.5s cubic-bezier(0.2, 0.9, 0.3, 1.3) both, sw-glow 1.8s ease-out 0.25s; }
+  .sw-wstage.sw-fresh,
+  .sw-wmini-pips span.sw-fresh { animation: sw-glow 1.8s ease-out; }
+  .sw .sw-opp-last { animation: sw-fade-in 0.4s ease-out both; }
+}
+@keyframes sw-band-in {
+  from { transform: translateY(-10px) scale(0.6); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+@keyframes sw-glow {
+  from { box-shadow: 0 0 0 2px #ffd257, 0 0 14px rgba(255, 210, 87, 0.9); }
+  to { box-shadow: 0 0 0 0 rgba(255, 210, 87, 0), 0 0 0 rgba(255, 210, 87, 0); }
+}
+@keyframes sw-fade-in {
+  from { opacity: 0; transform: translateY(-3px); }
+  to { opacity: 0.8; transform: none; }
+}
+
 /* ---------- tables: military + final scoring ---------- */
 
+.sw .sw-table-scroll { overflow-x: auto; border-radius: 8px; }
 .sw .sw-table {
   width: 100%;
   border-collapse: collapse;
@@ -505,6 +534,9 @@
   margin-bottom: 6px;
 }
 
+.sw-lobby .sw-preset-name { width: 110px; font-size: 13px; }
+.sw-lobby .sw-preset-select { flex: 1; }
+
 .sw-lobby .sw-wonder-picker {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
@@ -524,3 +556,132 @@
 .sw-lobby .sw-wonder-option.selected {
   border-color: var(--accent);
 }
+
+/* ---------- phones ---------- */
+
+@media (max-width: 600px) {
+  .sw .sw-board { padding: 8px; gap: 10px; border-radius: 10px; }
+  .sw .sw-panel,
+  .sw .sw-hand-area { padding: 10px; }
+  .sw .sw-panel h3,
+  .sw .sw-hand-area h3 { font-size: 14px; gap: 4px 10px; margin-bottom: 8px; }
+  .sw .sw-pill { padding: 3px 9px; font-size: 12px; }
+  .sw .sw-pill-age { font-size: 14px; }
+
+  /* What you act on first: your hand, then your own city, then the table. */
+  .sw .sw-board > .sw-status { order: -3; }
+  .sw .sw-board > .sw-hand-area { order: -2; }
+  .sw .sw-board > .sw-self { order: -1; }
+
+  /* Hand: a grid of three, so a whole Age hand shows in three rows. */
+  .sw .sw-hand {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+    gap: 8px;
+    padding: 6px 0 8px;
+  }
+  .sw .sw-hand .sw-cardface { width: auto; min-width: 0; border-width: 2px; border-radius: 8px; }
+  .sw .sw-hand .sw-cf-band { min-height: 28px; padding: 2px 3px; }
+  .sw .sw-hand .sw-cf-name { font-size: 12px; letter-spacing: 0; }
+  .sw .sw-hand .sw-cf-text { font-size: 10px; padding: 4px 4px 0; }
+  .sw .sw-hand .sw-cf-chain { flex-wrap: wrap; padding: 0 4px 3px; }
+  .sw .sw-pay-dialog { padding: 10px; }
+  .sw .sw-choice { padding: 7px 10px; }
+
+  .sw-wboard-name { font-size: 14px; }
+  .sw-wboard-title { gap: 6px; padding: 4px 8px 4px 5px; }
+  .sw-wboard-stages { gap: 5px; padding: 6px; }
+  .sw-wstage { min-height: 64px; }
+
+  .sw .sw-opp { padding: 6px 8px 8px; gap: 6px; }
+  .sw .sw-opp header { flex-wrap: wrap; justify-content: flex-start; row-gap: 3px; padding: 2px 2px 6px; }
+  .sw .sw-opp-row { gap: 8px; }
+  .sw-wmini { width: 120px; }
+
+  .sw .sw-table th, .sw .sw-table td { padding: 5px 4px; font-size: 12px; }
+  .sw .sw-table th:first-child, .sw .sw-table td:first-child { padding-left: 8px; }
+  .sw .sw-final-table td:last-child { font-size: 14px; }
+  /* City and total stay put while the score columns scroll between them.
+   * The wrapper clips the corners, so the table mustn't be a scroll box. */
+  .sw .sw-table-scroll .sw-table { overflow: visible; }
+  .sw .sw-final-table th:first-child,
+  .sw .sw-final-table td:first-child,
+  .sw .sw-final-table th:last-child,
+  .sw .sw-final-table td:last-child { position: sticky; z-index: 1; background: #2a1a0b; }
+  .sw .sw-final-table th:first-child,
+  .sw .sw-final-table td:first-child { left: 0; }
+  .sw .sw-final-table th:last-child,
+  .sw .sw-final-table td:last-child { right: 0; padding: 5px 8px; }
+  .sw .sw-final-table tr.sw-winner td:first-child,
+  .sw .sw-final-table tr.sw-winner td:last-child { background: #43331a; }
+  .sw .sw-gameover-title { gap: 10px; }
+  .sw .sw-gameover-title h2 { font-size: 22px; }
+
+  .sw-lobby .sw-expansion-row { flex-wrap: wrap; gap: 4px 10px; margin-bottom: 10px; }
+  .sw-lobby .sw-expansion-row select { min-width: 0; }
+  .sw-lobby .sw-expansion-desc { flex-basis: 100%; padding-left: 26px; }
+  .sw-lobby .sw-preset-name { width: 76px; }
+  /* The wonder preview drops under its select rather than squeezing it. */
+  .sw-lobby .sw-preset-select { flex: 1 1 160px; }
+  .sw-lobby .sw-expansion-row > .sw-wmini { margin-left: 86px; }
+}
+
+/* ---------- expansions: board power, table panels, tiles, projects ---------- */
+
+.sw-wboard-power {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  background: rgba(0, 0, 0, 0.28);
+  border-top: 1px solid rgba(255, 214, 150, 0.25);
+}
+
+.sw .sw-table-panels { display: flex; gap: 10px; flex-wrap: wrap; margin: 0 0 10px; }
+.sw .sw-tower,
+.sw .sw-project {
+  flex: 1 1 320px;
+  display: flex;
+  gap: 10px;
+  padding: 8px;
+  font-size: 12.5px;
+}
+.sw .sw-tower-art { flex: 0 0 96px; height: 64px; border-radius: 6px; overflow: hidden; border: 1px solid var(--panel-edge); }
+.sw .sw-tower-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.sw .sw-tower-body h4 { margin: 0; display: flex; align-items: center; gap: 6px; font-size: 13.5px; }
+.sw .sw-tower-spaces { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 4px; }
+.sw .sw-tower-space {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: 1px dashed rgba(255, 214, 150, 0.3);
+  font-size: 11.5px;
+  line-height: 1.25;
+}
+.sw .sw-tower-space.on { border-style: solid; background: rgba(227, 176, 110, 0.14); }
+.sw .sw-tower-space.next { box-shadow: inset 0 0 0 1px rgba(255, 214, 150, 0.55); }
+
+.sw .sw-tile-choices { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.sw .sw-tile-choice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 280px;
+  padding: 6px 8px;
+  text-align: left;
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--parchment);
+  border: 1px solid rgba(255, 214, 150, 0.3);
+}
+.sw .sw-tile-choice.on { background: var(--parchment); color: var(--ink); border-color: var(--gold); }
+
+.sw .sw-join { margin-top: 6px; gap: 6px; cursor: pointer; }
+.sw .sw-debt input { margin: 0 4px; }
+
+.sw-lobby .sw-expansion-block { flex-wrap: wrap; align-items: flex-start; }
+.sw-lobby .sw-expansion-block > .sw-expansion-desc { flex: 1 1 260px; }
+.sw-lobby .sw-expansion-block > p { flex-basis: 100%; }

@@ -1,5 +1,5 @@
-// Air, Land & Sea — hand-drawn SVG art: one unit illustration per base card, a
-// scene per Spies, Lies & Supplies theater, theater emblems and banners, the
+// Air, Land & Sea — hand-drawn SVG art: one illustration per card (all 36 —
+// the base game and Spies, Lies & Supplies), theater emblems and banners, the
 // Instant / Ongoing glyphs, the card back and the board tokens. Flat fills and
 // outlines only (no <defs>, ids, gradients or clip paths), so any number of
 // cards can share a page without clashes.
@@ -34,7 +34,6 @@ const NAVY_GRAY = '#7c8b99';
 const BOOT = '#93392b';
 const SEA = '#3c7ca4';
 const SEA_DARK = '#2b5e80';
-const SEA_DEEP = '#234c69';
 const FOAM = '#e8f4fa';
 const FIRE = '#f08a24';
 const FIRE_HI = '#ffd34d';
@@ -44,14 +43,16 @@ const ROUNDEL = '#2b4c8c';
 const LEAF = '#5f7c3a';
 const WOOD = '#9a6a3a';
 
-/** Theater colours: `main` for bands and numerals, `dark` for silhouettes, `light` for skies. */
+/** Theater colours, as printed: Air gray, Land green, Sea blue, Intelligence
+ *  charcoal, Diplomacy purple, Economics brick. `main` for bands and numerals,
+ *  `dark` for silhouettes, `light` for skies. */
 export const THEATER_TINT: Record<AlsTheaterId, { main: string; dark: string; light: string }> = {
-  air: { main: '#4f9fd1', dark: '#2c6a95', light: '#c6e5f5' },
-  land: { main: '#c48a3a', dark: '#875a1d', light: '#f2dfb2' },
-  sea: { main: '#2f6f99', dark: '#1d4a69', light: '#cfe7f1' },
-  intel: { main: '#7d5cb8', dark: '#4f3880', light: '#d9cdef' },
-  diplo: { main: '#c4614a', dark: '#8a3a28', light: '#f2d6c6' },
-  econ: { main: '#4a9a68', dark: '#2c6644', light: '#d3ead9' },
+  air: { main: '#7d8b97', dark: '#4d5a66', light: '#dfe5ea' },
+  land: { main: '#5f8f3e', dark: '#3d6224', light: '#dcead0' },
+  sea: { main: '#2f7db3', dark: '#1d557c', light: '#d0e6f3' },
+  intel: { main: '#4d525b', dark: '#2a2e35', light: '#d8dade' },
+  diplo: { main: '#7b4fa6', dark: '#523173', light: '#e4d8f0' },
+  econ: { main: '#a5483a', dark: '#702e24', light: '#f1d9d2' },
 };
 
 /** Outline shared by every shape. */
@@ -69,45 +70,23 @@ const place = (x: number, y: number, s = 1, r = 0) =>
 // Entry points
 
 /** The illustration for a card, in the 120 × 72 box. */
-export function CardArt({ card }: { card: Pick<AlsCardTemplate, 'ability' | 'theater' | 'strength'> }): JSX.Element {
+export function CardArt({ card }: { card: Pick<AlsCardTemplate, 'theater' | 'strength'> }): JSX.Element {
   return (
     <svg viewBox="0 0 120 72" width="100%" height="100%" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
-      {scene(card)}
+      {SCENES[card.theater][card.strength - 1]?.() ?? null}
     </svg>
   );
 }
 
-function scene(card: Pick<AlsCardTemplate, 'ability' | 'theater' | 'strength'>): JSX.Element {
-  switch (card.ability) {
-    case 'support': return <SupportArt />;
-    case 'airDrop': return <AirDropArt />;
-    case 'maneuver': return <ManeuverArt />;
-    case 'aerodrome': return <AerodromeArt />;
-    case 'containment': return <ContainmentArt />;
-    case 'heavyBombers': return <HeavyBombersArt />;
-    case 'reinforce': return <ReinforceArt />;
-    case 'ambush': return <AmbushArt />;
-    case 'coverFire': return <CoverFireArt />;
-    case 'disrupt': return <DisruptArt />;
-    case 'escalation': return <EscalationArt />;
-    case 'heavyTanks': return <HeavyTanksArt />;
-    case 'transport': return <TransportArt />;
-    case 'redeploy': return <RedeployArt />;
-    case 'blockade': return <BlockadeArt />;
-    case 'transportSea': return <InvestigationArt />;
-    case 'coverFireSea': return <SalvageArt />;
-    case 'superBattleship': return <SuperBattleshipArt />;
-    default: break;
-  }
-  switch (card.theater) {
-    case 'intel': return <IntelArt strength={card.strength} />;
-    case 'diplo': return <DiploArt strength={card.strength} />;
-    case 'econ': return <EconArt strength={card.strength} />;
-    case 'air': return <HeavyBombersArt />;
-    case 'land': return <HeavyTanksArt />;
-    case 'sea': return <SuperBattleshipArt />;
-  }
-}
+/** One scene per card: theater × strength 1..6. */
+const SCENES: Record<AlsTheaterId, Array<() => JSX.Element>> = {
+  air: [SupportArt, AirDropArt, ManeuverArt, AerodromeArt, ContainmentArt, HeavyBombersArt],
+  land: [ReinforceArt, AmbushArt, LandManeuverArt, CoverFireArt, DisruptArt, HeavyTanksArt],
+  sea: [TransportArt, SeaEscalationArt, SeaManeuverArt, RedeployArt, BlockadeArt, SuperBattleshipArt],
+  intel: [InciteArt, SpyNetworkArt, PuppetArt, NeutralizeArt, SurveilArt, CovertOpsArt],
+  diplo: [RelinquishArt, EnvoyArt, MapTableArt, LeverageArt, GiveAndTakeArt, GrandBetrayalArt],
+  econ: [RetrofitArt, SupplyLinesArt, ScalesArt, RequisitionArt, ArmsRaceArt, ProductionSurgeArt],
+};
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -685,27 +664,6 @@ function Rocket({ x, y, r }: { x: number; y: number; r: number }) {
   );
 }
 
-function EscalationArt() {
-  return (
-    <g>
-      <LandSky horizon={56} />
-      <path d="M44 38 C 60 30 70 26 76 22" {...line('#efe9dc', 2.4)} />
-      <path d="M44 38 C 64 28 82 16 96 10" {...line('#efe9dc', 2)} />
-      <Puff x={50} y={36} s={0.9} />
-      <Puff x={40} y={42} s={1.1} fill="#ddd7cb" />
-      <Rocket x={78} y={21} r={-28} />
-      <Rocket x={98} y={9} r={-30} />
-      <Rocket x={112} y={30} r={-18} />
-      <g transform={place(40, 50)}>
-        <path d="M-24 -2 L4 -16 L8 -12 L-20 2 Z" fill={OD_DARK} {...LINE} />
-        <path d="M-22 -5 L5 -18 M-22 -1 L6 -14" {...line(STEEL, 0.9)} />
-        <path d="M-12 -2 L-12 -6 M-2 -2 L-2 -10" {...line(INK, 1.4)} />
-      </g>
-      <Truck x={40} y={50} s={1} cargo="rails" />
-    </g>
-  );
-}
-
 function HeavyTanksArt() {
   return (
     <g>
@@ -795,52 +753,56 @@ function BlockadeArt() {
   );
 }
 
-function InvestigationArt() {
+/** Maneuver (Land): tanks swing round a hill to take the flank. */
+function LandManeuverArt() {
   return (
     <g>
-      <SeaSky waterline={30} />
-      <rect x={-2} y={54} width={124} height={20} fill={SEA_DARK} />
-      <rect x={-2} y={64} width={124} height={10} fill={SEA_DEEP} />
-      {[10, 18, 26].map((rr) => (
-        <path key={rr} d={`M${54 - rr} ${34} A ${rr} ${rr * 0.75} 0 0 0 ${54 + rr} 34`} fill="none" stroke={FOAM} strokeWidth={1} strokeDasharray="3 2.4" opacity={0.85} />
-      ))}
-      <g transform={place(92, 60, 0.42)}>
-        <path d="M-44 2 C-44 -2 -34 -3.5 -20 -3.5 L32 -3.5 C42 -3.5 48 -0.5 48 2 C48 5 42 7.5 32 7.5 L-20 7.5 C-34 7.5 -44 6 -44 2 Z" fill="#18394f" />
-        <path d="M-8 -3 L-6 -12 L8 -12 L11 -3 Z" fill="#18394f" />
-      </g>
-      <circle cx={92} cy={58} r={6} {...line(FIRE_HI, 1)} />
-      <circle cx={92} cy={58} r={1.4} fill={FIRE_HI} />
-      <Destroyer x={56} y={30} s={0.88} />
-      <Waves y={30} color={FOAM} step={9} amp={1} x0={-6} x1={20} />
+      <LandSky horizon={58} />
+      <path d="M30 58 C 36 36 54 28 66 30 C 80 32 88 44 94 58 Z" fill="#b69a5e" {...LINE} />
+      <Bush x={56} y={34} s={0.8} />
+      <Bush x={74} y={40} s={0.7} fill="#6c8a42" />
+      <Tank x={20} y={52} s={0.42} />
+      <Inked d="M30 48 C 40 66 78 70 96 56 C 102 50 104 44 104 38" color={WHITE} width={2.2} />
+      <path d="M100 41 L104 36 L108 41" {...line(INK, 3.4)} />
+      <path d="M100 41 L104 36 L108 41" {...line(WHITE, 1.8)} />
+      <Tank x={104} y={30} s={0.36} fill={OD_LIGHT} flip />
     </g>
   );
 }
 
-function SalvageArt() {
+/** Maneuver (Sea): a destroyer heels round in a hard turn. */
+function SeaManeuverArt() {
   return (
     <g>
-      <SeaSky waterline={46} />
-      <path d="M104 10 Q 106 8 108 10 Q 110 8 112 10" {...line(INK, 0.9)} />
-      <path d="M92 18 Q 93.5 16.5 95 18 Q 96.5 16.5 98 18" {...line(INK, 0.8)} />
-      <path d="M26 41 L26 14 M26 18 L80 10" {...line(INK, 2.6)} />
-      <path d="M26 41 L26 14 M26 18 L80 10" {...line(FIRE, 1.4)} />
-      <path d="M26 30 L80 10" {...line(INK, 0.6)} />
-      <path d="M80 10 L80 34" {...line(INK, 0.7)} />
-      <path d="M78 34 C 78 36.5 82 36.5 82 34" {...line(INK, 1)} />
-      <path d="M80 35.5 L74 39 M80 35.5 L86 39" {...line(INK, 0.6)} />
-      <Crate x={72} y={38} w={16} h={11} fill="#b49c62" />
-      <path d="M74 50 L74 53 M80 50 L80 54 M86 50 L86 52.5" {...line(FOAM, 1)} />
-      <ellipse cx={80} cy={53} rx={11} ry={2} {...line(FOAM, 1)} />
-      <ellipse cx={80} cy={53} rx={17} ry={3.2} {...line('#9cc6de', 0.9)} />
-      <g transform={place(30, 46)}>
-        <path d="M-30 -5 L24 -5 L31 -9 L28 2 L-28 2 Z" fill="#a7543d" {...LINE} />
-        <path d="M-29 0 L29 0 L28 2 L-28 2 Z" fill={INK} opacity={0.4} />
-        <path d="M6 -5 L6 -13 L18 -13 L19 -5 Z" fill={WHITE} {...LINE} />
-        <rect x={8} y={-11.5} width={9} height={2.4} fill={GLASS} {...THIN} />
-        <path d="M10 -13 L10 -18 L13 -18 L13 -13 Z" fill={INK} />
+      <SeaSky waterline={34} />
+      <path d="M-2 66 C 20 74 70 72 86 54 C 96 44 92 36 82 36" {...line(FOAM, 4.4)} />
+      <path d="M-2 66 C 20 74 70 72 86 54 C 96 44 92 36 82 36" {...line('#9cc6de', 1.6)} />
+      <g transform="rotate(-8 64 36)">
+        <Destroyer x={64} y={36} s={0.82} />
       </g>
-      <Waves y={52} color="#7fb2d1" step={12} amp={1.2} x0={-6} x1={64} />
-      <Waves y={62} color={FOAM} step={10} amp={1} />
+      <Waves y={34} color={FOAM} step={9} amp={1} x0={-6} x1={30} />
+      <Waves y={48} color="#7fb2d1" step={12} amp={1.2} x0={-6} x1={50} />
+    </g>
+  );
+}
+
+/** Escalation (Sea): a cruiser looses rocket salvo after salvo. */
+function SeaEscalationArt() {
+  return (
+    <g>
+      <SeaSky waterline={50} />
+      <path d="M44 38 C 58 26 74 18 88 14" {...line('#efe9dc', 2.2)} />
+      <path d="M48 38 C 66 30 84 30 100 34" {...line('#efe9dc', 1.8)} />
+      <path d="M40 38 C 48 22 60 10 70 4" {...line('#efe9dc', 2)} />
+      <Rocket x={90} y={13} r={-14} />
+      <Rocket x={102} y={35} r={14} />
+      <Rocket x={71} y={4} r={-38} />
+      <Puff x={44} y={38} s={1} />
+      <Puff x={36} y={40} s={0.8} fill="#ddd7cb" />
+      <Destroyer x={40} y={50} s={0.86} />
+      <path d="M100 50 L100 40 M104 50 L104 44 M96 50 L96 45" {...line(FOAM, 1.6)} />
+      <Waves y={54} color={FOAM} step={9} amp={1.1} />
+      <Waves y={64} color="#7fb2d1" step={12} amp={1.2} />
     </g>
   );
 }
@@ -859,64 +821,517 @@ function SuperBattleshipArt() {
 }
 
 // ---------------------------------------------------------------------------
-// Spies, Lies & Supplies scenes (one per theater; details vary with strength)
+// Spies, Lies & Supplies scenes
 
-function IntelArt({ strength }: { strength: number }) {
-  const lit = (i: number) => ((i * 7 + strength * 3) % 5) < 2;
-  const windows: ReactNode[] = [];
-  const blocks: [number, number, number][] = [[62, 34, 16], [80, 24, 14], [96, 40, 12], [108, 30, 14], [-2, 44, 14]];
-  blocks.forEach(([bx, by, bw], bi) => {
-    for (let wy = by + 4; wy < 68; wy += 6) {
-      for (let wx = bx + 3; wx < bx + bw - 2; wx += 4.5) {
-        const i = bi * 31 + wy * 3 + Math.round(wx);
-        windows.push(<rect key={`${bi}-${wx}-${wy}`} x={wx} y={wy} width={2.2} height={2.8} fill={lit(i) ? '#ffd76e' : '#2b3352'} />);
-      }
-    }
-  });
+/** A standing figure in coat and hat, feet at (x, y), about 30 tall. */
+function Figure({ x, y, s = 1, coat = '#5d5246', hat = '#2e281e', skin = '#d9b896', flip = false }: {
+  x: number; y: number; s?: number; coat?: string; hat?: string; skin?: string; flip?: boolean;
+}) {
+  return (
+    <g transform={`${place(x, y, s)}${flip ? ' scale(-1 1)' : ''}`}>
+      <path d="M-5.5 0 L-4.4 -17 C-4 -20.5 4 -20.5 4.4 -17 L5.5 0 Z" fill={coat} {...LINE} />
+      <path d="M-1.4 -19.6 L0 -14 L1.4 -19.6" {...line(INK, 0.7)} />
+      <circle cx={0} cy={-23.2} r={3.3} fill={skin} {...THIN} />
+      <ellipse cx={0} cy={-25.4} rx={5.8} ry={1.3} fill={hat} {...THIN} />
+      <path d="M-3.4 -25.4 C-3.4 -30 3.4 -30 3.4 -25.4 Z" fill={hat} {...THIN} />
+    </g>
+  );
+}
+
+const NIGHT = '#283152';
+const NIGHT_DARK = '#20284a';
+const SILHOUETTE = '#161b30';
+const LAMPLIGHT = '#ffe9a0';
+const MARBLE = '#efe6d6';
+const PAPER = '#f4efe2';
+const MANILA = '#d9b86a';
+const BRICK = '#a5483a';
+
+function NightSky({ moon = true }: { moon?: boolean }) {
   return (
     <g>
-      <rect width={120} height={72} fill="#283152" />
-      <rect width={120} height={22} fill="#20284a" />
-      <circle cx={100} cy={13} r={7} fill="#f3e9c6" />
-      <circle cx={103} cy={11} r={6} fill="#20284a" />
-      {[[12, 8], [34, 14], [56, 6], [72, 16], [114, 26], [44, 24]].map(([sx, sy]) => <circle key={`${sx}-${sy}`} cx={sx} cy={sy} r={0.7} fill="#e8e3c8" />)}
-      {blocks.map(([bx, by, bw]) => <rect key={bx} x={bx} y={by} width={bw} height={74 - by} fill="#161b30" />)}
-      {windows}
-      <polygon points="31,27 37,27 52,74 14,74" fill="#ffe9a0" opacity={0.22} />
-      <path d="M34 74 L34 26" {...line('#11141f', 2)} />
-      <path d="M30 27 L38 27 L36 23 L32 23 Z" fill="#11141f" />
-      <circle cx={34} cy={28} r={1.6} fill="#ffe9a0" />
-      <g transform={place(46, 0)}>
-        <path d="M-6 74 L-4.4 47 C-4 43 4 43 4.4 47 L6 74 Z" fill="#8a7a5a" {...LINE} />
-        <path d="M-4 46 L0 53 L4 46" {...line(INK, 0.8)} />
-        <path d="M-3.6 55 L3.6 55" {...line('#5d5036', 1.6)} />
-        <circle cx={0} cy={40} r={3.4} fill="#d9b896" {...THIN} />
-        <ellipse cx={0} cy={37.6} rx={6.2} ry={1.5} fill="#2e281e" {...THIN} />
-        <path d="M-3.6 37.6 C-3.6 33 3.6 33 3.6 37.6 Z" fill="#2e281e" {...THIN} />
-        {strength % 2 === 0 ? (
-          <rect x={5} y={57} width={8} height={6} rx={1} fill="#6b4a2a" {...THIN} />
-        ) : (
-          <g>
-            <rect x={-2} y={45.5} width={8} height={4.6} rx={1} fill="#2b2b2b" {...THIN} />
-            <circle cx={2} cy={47.8} r={1.5} fill={GLASS} />
-          </g>
-        )}
+      <rect width={120} height={72} fill={NIGHT} />
+      <rect width={120} height={22} fill={NIGHT_DARK} />
+      {[[12, 8], [34, 14], [56, 6], [72, 16], [114, 26], [44, 22], [86, 4]].map(([sx, sy]) => (
+        <circle key={`${sx}-${sy}`} cx={sx} cy={sy} r={0.7} fill="#e8e3c8" />
+      ))}
+      {moon && (
+        <g>
+          <circle cx={100} cy={13} r={7} fill="#f3e9c6" />
+          <circle cx={103} cy={11} r={6} fill={NIGHT_DARK} />
+        </g>
+      )}
+    </g>
+  );
+}
+
+/** Lit and dark windows on a block, deterministic. */
+function Windows({ x, y, w, h, seed }: { x: number; y: number; w: number; h: number; seed: number }) {
+  const out: ReactNode[] = [];
+  for (let wy = y + 3; wy < y + h - 3; wy += 6) {
+    for (let wx = x + 3; wx < x + w - 2; wx += 4.5) {
+      const lit = ((Math.round(wx) * 7 + wy * 3 + seed) % 5) < 2;
+      out.push(<rect key={`${wx}-${wy}`} x={wx} y={wy} width={2.2} height={2.8} fill={lit ? '#ffd76e' : '#2b3352'} />);
+    }
+  }
+  return <g>{out}</g>;
+}
+
+// ----- Intelligence
+
+function InciteArt() {
+  return (
+    <g>
+      <NightSky moon={false} />
+      <path d="M-2 62 L-2 28 L16 28 L16 20 L32 20 L32 62 Z" fill={SILHOUETTE} />
+      <path d="M88 62 L88 24 L104 24 L104 32 L122 32 L122 62 Z" fill={SILHOUETTE} />
+      <Windows x={0} y={30} w={30} h={32} seed={3} />
+      <Windows x={90} y={34} w={30} h={28} seed={8} />
+      <polygon points="44,74 76,74 66,14 54,14" fill={LAMPLIGHT} opacity={0.16} />
+      <rect x={-2} y={62} width={124} height={12} fill="#1b2038" />
+      <Crate x={50} y={48} w={20} h={12} fill="#8a6a3a" />
+      <Figure x={60} y={48} s={0.95} coat="#7a2f2f" />
+      <path d="M62.6 26.2 L71 22.4 L71.4 31.2 Z" fill={STEEL_LIGHT} {...THIN} />
+      <path d="M57 30 L54 21 M54 21 L52.6 18.4" {...line(INK, 2.4)} />
+      <path d="M57 30 L54 21" {...line('#7a2f2f', 1.4)} />
+      <circle cx={53} cy={18.6} r={1.6} fill="#d9b896" {...THIN} />
+      <path d="M75 22 Q 79 27 75 32 M79.5 19 Q 86 27 79.5 35" {...line(LAMPLIGHT, 1.2)} />
+      {[6, 18, 30, 90, 102, 114, 42, 78].map((cx, i) => (
+        <g key={cx}>
+          <path d={`M${cx - 6.5} 74 C${cx - 6.5} 65 ${cx + 6.5} 65 ${cx + 6.5} 74 Z`} fill="#0f1322" />
+          <circle cx={cx} cy={63} r={3.6} fill="#0f1322" />
+          {i % 3 === 0 && <path d={`M${cx + 4} 66 L${cx + 6} 55`} {...line('#0f1322', 2.4)} />}
+          {i % 3 === 0 && <circle cx={cx + 6.2} cy={54} r={1.8} fill="#0f1322" />}
+        </g>
+      ))}
+    </g>
+  );
+}
+
+function Photo({ x, y, r = 0 }: { x: number; y: number; r?: number }) {
+  return (
+    <g transform={place(x, y, 1, r)}>
+      <rect x={-8} y={-6.5} width={16} height={13} fill={PAPER} {...THIN} />
+      <rect x={-6.4} y={-5} width={12.8} height={8.6} fill="#7d8796" />
+      <circle cx={0} cy={-2.4} r={2} fill="#2a2e35" />
+      <path d="M-4 3.6 C-4 0 4 0 4 3.6 Z" fill="#2a2e35" />
+    </g>
+  );
+}
+
+function SpyNetworkArt() {
+  const pins: [number, number][] = [[22, 15], [60, 12], [98, 18], [36, 46], [80, 50], [104, 52], [58, 34]];
+  const links: [number, number][] = [[0, 6], [1, 6], [2, 6], [3, 6], [4, 6], [2, 5], [0, 3], [4, 5], [1, 2]];
+  return (
+    <g>
+      <rect width={120} height={72} fill="#3a3f4a" />
+      <rect x={4} y={3} width={112} height={66} rx={2} fill="#b98a55" {...LINE} />
+      {Array.from({ length: 36 }, (_, i) => (
+        <circle key={i} cx={8 + ((i * 37) % 106)} cy={6 + ((i * 23) % 60)} r={0.8} fill="#a3773f" />
+      ))}
+      <rect x={44} y={24} width={28} height={20} fill="#e6dcc0" {...THIN} transform="rotate(-4 58 34)" />
+      <path d="M48 30 C 54 26 60 36 68 30 M50 38 L66 38" {...line('#9a8f78', 0.9)} transform="rotate(-4 58 34)" />
+      {pins.slice(0, 6).map(([px, py], i) => <Photo key={i} x={px} y={py + 4} r={((i * 7) % 11) - 5} />)}
+      {links.map(([a, b]) => (
+        <line key={`${a}-${b}`} x1={pins[a][0]} y1={pins[a][1]} x2={pins[b][0]} y2={pins[b][1]} {...line('#c8452f', 0.9)} />
+      ))}
+      {pins.map(([px, py], i) => <circle key={i} cx={px} cy={py} r={1.6} fill="#e0402e" {...THIN} />)}
+    </g>
+  );
+}
+
+/** Manipulate (Intelligence): a soldier marionette on strings. */
+function PuppetArt() {
+  return (
+    <g>
+      <rect width={120} height={72} fill="#2a2e35" />
+      <path d="M-2 0 L18 0 C 14 24 18 48 10 74 L-2 74 Z" fill="#6e2a2a" {...LINE} />
+      <path d="M122 0 L102 0 C 106 24 102 48 110 74 L122 74 Z" fill="#6e2a2a" {...LINE} />
+      <polygon points="60,0 34,66 86,66" fill={LAMPLIGHT} opacity={0.18} />
+      <rect x={-2} y={64} width={124} height={10} fill="#5a4030" {...LINE} />
+      <path d="M38 6 L82 6 M60 1 L60 13" {...line(INK, 3.4)} />
+      <path d="M38 6 L82 6 M60 1 L60 13" {...line(WOOD, 1.8)} />
+      <path d="M38 6 L49 37 M82 6 L71 37 M60 13 L60 24 M45 6 L54 61 M75 6 L66 61" {...line('#e6e1d2', 0.6)} />
+      <g transform={place(60, 0)}>
+        <path d="M-6 31 L-11 37 M6 31 L11 37" {...line(OD_DARK, 2.6)} />
+        <path d="M-3 46 L-6 61 M3 46 L6 61" {...line(OD_DARK, 2.8)} />
+        <rect x={-6} y={29} width={12} height={18} rx={2} fill={OD} {...LINE} />
+        <circle cx={0} cy={26} r={3.6} fill="#d9b896" {...THIN} />
+        <Helmet x={0} y={25} s={0.72} />
+        <path d="M-4 35 L4 35 M-4 39 L4 39" {...line(OD_DARK, 0.7)} />
       </g>
     </g>
   );
 }
 
-function Flag({ x, y, colors }: { x: number; y: number; colors: [string, string] }) {
+function NeutralizeArt() {
   return (
     <g>
-      <path d={`M${x} ${y + 40} L${x} ${y}`} {...line(INK, 1.2)} />
-      <path d={`M${x} ${y + 1} C ${x + 5} ${y - 1} ${x + 9} ${y + 3} ${x + 14} ${y + 1} L${x + 14} ${y + 10} C ${x + 9} ${y + 12} ${x + 5} ${y + 8} ${x} ${y + 10} Z`} fill={colors[0]} {...THIN} />
-      <path d={`M${x} ${y + 4} C ${x + 5} ${y + 2} ${x + 9} ${y + 6} ${x + 14} ${y + 4} L${x + 14} ${y + 7} C ${x + 9} ${y + 9} ${x + 5} ${y + 5} ${x} ${y + 7} Z`} fill={colors[1]} />
-      <circle cx={x} cy={y - 0.8} r={1.2} fill={FIRE_HI} {...THIN} />
+      <rect width={120} height={72} fill="#11141f" />
+      <circle cx={60} cy={36} r={31} fill="#cfd59f" />
+      <rect x={36} y={12} width={48} height={42} fill="#b9c08a" />
+      <rect x={40} y={16} width={40} height={30} fill="#9da874" stroke="#7f8a5c" strokeWidth={1} />
+      <path d="M60 16 L60 46 M40 31 L80 31" {...line('#7f8a5c', 1)} />
+      <Figure x={60} y={64} s={1.25} coat="#3e3a34" hat="#1f1b16" />
+      <rect x={63} y={43} width={7} height={8} rx={1} fill={FIRE_HI} {...THIN} />
+      <circle cx={60} cy={36} r={35} {...line('#11141f', 9)} />
+      <circle cx={60} cy={36} r={30.5} {...line(INK, 1.8)} />
+      <path d="M60 6 L60 28 M60 44 L60 66 M30 36 L52 36 M68 36 L90 36" {...line(INK, 1.1)} />
+      {[-12, -6, 6, 12].map((d) => <path key={d} d={`M${60 + d} 34.5 L${60 + d} 37.5 M58.5 ${36 + d} L61.5 ${36 + d}`} {...line(INK, 0.8)} />)}
+      <circle cx={60} cy={36} r={1} fill="#c8452f" />
     </g>
   );
 }
 
+function SurveilArt() {
+  return (
+    <g>
+      <rect width={120} height={72} fill="#2b3040" />
+      <rect x={84} y={6} width={30} height={22} fill="#3a4258" {...LINE} />
+      <path d="M99 6 L99 28 M84 17 L114 17" {...line(INK, 1)} />
+      <rect x={86} y={8} width={11} height={7.5} fill={LAMPLIGHT} opacity={0.5} />
+      <rect x={-2} y={52} width={124} height={22} fill="#6b4a2a" {...LINE} />
+      <path d="M-2 56 L122 56" {...line('#5a3d22', 1)} />
+      <path d="M10 52 L18 30 L30 26" {...line(INK, 1.6)} />
+      <path d="M26 22 L38 26 L33 31 Z" fill={STEEL_DARK} {...THIN} />
+      <polygon points="35,29 22,52 58,52" fill={LAMPLIGHT} opacity={0.2} />
+      <rect x={34} y={34} width={46} height={18} rx={2} fill={STEEL_DARK} {...LINE} />
+      <rect x={40} y={45} width={34} height={3} fill={INK} opacity={0.5} />
+      {[46, 68].map((rx) => (
+        <g key={rx}>
+          <circle cx={rx} cy={31} r={8.5} fill="#2b2b2b" {...LINE} />
+          <circle cx={rx} cy={31} r={5} fill="#4a4a4a" />
+          <circle cx={rx} cy={31} r={1.6} fill={STEEL_LIGHT} />
+          <path d={`M${rx - 4} ${31} L${rx + 4} ${31} M${rx} ${27} L${rx} ${35}`} {...line(STEEL, 0.7)} />
+        </g>
+      ))}
+      <path d="M46 39.5 L68 39.5" {...line('#8b5a2b', 1)} />
+      <path d="M86 50 C 86 38 106 38 106 50" {...line(INK, 2.2)} />
+      <rect x={83} y={45} width={6} height={8} rx={2} fill="#3b3b3b" {...THIN} />
+      <rect x={103} y={45} width={6} height={8} rx={2} fill="#3b3b3b" {...THIN} />
+      <path d="M112 36 Q 116 40 112 44 M115 32 Q 121 40 115 48" {...line(LAMPLIGHT, 1)} />
+    </g>
+  );
+}
+
+function CovertOpsArt() {
+  return (
+    <g>
+      <rect width={120} height={72} fill="#3a3326" />
+      <path d="M-2 20 L122 12 M-2 44 L122 38" {...line('#332c20', 1)} />
+      <g transform="rotate(-8 56 38)">
+        <rect x={20} y={14} width={70} height={46} rx={2} fill={MANILA} {...LINE} />
+        <path d="M20 14 L20 9 L42 9 L46 14 Z" fill={MANILA} {...LINE} />
+        <rect x={28} y={18} width={30} height={22} fill="#7d8796" {...THIN} />
+        <rect x={24} y={30} width={62} height={10} fill="#c8452f" {...THIN} />
+        <text x={55} y={37.6} textAnchor="middle" fontFamily={FONT} fontSize={7.4} fontWeight={900} letterSpacing={1.2} fill={WHITE}>TOP SECRET</text>
+        <path d="M30 46 L78 46 M30 50 L70 50 M30 54 L74 54" {...line('#9a7d3d', 0.9)} />
+      </g>
+      <g transform="translate(6 54)">
+        <rect x={0} y={0} width={24} height={15} rx={1.5} fill="#2b2b2b" {...LINE} />
+        <rect x={4} y={3} width={16} height={6} fill={STEEL_LIGHT} {...THIN} />
+        <circle cx={8} cy={6} r={1.8} fill="#2b2b2b" />
+        <circle cx={16} cy={6} r={1.8} fill="#2b2b2b" />
+      </g>
+      <path d="M86 58 L112 58 L113 54 L100 53 L98 50 L92 50 L91 53 L86 53 Z" fill="#22252b" {...LINE} />
+      <path d="M90 58 L88 68 L95 68 L96 58 Z" fill="#22252b" {...LINE} />
+    </g>
+  );
+}
+
+// ----- Diplomacy
+
+function RelinquishArt() {
+  return (
+    <g>
+      <rect width={120} height={72} fill="#ddd3c6" />
+      <rect width={120} height={20} fill="#e8e0d4" />
+      <Puff x={92} y={18} s={1.3} fill="#c5bcae" />
+      <Puff x={104} y={12} s={1} fill="#d0c8bb" />
+      <path d="M-2 50 C 30 44 80 46 122 50 L122 74 L-2 74 Z" fill="#9b8a6c" {...LINE} />
+      {[[8, 50], [20, 49], [32, 49], [44, 50], [14, 44], [26, 43], [38, 44]].map(([bx, by]) => (
+        <ellipse key={`${bx}-${by}`} cx={bx} cy={by} rx={6.6} ry={3.6} fill={KHAKI} {...THIN} />
+      ))}
+      <path d="M30 41 L30 4" {...line(INK, 1.6)} />
+      <path d="M30 5 C 37 3 43 8 52 5 L52 20 C 43 23 37 18 30 20 Z" fill="#fbf8ef" {...LINE} />
+      <path d="M36 9 C 40 8 44 11 48 9" {...line('#d8d2c2', 0.8)} />
+      <g transform="rotate(-12 82 60)">
+        <rect x={62} y={58} width={40} height={2.8} fill={WOOD} {...THIN} />
+        <rect x={94} y={57.4} width={14} height={2} fill={STEEL_DARK} {...THIN} />
+      </g>
+      <Helmet x={60} y={64} s={1} />
+    </g>
+  );
+}
+
+function EnvoyArt() {
+  return (
+    <g>
+      <rect width={120} height={72} fill="#e9dfee" />
+      <path d="M18 32 L60 18 L102 32 Z" fill={MARBLE} {...LINE} />
+      <circle cx={60} cy={27.5} r={2.6} fill={THEATER_TINT.diplo.main} {...THIN} />
+      <rect x={20} y={32} width={80} height={3} fill="#ddd2bd" {...THIN} />
+      {[24, 36, 48, 68, 80, 92].map((cx) => <rect key={cx} x={cx} y={35} width={4} height={20} fill="#f4eee2" {...THIN} />)}
+      <rect x={55} y={39} width={10} height={16} fill="#5a3f6e" {...THIN} />
+      <rect x={14} y={55} width={92} height={3} fill="#d4c8b0" {...THIN} />
+      <rect x={-2} y={58} width={124} height={16} fill="#8f8a94" {...LINE} />
+      <g transform="translate(60 64)">
+        <path d="M-30 4 L-30 -2 C-30 -4 -28 -5 -24 -5 L-14 -5 L-9 -12 L10 -12 L16 -5 L26 -5 C29 -5 31 -3 31 0 L31 4 Z" fill="#26252c" {...LINE} />
+        <path d="M-7.6 -10.6 L-3 -10.6 L-3 -5.6 L-11.4 -5.6 Z M-1 -10.6 L8.6 -10.6 L13 -5.6 L-1 -5.6 Z" fill={GLASS} {...THIN} />
+        {[-19, 20].map((wx) => (
+          <g key={wx}>
+            <circle cx={wx} cy={4} r={4.6} fill="#1a1a1e" {...THIN} />
+            <circle cx={wx} cy={4} r={1.8} fill={STEEL_LIGHT} />
+          </g>
+        ))}
+        {[-27, 28].map((fx) => (
+          <g key={fx}>
+            <path d={`M${fx} -5 L${fx} -13`} {...line(STEEL_LIGHT, 0.8)} />
+            <rect x={fx} y={-13} width={6} height={4} fill={THEATER_TINT.diplo.main} {...THIN} />
+            <rect x={fx} y={-11.6} width={6} height={1.2} fill={WHITE} />
+          </g>
+        ))}
+      </g>
+    </g>
+  );
+}
+
+/** Manipulate (Diplomacy): pieces pushed around the map table. */
+function MapTableArt() {
+  return (
+    <g>
+      <rect width={120} height={72} fill="#3b2f45" />
+      <path d="M8 10 L112 10 L120 72 L0 72 Z" fill="#7a5a3a" {...LINE} />
+      <path d="M14 14 L106 14 L112 66 L8 66 Z" fill="#e6dcbc" {...THIN} />
+      <path d="M22 22 C 34 16 46 24 44 34 C 42 44 26 46 22 38 Z M58 20 C 72 16 92 22 96 32 C 100 44 84 52 70 48 C 58 44 52 30 58 20 Z M30 52 C 38 50 48 54 46 60 C 40 64 30 62 30 52 Z" fill="#b8c49a" {...THIN} />
+      <path d="M44 34 C 52 36 56 40 64 44" fill="none" stroke="#7a6a4a" strokeWidth={0.8} strokeDasharray="2 2" />
+      {[[34, 30, '#c8452f'], [40, 56, '#c8452f'], [78, 34, ROUNDEL], [86, 44, ROUNDEL]].map(([px, py, c]) => (
+        <g key={`${px}-${py}`}>
+          <rect x={(px as number) - 3} y={(py as number) - 3} width={6} height={5} fill={c as string} {...THIN} />
+          <path d={`M${px} ${(py as number) - 3} L${px} ${(py as number) - 9}`} {...line(INK, 0.7)} />
+          <path d={`M${px} ${(py as number) - 9} L${(px as number) + 5} ${(py as number) - 7.5} L${px} ${(py as number) - 6} Z`} fill={c as string} />
+        </g>
+      ))}
+      <path d="M120 4 L72 40" {...line(INK, 3)} />
+      <path d="M120 4 L72 40" {...line(WOOD, 1.6)} />
+      <rect x={62} y={38} width={8} height={6} fill={ROUNDEL} {...THIN} transform="rotate(-36 66 41)" />
+      <Inked d="M60 44 C 54 48 50 46 46 42" color={FIRE_HI} width={1.4} />
+    </g>
+  );
+}
+
+function LeverageArt() {
+  return (
+    <g>
+      <rect width={120} height={72} fill="#e4d8f0" />
+      <rect y={60} width={120} height={14} fill="#8b7aa0" {...LINE} />
+      <rect x={10} y={30} width={30} height={22} fill="#9a9aa0" {...LINE} />
+      <path d="M10 40 L40 40 M24 30 L24 40 M18 40 L18 52 M32 40 L32 52" {...line('#7c7c84', 0.9)} />
+      <path d="M44 60 L52 46 L60 60 Z" fill={STEEL_DARK} {...LINE} />
+      <path d="M8 54 L112 22" {...line(INK, 4)} />
+      <path d="M8 54 L112 22" {...line(WOOD, 2.4)} />
+      <g transform="rotate(-17 104 18)">
+        <rect x={94} y={10} width={20} height={13} fill={PAPER} {...LINE} />
+        <path d="M94 10 L104 17 L114 10" {...line(INK, 0.8)} />
+        <circle cx={104} cy={18} r={3} fill="#a4262c" {...THIN} />
+      </g>
+      <Inked d="M104 4 L104 9 M101 6 L104 9 L107 6" color={FIRE_HI} width={1.4} />
+    </g>
+  );
+}
+
+function GiveAndTakeArt() {
+  return (
+    <g>
+      <rect width={120} height={72} fill="#dccfe6" />
+      <rect y={50} width={120} height={24} fill="#6b4f7d" {...LINE} />
+      <Crate x={6} y={36} w={20} h={15} fill="#b49c62" />
+      <rect x={92} y={40} width={22} height={11} fill={PAPER} {...THIN} transform="rotate(6 103 45)" />
+      <path d="M95 44 L110 45 M95 47 L106 48" {...line('#9a9080', 0.7)} transform="rotate(6 103 45)" />
+      <path d="M-4 22 L40 30 L44 38 L-4 36 Z" fill={KHAKI} {...LINE} />
+      <path d="M124 22 L80 30 L76 38 L124 36 Z" fill="#33405e" {...LINE} />
+      <path d="M38 28 L48 26 C 54 25 58 26 62 29 L70 33 C 72 35 70 38 67 37 L60 35 L54 38 L44 38 Z" fill="#d9b896" {...LINE} />
+      <path d="M82 28 L72 26 C 66 25 62 27 58 30 L54 34 C 53 37 56 38 58 37 L64 35 L68 38 L76 38 Z" fill="#c9a483" {...LINE} />
+      <path d="M58 30 L62 33 M61 29 L65 32" {...line(INK, 0.6)} />
+    </g>
+  );
+}
+
+function GrandBetrayalArt() {
+  return (
+    <g>
+      <rect width={120} height={72} fill="#2e2438" />
+      <rect x={38} y={6} width={44} height={36} fill="#5a3a2a" {...LINE} />
+      <rect x={41} y={9} width={38} height={30} fill={FIRE} />
+      <Burst x={60} y={30} r={14} fill={FIRE_HI} inner={0.6} points={9} outline={false} />
+      <Puff x={52} y={16} s={1.2} fill="#5a4a4a" />
+      <Puff x={68} y={13} s={1} fill="#6a5a5a" />
+      <path d="M60 9 L60 39 M41 24 L79 24" {...line('#5a3a2a', 2)} />
+      <rect x={-2} y={62} width={124} height={12} fill="#1e1826" />
+      <Figure x={40} y={66} s={1.25} coat="#3d3a52" hat="#1f1d2a" />
+      <Figure x={80} y={66} s={1.25} coat="#4e3a3a" hat="#2a1d1d" flip />
+      <path d="M44.5 46 L60 44 L75.5 46" {...line(INK, 3)} />
+      <circle cx={60} cy={44} r={2.2} fill="#d9b896" {...THIN} />
+      <path d="M86 46 L92 52" {...line(INK, 2.8)} />
+      <path d="M92 52 L104 44" {...line(STEEL_LIGHT, 1.6)} />
+      <path d="M90 50 L94 54" {...line(WOOD, 2)} />
+    </g>
+  );
+}
+
+// ----- Economics
+
+function RetrofitArt() {
+  return (
+    <g>
+      <rect width={120} height={72} fill="#e9dcd2" />
+      <path d="M0 0 L0 12 L20 2 L20 12 L40 2 L40 12 L60 2 L60 12 L80 2 L80 12 L100 2 L100 12 L120 2 L120 0 Z" fill="#8a7a70" />
+      <rect x={-2} y={12} width={124} height={5} fill={STEEL_DARK} {...LINE} />
+      <rect x={52} y={17} width={14} height={6} fill={FIRE_HI} {...LINE} />
+      <path d="M59 23 L59 34" {...line(INK, 0.9)} />
+      <path d="M55 34 C 55 38 63 38 63 34" {...line(INK, 1.4)} />
+      <g transform="translate(59 41)">
+        <rect x={-8} y={-5} width={16} height={9} rx={3} fill={OD} {...LINE} />
+        <rect x={6} y={-2.4} width={20} height={3} fill={OD_DARK} {...THIN} />
+        <Star x={-1} y={-0.6} r={2.6} />
+      </g>
+      <path d="M44 64 L44 54 L76 54 L82 64 Z" fill={OD} {...LINE} />
+      <rect x={34} y={62} width={56} height={9} rx={4.5} fill="#3c4321" {...LINE} />
+      {[42, 52, 62, 72, 82].map((wx) => <circle key={wx} cx={wx} cy={66.5} r={3.4} fill={OD_LIGHT} {...THIN} />)}
+      <path d="M30 48 L36 52 M32 44 L38 46 M88 46 L94 44 M90 50 L96 52" {...line(FIRE_HI, 1.2)} />
+      <rect x={4} y={40} width={16} height={24} fill="#b9aa9c" {...LINE} />
+      <rect x={7} y={44} width={10} height={6} fill={GLASS} {...THIN} />
+    </g>
+  );
+}
+
+function SupplyLinesArt() {
+  return (
+    <g>
+      <rect width={120} height={72} fill="#efe1d8" />
+      <rect width={120} height={22} fill="#f6ebe4" />
+      <path d="M-2 30 C 30 24 80 28 122 26 L122 74 L-2 74 Z" fill="#b9a27a" {...LINE} />
+      <path d="M50 30 C 56 36 30 42 36 50 C 42 58 92 58 84 74 L40 74 C 46 62 12 60 18 50 C 24 40 44 36 44 30 Z" fill="#8a7860" {...THIN} />
+      <path d="M47 32 C 50 38 30 42 30 50 C 30 58 72 60 64 74" fill="none" stroke={WHITE} strokeWidth={0.9} strokeDasharray="3 3" />
+      <Truck x={47} y={30} s={0.24} />
+      <Truck x={32} y={44} s={0.4} />
+      <Truck x={62} y={62} s={0.62} />
+      <Crate x={94} y={44} w={12} h={9} />
+      <Crate x={104} y={50} w={12} h={9} fill="#b49c62" />
+      <Crate x={98} y={36} w={11} h={8} fill="#b49c62" />
+      <Bush x={14} y={34} s={0.5} />
+      <Bush x={104} y={30} s={0.45} />
+    </g>
+  );
+}
+
+/** Manipulate (Economics): a thumb on the scales. */
+function ScalesArt() {
+  return (
+    <g>
+      <rect width={120} height={72} fill="#f1d9d2" />
+      <path d="M4 52 L20 40 L34 46 L50 26 L66 34 L82 14 L98 22 L116 10" {...line('#d6a89c', 1.6)} />
+      <rect x={-2} y={62} width={124} height={12} fill="#7a3a2e" {...LINE} />
+      <path d="M52 62 L68 62 L64 56 L56 56 Z" fill={STEEL_DARK} {...LINE} />
+      <path d="M60 56 L60 14" {...line(INK, 2)} />
+      <path d="M30 26 L90 12" {...line(INK, 2.4)} />
+      <circle cx={60} cy={19} r={2} fill={FIRE_HI} {...THIN} />
+      <path d="M30 26 L22 42 M30 26 L38 42 M90 12 L82 28 M90 12 L98 28" {...line(INK, 0.7)} />
+      <path d="M18 42 C 18 48 42 48 42 42 Z" fill={STEEL_LIGHT} {...LINE} />
+      <path d="M78 28 C 78 34 102 34 102 28 Z" fill={STEEL_LIGHT} {...LINE} />
+      {[[26, 40], [30, 37], [34, 40]].map(([cx, cy]) => <ellipse key={`${cx}-${cy}`} cx={cx} cy={cy} rx={4} ry={1.6} fill="#f2c230" {...THIN} />)}
+      <ellipse cx={90} cy={26.4} rx={4} ry={1.6} fill="#f2c230" {...THIN} />
+      <path d="M8 2 C 12 14 16 26 24 36 L28 34 C 22 24 20 14 16 2 Z" fill="#c9a483" {...LINE} />
+    </g>
+  );
+}
+
+function RequisitionArt() {
+  return (
+    <g>
+      <rect width={120} height={72} fill="#e8d2c8" />
+      <Crate x={70} y={40} w={18} h={14} />
+      <Crate x={88} y={40} w={18} h={14} fill="#b49c62" />
+      <Crate x={79} y={26} w={18} h={14} fill="#b49c62" />
+      <rect x={-2} y={54} width={124} height={20} fill="#7a4a3a" {...LINE} />
+      <g transform="rotate(-6 36 36)">
+        <rect x={16} y={8} width={38} height={54} rx={2} fill="#8a6a4a" {...LINE} />
+        <rect x={20} y={14} width={30} height={44} fill={PAPER} {...THIN} />
+        <rect x={28} y={5} width={14} height={6} rx={1} fill={STEEL} {...THIN} />
+        {[20, 27, 34, 41].map((ly) => (
+          <g key={ly}>
+            <rect x={23} y={ly} width={3.4} height={3.4} {...line(INK, 0.6)} />
+            <path d={`M29 ${ly + 1.8} L46 ${ly + 1.8}`} {...line('#9a9080', 0.7)} />
+          </g>
+        ))}
+        <path d="M23.6 21.6 L25 23 L27.6 19.4 M23.6 28.6 L25 30 L27.6 26.4" {...line('#2c6644', 0.9)} />
+        <rect x={30} y={45} width={16} height={9} rx={1} {...line(BRICK, 1.4)} transform="rotate(-10 38 50)" />
+      </g>
+      <g transform="translate(58 30)">
+        <rect x={-5} y={10} width={14} height={4} rx={1} fill={BRICK} {...THIN} />
+        <rect x={-1} y={0} width={6} height={10} fill={WOOD} {...THIN} />
+        <circle cx={2} cy={-2} r={4} fill={WOOD} {...THIN} />
+      </g>
+    </g>
+  );
+}
+
+function Missile({ x, y, band }: { x: number; y: number; band: string }) {
+  return (
+    <g transform={place(x, y)}>
+      <path d="M0 -26 C 3.6 -20 4 -14 4 -6 L4 8 L-4 8 L-4 -6 C-4 -14 -3.6 -20 0 -26 Z" fill={STEEL_LIGHT} {...LINE} />
+      <rect x={-4} y={-8} width={8} height={3} fill={band} />
+      <path d="M-4 2 L-9 10 L-4 8 Z M4 2 L9 10 L4 8 Z" fill={band} {...THIN} />
+      <polygon points="-3,8 3,8 0,17" fill={FIRE} />
+      <polygon points="-1.6,8 1.6,8 0,13" fill={FIRE_HI} />
+    </g>
+  );
+}
+
+function ArmsRaceArt() {
+  return (
+    <g>
+      <rect width={120} height={72} fill="#f3dcd0" />
+      <rect width={120} height={24} fill="#f8e8e0" />
+      <path d="M40 74 C 40 62 38 52 38 46 M80 74 C 80 64 82 56 82 50" {...line('#e9e3da', 7)} />
+      <Puff x={38} y={66} s={1.4} />
+      <Puff x={82} y={66} s={1.3} fill="#d7d2c8" />
+      <rect x={-2} y={64} width={124} height={10} fill="#8a5a4a" {...LINE} />
+      <Missile x={38} y={36} band="#c8452f" />
+      <Missile x={82} y={30} band={ROUNDEL} />
+      <Inked d="M58 30 L58 12 M54 16 L58 12 L62 16" color={FIRE_HI} width={1.6} />
+      <rect x={10} y={40} width={8} height={24} fill={STEEL_DARK} {...LINE} />
+      <rect x={102} y={36} width={8} height={28} fill={STEEL_DARK} {...LINE} />
+    </g>
+  );
+}
+
+function ProductionSurgeArt() {
+  return (
+    <g>
+      <rect width={120} height={72} fill="#ead8cf" />
+      <path d="M0 0 L0 16 L24 4 L24 16 L48 4 L48 16 L72 4 L72 16 L96 4 L96 16 L120 4 L120 0 Z" fill="#8a6a60" />
+      <path d="M24 4 L24 16 M48 4 L48 16 M72 4 L72 16 M96 4 L96 16" {...line(GLASS, 1.4)} />
+      {[14, 46, 78, 110].map((lx) => (
+        <g key={lx}>
+          <path d={`M${lx} 16 L${lx} 22`} {...line(INK, 0.8)} />
+          <path d={`M${lx - 4} 22 L${lx + 4} 22 L${lx + 2} 26 L${lx - 2} 26 Z`} fill={STEEL_DARK} />
+          <polygon points={`${lx - 2},26 ${lx + 2},26 ${lx + 9},50 ${lx - 9},50`} fill={LAMPLIGHT} opacity={0.18} />
+        </g>
+      ))}
+      <rect x={-2} y={54} width={124} height={8} fill="#3a3a3a" {...LINE} />
+      {Array.from({ length: 13 }, (_, i) => <circle key={i} cx={2 + i * 10} cy={58} r={2.4} fill="#6a6a6a" {...THIN} />)}
+      <rect x={-2} y={62} width={124} height={12} fill="#7a5a4a" {...LINE} />
+      <Tank x={18} y={42} s={0.38} />
+      <Tank x={58} y={42} s={0.38} fill={OD_LIGHT} />
+      <Tank x={98} y={42} s={0.38} />
+      <Burst x={78} y={46} r={3.4} fill={FIRE_HI} inner={0.4} points={8} outline={false} />
+      <Burst x={38} y={44} r={2.6} fill={FIRE_HI} inner={0.4} points={8} outline={false} />
+    </g>
+  );
+}
+
+// Kept for the Diplomacy banner.
 function Dove({ x, y, s = 1 }: { x: number; y: number; s?: number }) {
   return (
     <g transform={place(x, y, s)}>
@@ -925,70 +1340,6 @@ function Dove({ x, y, s = 1 }: { x: number; y: number; s?: number }) {
       <circle cx={6.4} cy={-0.8} r={0.5} fill={INK} />
       <path d="M9.4 0 L13 2.4" {...line(LEAF, 0.9)} />
       <ellipse cx={11.6} cy={2.6} rx={1.4} ry={0.7} fill={LEAF} />
-    </g>
-  );
-}
-
-function DiploArt({ strength }: { strength: number }) {
-  const flagSets: [string, string][] = [['#c8452f', WHITE], [ROUNDEL, WHITE], ['#e8b13a', '#3b6b3a'], ['#3b6b3a', WHITE], ['#7d5cb8', FIRE_HI], [WHITE, '#c8452f']];
-  return (
-    <g>
-      <rect width={120} height={72} fill="#f3e4c9" />
-      <rect width={120} height={18} fill="#f8eedb" />
-      <rect x={-2} y={62} width={124} height={12} fill="#c9b48e" {...LINE} />
-      <rect x={52} y={10} width={16} height={8} fill="#e6dccb" {...THIN} />
-      <path d="M50 12 C 50 -2 70 -2 70 12 Z" fill="#e1d6c2" {...LINE} />
-      <path d="M58 1 L58 -3 L62 -3 L62 1" fill={STEEL} {...THIN} />
-      <rect x={44} y={16} width={32} height={8} fill="#ece4d4" {...THIN} />
-      {[46, 50, 54, 58, 62, 66, 70].map((cx) => <path key={cx} d={`M${cx + 1} 16 L${cx + 1} 24`} {...line('#b8ac96', 0.7)} />)}
-      <path d="M22 34 L60 22 L98 34 Z" fill="#ece4d4" {...LINE} />
-      <circle cx={60} cy={29.5} r={2.6} fill={THEATER_TINT.diplo.main} {...THIN} />
-      <rect x={24} y={34} width={72} height={3} fill="#ddd2bd" {...THIN} />
-      {[28, 38, 48, 68, 78, 88].map((cx) => (
-        <g key={cx}>
-          <rect x={cx} y={37} width={4} height={18} fill="#f4eee2" {...THIN} />
-          <path d={`M${cx + 2} 38 L${cx + 2} 54`} {...line('#cfc4ae', 0.6)} />
-        </g>
-      ))}
-      <rect x={55} y={40} width={10} height={15} rx={1} fill="#7a5a3a" {...THIN} />
-      <rect x={22} y={55} width={76} height={3} fill="#ddd2bd" {...THIN} />
-      <rect x={18} y={58} width={84} height={4} fill="#d4c8b0" {...THIN} />
-      <Flag x={6} y={20} colors={flagSets[strength % flagSets.length]} />
-      <Flag x={104} y={20} colors={flagSets[(strength + 3) % flagSets.length]} />
-      <Dove x={24} y={12} s={0.9} />
-    </g>
-  );
-}
-
-function EconArt({ strength }: { strength: number }) {
-  const crates: [number, number][] = [[2, 56], [15, 56], [28, 56], [8.5, 46], [21.5, 46], [15, 36]];
-  return (
-    <g>
-      <rect width={120} height={72} fill="#dbe8d4" />
-      <rect width={120} height={18} fill="#e7f0e2" />
-      <Puff x={86} y={8} s={1.3} fill={SMOKE} />
-      <Puff x={98} y={4} s={1} fill="#d7d2c8" />
-      <Puff x={104} y={12} s={0.9} fill={SMOKE} />
-      <rect x={-2} y={62} width={124} height={12} fill="#a8a58b" {...LINE} />
-      <rect x={82} y={12} width={7} height={24} fill="#8f4a36" {...LINE} />
-      <rect x={95} y={18} width={6} height={18} fill="#8f4a36" {...LINE} />
-      <path d="M81 15 L90 15 M94 21 L102 21" {...line(WHITE, 1.2)} />
-      <path d="M40 62 L40 36 L48 28 L48 36 L56 28 L56 36 L64 28 L64 36 L72 28 L72 36 L80 28 L80 36 L88 28 L88 36 L106 36 L106 62 Z" fill="#b5654a" {...LINE} />
-      <path d="M48 28 L48 36 M56 28 L56 36 M64 28 L64 36 M72 28 L72 36 M80 28 L80 36" {...line(GLASS, 1.4)} />
-      {[46, 56, 66, 76, 86, 96].map((wx) => <rect key={wx} x={wx} y={42} width={6} height={7} fill={GLASS} {...THIN} />)}
-      <rect x={68} y={52} width={14} height={10} fill="#5a4030" {...THIN} />
-      <path d="M75 52 L75 62" {...line(INK, 0.6)} />
-      {crates.slice(0, Math.max(1, Math.min(6, strength))).map(([cx, cy], i) => (
-        <Crate key={i} x={cx} y={cy} w={12} h={10} fill={i % 2 ? '#b49c62' : KHAKI} />
-      ))}
-      <g transform={place(112, 62)}>
-        {[0, 1, 2].map((i) => (
-          <g key={i}>
-            <ellipse cx={0} cy={-i * 3} rx={6} ry={2.2} fill="#c9971d" {...THIN} />
-          </g>
-        ))}
-        <ellipse cx={0} cy={-6.6} rx={6} ry={2.2} fill="#f2c230" {...THIN} />
-      </g>
     </g>
   );
 }
@@ -1021,9 +1372,8 @@ function EmblemIcon({ theater }: { theater: AlsTheaterId }) {
     case 'econ':
       return (
         <g>
-          <rect x={6} y={7} width={12} height={10} fill={WHITE} />
-          <path d="M6.8 7.8 L17.2 16.2 M17.2 7.8 L6.8 16.2" {...line(THEATER_TINT.econ.dark, 1.1)} />
-          <rect x={7.6} y={8.6} width={8.8} height={6.8} {...line(THEATER_TINT.econ.dark, 0.9)} />
+          <path d="M15.6 8.4 C 14.6 7 13.4 6.6 12 6.6 C 9.6 6.6 8.2 7.8 8.2 9.6 C 8.2 13.6 15.8 11.4 15.8 15.2 C 15.8 17 14.2 18.2 12 18.2 C 10.2 18.2 8.8 17.6 8 16.2" {...line(WHITE, 2)} />
+          <path d="M12 4.6 L12 20" {...line(WHITE, 1.6)} />
         </g>
       );
   }

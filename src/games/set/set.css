@@ -441,3 +441,22 @@
   height: 67px;
   flex: 0 0 auto;
 }
+
+/* ---------- one column ---------- */
+
+/* One column: the sidebar's panels follow the board — except a shared
+   screen's player chips, which go above it so the finder can pick their name
+   without scrolling away from the cards. */
+.set-narrow-only { display: none; }
+@media (max-width: 900px) {
+  .set-root { gap: 10px; }
+  .set-sidebar { display: contents; }
+  .set-players.is-shared { order: -1; }
+  .set-players.is-shared .set-score-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  }
+  .set-players.is-shared .set-seat-chip { min-height: 38px; }
+  .set-wide-only { display: none; }
+  .set-narrow-only { display: inline; }
+}

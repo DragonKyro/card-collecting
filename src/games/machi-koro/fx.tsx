@@ -17,8 +17,8 @@
 // Coin animations wait for the dice to finish tumbling when the same batch
 // holds a roll. Web Animations API throughout (so it never fights React over
 // classes or styles); everything is skipped under prefers-reduced-motion,
-// in environments without Element.animate, and for big jumps in the log (a
-// snapshot on join).
+// in environments without Element.animate, and for big jumps in the log (an
+// online device joining mid-match replays the room's log at once).
 
 import {
   createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState,

@@ -1,169 +1,178 @@
-// 7 Wonders Leaders expansion — all 36 leader cards.
+// 7 Wonders Leaders — the 36 leaders, the 4 guilds of the Leaders box, and
+// the 6 leaders of the Cities box (dealt only with both expansions).
 //
-// Each leader has:
-//   - cost in coins (paid when "played" before an age)
-//   - effects (a mix of base SwCardEffect kinds + leader-specific ones)
-// Leaders use color 'leader' so they never get counted by base scoring (which
-// scopes to brown/gray/blue/yellow/red/green/purple). End-of-game bonuses from
-// leaders are scored in the Leaders expansion's `scoreExtras` impl.
+// Costs (coins) are the printed ones, checked against scans of the
+// first-edition cards (Croesus takes 6 coins; the Architects' Guild costs
+// 3 ore + clay + papyrus + loom). Effects:
+//   - flat VP / shields / coins / a science symbol;
+//   - VP per card of a colour (or per wonder stage) in the leader's city;
+//   - one resource less for a colour / wonder stages (the player's choice of
+//     which), guilds and leaders free;
+//   - coins whenever something happens from then on (Xenophon, Vitruvius,
+//     Nero, Hatshepsut, Diocletian);
+//   - Aristotle +3 per science set, Justinian / Plato sets, Midas, Alexander;
+//   - Bilkis (buy one resource from the bank for 1 coin a turn), Solomon
+//     (build from the discard), Tomyris (defeats go to the victor),
+//     Semiramis, Berenice, Caligula, Aspasia (Cities).
+// Leaders use colour 'leader' so they never count as Age cards; their VP land
+// in the 'leaders' score column.
 
-import type { SwCard, SwCardEffect } from '../../types';
+import type { SwCard, SwCardEffect, SwCardColor, SwResource } from '../../types';
 
 interface LeaderTemplate {
   name: string;
   cost: number;        // in coins
   effects: SwCardEffect[];
   description: string; // human-readable tooltip
+  /** Shipped in the Cities box (used only with Leaders + Cities). */
+  cities?: boolean;
 }
+
+const perColor = (color: SwCardColor, vpPer: number): SwCardEffect =>
+  ({ kind: 'endVp', from: 'self', countWhat: { kind: 'cardColor', color }, vpPer });
 
 const LEADERS: readonly LeaderTemplate[] = [
-  // ----- Tier (a): pure on-play effects -----
-  { name: 'Caesar',     cost: 5, effects: [{ kind: 'shields', shields: 2 }],
-    description: '+2 shields when played.' },
-  { name: 'Hannibal',   cost: 2, effects: [{ kind: 'shields', shields: 1 }],
-    description: '+1 shield when played.' },
-  { name: 'Croesus',    cost: 1, effects: [{ kind: 'coins', amount: 6 }],
-    description: 'Gain 6 coins when played.' },
-  { name: 'Euclid',     cost: 3, effects: [{ kind: 'science', symbol: 'compass' }],
-    description: '+1 compass science symbol.' },
-  { name: 'Ptolemy',    cost: 3, effects: [{ kind: 'science', symbol: 'tablet' }],
-    description: '+1 tablet science symbol.' },
-  { name: 'Pythagoras', cost: 3, effects: [{ kind: 'science', symbol: 'gear' }],
-    description: '+1 gear science symbol.' },
-  { name: 'Cleopatra',  cost: 4, effects: [{ kind: 'vp', vp: 5 }],
-    description: 'Worth 5 VP at end of game.' },
-  { name: 'Nefertiti',  cost: 3, effects: [{ kind: 'vp', vp: 4 }],
-    description: 'Worth 4 VP at end of game.' },
-  { name: 'Zenobia',    cost: 3, effects: [{ kind: 'vp', vp: 3 }],
-    description: 'Worth 3 VP at end of game.' },
-  { name: 'Sappho',     cost: 1, effects: [{ kind: 'vp', vp: 2 }],
-    description: 'Worth 2 VP at end of game.' },
+  { name: 'Alexander', cost: 3, effects: [{ kind: 'scoreRule', rule: { type: 'vpPerVictoryToken', vpPer: 1 } }],
+    description: 'At the end, +1 VP per victory token (1, 3 and 5 become 2, 4 and 6).' },
+  { name: 'Amytis', cost: 4, effects: [{ kind: 'endVp', from: 'self', countWhat: { kind: 'wonderStages' }, vpPer: 2 }],
+    description: '2 VP per wonder stage you built.' },
+  { name: 'Archimedes', cost: 4, effects: [{ kind: 'costDiscount', target: 'cardColor', color: 'green' }],
+    description: 'Green cards cost one resource less (your choice).' },
+  { name: 'Aristotle', cost: 3, effects: [{ kind: 'scienceSetBonus', vp: 3 }],
+    description: '+3 VP per set of the three science symbols (10 instead of 7).' },
+  { name: 'Bilkis', cost: 4, effects: [{ kind: 'buyAnyResource' }],
+    description: 'Once a turn, buy any one resource from the bank for 1 coin.' },
+  { name: 'Caesar', cost: 5, effects: [{ kind: 'shields', shields: 2 }],
+    description: '2 shields.' },
+  { name: 'Cleopatra', cost: 4, effects: [{ kind: 'vp', vp: 5 }],
+    description: '5 VP.' },
+  { name: 'Croesus', cost: 1, effects: [{ kind: 'coins', amount: 6 }],
+    description: 'Take 6 coins when recruited.' },
+  { name: 'Euclid', cost: 5, effects: [{ kind: 'science', symbol: 'compass' }],
+    description: 'A compass science symbol.' },
+  { name: 'Hammurabi', cost: 2, effects: [{ kind: 'costDiscount', target: 'cardColor', color: 'blue' }],
+    description: 'Blue cards cost one resource less (your choice).' },
+  { name: 'Hannibal', cost: 2, effects: [{ kind: 'shields', shields: 1 }],
+    description: '1 shield.' },
+  { name: 'Hatshepsut', cost: 2, effects: [{ kind: 'trigger', on: { type: 'neighborPurchase' }, coins: 1 }],
+    description: 'Each turn you buy from a neighbour, take 1 coin (at most 1 per neighbour per turn).' },
+  { name: 'Hiram', cost: 3, effects: [perColor('purple', 2)],
+    description: '2 VP per guild (purple card) in your city.' },
+  { name: 'Hypatia', cost: 4, effects: [perColor('green', 1)],
+    description: '1 VP per green card in your city.' },
+  { name: 'Imhotep', cost: 3, effects: [{ kind: 'costDiscount', target: 'wonderStage' }],
+    description: 'Wonder stages cost one resource less (your choice).' },
+  { name: 'Justinian', cost: 3, effects: [{ kind: 'scoreRule', rule: { type: 'completeRGBSet', vpPerSet: 3 } }],
+    description: '3 VP per set of a red, a blue and a green card.' },
+  { name: 'Leonidas', cost: 2, effects: [{ kind: 'costDiscount', target: 'cardColor', color: 'red' }],
+    description: 'Red cards cost one resource less (your choice).' },
+  { name: 'Maecenas', cost: 1, effects: [{ kind: 'freeLeaders' }],
+    description: 'Recruit your later leaders for free.' },
+  { name: 'Midas', cost: 3, effects: [{ kind: 'scoreRule', rule: { type: 'vpPerCoinSet', vpPer: 1 } }],
+    description: '+1 VP per 3 coins at the end (on top of the treasury’s).' },
+  { name: 'Nebuchadnezzar', cost: 4, effects: [perColor('blue', 1)],
+    description: '1 VP per blue card in your city.' },
+  { name: 'Nefertiti', cost: 3, effects: [{ kind: 'vp', vp: 4 }],
+    description: '4 VP.' },
+  { name: 'Nero', cost: 1, effects: [{ kind: 'trigger', on: { type: 'victoryToken' }, coins: 2 }],
+    description: '2 coins for each victory token you take from now on.' },
+  { name: 'Pericles', cost: 6, effects: [perColor('red', 2)],
+    description: '2 VP per red card in your city.' },
+  { name: 'Phidias', cost: 3, effects: [perColor('brown', 1)],
+    description: '1 VP per brown card in your city.' },
+  { name: 'Plato', cost: 4, effects: [{ kind: 'scoreRule', rule: { type: 'completeAllColorsSet', vpPerSet: 7 } }],
+    description: '7 VP per set of the seven Age colours (brown, gray, blue, yellow, red, green, purple).' },
+  { name: 'Praxiteles', cost: 3, effects: [perColor('gray', 2)],
+    description: '2 VP per gray card in your city.' },
+  { name: 'Ptolemy', cost: 5, effects: [{ kind: 'science', symbol: 'tablet' }],
+    description: 'A tablet science symbol.' },
+  { name: 'Pythagoras', cost: 5, effects: [{ kind: 'science', symbol: 'gear' }],
+    description: 'A gear science symbol.' },
+  { name: 'Ramses', cost: 5, effects: [{ kind: 'freeGuildResources' }],
+    description: 'Build guilds without paying their resources.' },
+  { name: 'Sappho', cost: 1, effects: [{ kind: 'vp', vp: 2 }],
+    description: '2 VP.' },
+  { name: 'Solomon', cost: 3, effects: [{ kind: 'buildFromDiscardOnRecruit' }],
+    description: 'When recruited, build a card from the discard pile for free.' },
+  { name: 'Tomyris', cost: 4, effects: [{ kind: 'defeatToVictor' }],
+    description: 'From now on, the defeat tokens you would take go to the neighbour who beat you.' },
+  { name: 'Varro', cost: 3, effects: [perColor('yellow', 1)],
+    description: '1 VP per yellow card in your city.' },
+  { name: 'Vitruvius', cost: 1, effects: [{ kind: 'trigger', on: { type: 'buildViaChain' }, coins: 2 }],
+    description: '2 coins each time you build a card for free through a chain.' },
+  { name: 'Xenophon', cost: 2, effects: [{ kind: 'trigger', on: { type: 'buildCardColor', color: 'yellow' }, coins: 2 }],
+    description: '2 coins each time you build a yellow card.' },
+  { name: 'Zenobia', cost: 2, effects: [{ kind: 'vp', vp: 3 }],
+    description: '3 VP.' },
 
-  // ----- Tier (b): end-game VP per X (uses endVp) -----
-  // Amytis: 2 VP per wonder stage built.
-  { name: 'Amytis',     cost: 4,
-    effects: [{ kind: 'endVp', from: 'self', countWhat: { kind: 'wonderStages' }, vpPer: 2 }],
-    description: '2 VP per wonder stage built.' },
-  // Hiram: 2 VP per purple (guild) card. Tableau-self.
-  { name: 'Hiram',      cost: 3,
-    effects: [{ kind: 'endVp', from: 'self', countWhat: { kind: 'cardColor', color: 'purple' }, vpPer: 2 }],
-    description: '2 VP per purple (guild) card.' },
-  // Hypatia: 1 VP per green card.
-  { name: 'Hypatia',    cost: 4,
-    effects: [{ kind: 'endVp', from: 'self', countWhat: { kind: 'cardColor', color: 'green' }, vpPer: 1 }],
-    description: '1 VP per green (science) card.' },
-  // Nebuchadnezzar: 1 VP per blue card.
-  { name: 'Nebuchadnezzar', cost: 4,
-    effects: [{ kind: 'endVp', from: 'self', countWhat: { kind: 'cardColor', color: 'blue' }, vpPer: 1 }],
-    description: '1 VP per blue (civilian) card.' },
-  // Pericles: 2 VP per red card.
-  { name: 'Pericles',   cost: 6,
-    effects: [{ kind: 'endVp', from: 'self', countWhat: { kind: 'cardColor', color: 'red' }, vpPer: 2 }],
-    description: '2 VP per red (military) card.' },
-  // Phidias: 1 VP per brown card.
-  { name: 'Phidias',    cost: 3,
-    effects: [{ kind: 'endVp', from: 'self', countWhat: { kind: 'cardColor', color: 'brown' }, vpPer: 1 }],
-    description: '1 VP per brown (raw materials) card.' },
-  // Praxiteles: 2 VP per gray card.
-  { name: 'Praxiteles', cost: 3,
-    effects: [{ kind: 'endVp', from: 'self', countWhat: { kind: 'cardColor', color: 'gray' }, vpPer: 2 }],
-    description: '2 VP per gray (manufactured) card.' },
-  // Varro: 1 VP per yellow card.
-  { name: 'Varro',      cost: 3,
-    effects: [{ kind: 'endVp', from: 'self', countWhat: { kind: 'cardColor', color: 'yellow' }, vpPer: 1 }],
-    description: '1 VP per yellow (commerce) card.' },
-  // Alexander: +1 VP per victory token (any of 1, 3, 5).
-  { name: 'Alexander',  cost: 3,
-    effects: [{ kind: 'leaderScoreExtra', rule: { type: 'alexanderTokenBonus' } }],
-    description: '+1 VP per existing victory token (1/3/5 tokens become 2/4/6).' },
-  // Midas: +1 VP per 3 coins.
-  { name: 'Midas',      cost: 3,
-    effects: [{ kind: 'leaderScoreExtra', rule: { type: 'midasCoinBonus' } }],
-    description: '+1 VP per 3 coins (stacks with treasury → 2 VP per 3 coins).' },
-
-  // ----- Tier (d): cost modifiers -----
-  { name: 'Archimedes', cost: 4,
-    effects: [{ kind: 'leaderCostModifier', target: 'cardColor', targetColor: 'green', remove: 'oneResource' }],
-    description: 'Green (science) cards cost 1 fewer resource.' },
-  { name: 'Hammurabi',  cost: 3,
-    effects: [{ kind: 'leaderCostModifier', target: 'cardColor', targetColor: 'blue', remove: 'oneResource' }],
-    description: 'Blue (civilian) cards cost 1 fewer resource.' },
-  { name: 'Leonidas',   cost: 2,
-    effects: [{ kind: 'leaderCostModifier', target: 'cardColor', targetColor: 'red', remove: 'oneResource' }],
-    description: 'Red (military) cards cost 1 fewer resource.' },
-  { name: 'Imhotep',    cost: 3,
-    effects: [{ kind: 'leaderCostModifier', target: 'wonderStage', remove: 'oneResource' }],
-    description: 'Wonder stages cost 1 fewer resource.' },
-  { name: 'Maecenas',   cost: 1,
-    effects: [{ kind: 'leaderCostModifier', target: 'leader', remove: 'allCoins' }],
-    description: 'Future leaders cost 0 coins.' },
-  { name: 'Ramses',     cost: 3,
-    effects: [{ kind: 'leaderCostModifier', target: 'guild', remove: 'allResources' }],
-    description: 'Future guilds (purple) cost no resources.' },
-
-  // ----- Tier (e): on-play triggers -----
-  { name: 'Hatshepsut', cost: 2,
-    effects: [{ kind: 'leaderTrigger', on: { type: 'neighborPurchase' }, reward: { coins: 1 } }],
-    description: 'Each turn, your first neighbor purchase refunds 1 coin (max 1/turn).' },
-  { name: 'Nero',       cost: 1,
-    effects: [{ kind: 'leaderTrigger', on: { type: 'militaryWin' }, reward: { coins: 2 } }],
-    description: 'When you win a conflict, gain 2 coins.' },
-  { name: 'Xenophon',   cost: 3,
-    effects: [{ kind: 'leaderTrigger', on: { type: 'buildCardColor', color: 'yellow' }, reward: { coins: 2 } }],
-    description: 'When you build a yellow card, gain 2 coins.' },
-  { name: 'Vitruvius',  cost: 1,
-    effects: [{ kind: 'leaderTrigger', on: { type: 'buildViaChain' }, reward: { coins: 2 } }],
-    description: 'When you build via a chain, gain 2 coins.' },
-
-  // ----- Tier (f): activated ability -----
-  { name: 'Bilkis',     cost: 4,
-    effects: [{ kind: 'leaderActivated', ability: 'bilkis' }],
-    description: 'Once per turn, pay 1 coin to gain 1 of any resource for this turn\'s build.' },
-
-  // ----- Tier (g): set-completion scoring -----
-  { name: 'Aristotle',  cost: 3,
-    effects: [{ kind: 'leaderScoreExtra', rule: { type: 'completeScienceSet', vpPerSet: 3 } }],
-    description: '+3 VP per completed set of 3 different science symbols.' },
-  { name: 'Justinian',  cost: 3,
-    effects: [{ kind: 'leaderScoreExtra', rule: { type: 'completeRGBSet', vpPerSet: 3 } }],
-    description: '+3 VP per complete {red, blue, green} triple.' },
-  { name: 'Plato',      cost: 4,
-    effects: [{ kind: 'leaderScoreExtra', rule: { type: 'completeAllColorsSet', vpPerSet: 7 } }],
-    description: '+7 VP per complete set of all 7 card colors.' },
-
-  // ----- Tier (h): on-recruit effect -----
-  { name: 'Solomon',    cost: 3,
-    effects: [{ kind: 'leaderOnRecruit', effect: 'solomonBuildFromDiscard' }],
-    description: 'On play, take any card from the discard pile and build it for free.' },
-
-  // ----- Tier (e) extra: Tomyris (defeat tokens go to victor) -----
-  // Modeled as a future enhancement; for now a 0-effect placeholder so the
-  // card is in the deck. The defeat-rerouting mechanic isn't wired into the
-  // base reducer; flagged in CLAUDE.md "not modeled".
-  { name: 'Tomyris',    cost: 4, effects: [],
-    description: 'After play, defeats you receive in conflict go to the victor instead. (Not modeled in v1.)' },
+  // ----- Cities' leaders -----
+  { name: 'Aspasia', cost: 3, cities: true, effects: [{ kind: 'vp', vp: 2 }, { kind: 'diplomacy' }],
+    description: '2 VP, and a diplomacy token when recruited.' },
+  { name: 'Berenice', cost: 2, cities: true, effects: [{ kind: 'bankBonus' }],
+    description: 'Once a turn, coins you take from the bank are increased by 1.' },
+  { name: 'Caligula', cost: 3, cities: true, effects: [{ kind: 'freeColorPerAge', color: 'black' }],
+    description: 'Build one black card per Age for free.' },
+  { name: 'Darius', cost: 4, cities: true, effects: [perColor('black', 1)],
+    description: '1 VP per black card in your city.' },
+  { name: 'Diocletian', cost: 2, cities: true, effects: [{ kind: 'trigger', on: { type: 'buildCardColor', color: 'black' }, coins: 2 }],
+    description: '2 coins each time you build a black card.' },
+  { name: 'Semiramis', cost: 2, cities: true, effects: [{ kind: 'defeatAsShield' }],
+    description: 'Each of your defeat tokens counts as a shield in every later conflict.' },
 ];
 
-// ID counter starts well above the base card ids (which top out at a few hundred
-// after deck padding) to keep types serializable but clearly distinct.
-let _nextLeaderId = 10000;
+/** Leader ids: 10000 + position in the list (fixed, so any device agrees). */
+const LEADER_ID_BASE = 10000;
+/** Courtesans' Guild copies: the copied leader's id + this. */
+export const COPY_ID_OFFSET = 500;
 
-export function buildLeaderDeck(): SwCard[] {
-  return LEADERS.map<SwCard>((t) => ({
-    id: _nextLeaderId++,
+/** The leader deck for a match (Cities' leaders only with Cities). */
+export function buildLeaderDeck(withCities: boolean): SwCard[] {
+  return LEADERS.flatMap<SwCard>((t, i) => (t.cities && !withCities) ? [] : [{
+    id: LEADER_ID_BASE + i,
     name: t.name,
-    age: 1, // leaders aren't tied to an age — using 1 as a placeholder
+    age: 1, // leaders aren't tied to an age
     color: 'leader',
     minPlayers: 3,
-    maxPlayers: 7,
+    maxPlayers: 8,
     cost: { coins: t.cost },
     effects: t.effects,
-  }));
+    expansion: t.cities ? 'cities' : 'leaders',
+  }]);
 }
 
-export function resetLeaderIdCounter(start: number = 10000): void {
-  _nextLeaderId = start;
+export function leaderDescription(name: string): string {
+  return LEADERS.find((t) => t.name === name)?.description ?? '';
 }
 
 export const ALL_LEADER_NAMES = LEADERS.map((t) => t.name);
-export const LEADER_COUNT = LEADERS.length;
+export const LEADER_COUNT = LEADERS.filter((t) => !t.cities).length;
+
+// ----- The Leaders box's guilds (Age III, mixed into the guild pool) -----
+
+const r = (...rs: SwResource[]): SwResource[] => rs;
+
+const GUILDS: Array<{ name: string; cost: SwResource[]; effects: SwCardEffect[]; description: string }> = [
+  { name: 'Gamers Guild', cost: r('stone', 'clay', 'wood', 'ore'),
+    effects: [{ kind: 'scoreRule', rule: { type: 'vpPerCoinSet', vpPer: 1 } }],
+    description: '1 VP per 3 coins in your treasury (on top of the treasury’s).' },
+  { name: 'Courtesans Guild', cost: r('wood', 'clay', 'glass', 'loom'),
+    effects: [{ kind: 'copyLeader' }],
+    description: 'Place the Courtesan on a leader of a neighbour: you have its power too.' },
+  { name: 'Diplomats Guild', cost: r('stone', 'wood', 'glass', 'papyrus'),
+    effects: [{ kind: 'endVp', from: 'neighbors', countWhat: { kind: 'leaders' }, vpPer: 1 }],
+    description: '1 VP per leader recruited in the neighbouring cities.' },
+  { name: 'Architects Guild', cost: r('ore', 'ore', 'ore', 'clay', 'papyrus', 'loom'),
+    effects: [{ kind: 'endVp', from: 'neighbors', countWhat: { kind: 'cardColor', color: 'purple' }, vpPer: 3 }],
+    description: '3 VP per guild in the neighbouring cities.' },
+];
+
+export function leadersGuilds(): SwCard[] {
+  return GUILDS.map((g, i) => ({
+    id: 3400 + i, name: g.name, age: 3, color: 'purple', minPlayers: 3, maxPlayers: 99,
+    cost: { resources: g.cost }, effects: g.effects, expansion: 'leaders',
+  }));
+}
+
+export function leadersGuildDescription(name: string): string | undefined {
+  return GUILDS.find((g) => g.name === name)?.description;
+}

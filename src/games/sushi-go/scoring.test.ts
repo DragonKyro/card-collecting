@@ -11,7 +11,7 @@ function card(kind: SushiGoCardKind, variant?: string, extra: Partial<SushiGoCar
 
 function player(id: string, table: SushiGoCard[] = [], dessertPile: SushiGoCard[] = []): SushiGoPlayer {
   return {
-    id, hand: [], table, dessertPile, pendingPick: null, pendingSpoon: false,
+    id, hand: [], table, dessertPile, pendingPick: null,
     uramakiPoints: 0, scoreByRound: [], dessertScore: 0,
   };
 }

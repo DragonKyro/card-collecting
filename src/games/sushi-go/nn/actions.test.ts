@@ -64,12 +64,12 @@ describe('sushi-go action space', () => {
         }
       }
     }
-    for (const t of ['pick', 'copy', 'spoon', 'menu', 'takeout', 'copyCard', 'askSpoon', 'pickMenu', 'flipCards']) {
+    for (const t of ['pick', 'copy', 'spoon', 'menu', 'takeout', 'copyCard', 'askSpoon', 'keepSpoon', 'pickMenu', 'flipCards']) {
       expect(seen, t).toContain(t);
     }
   });
 
-  it('every card in hand can be played, with chopsticks every pair, and a spoon call either way', () => {
+  it('every card in hand can be played, and with chopsticks every pair', () => {
     const states = sampleStates({ players: 3, menu: MENUS[1], matches: 3, seed: 8 })
       .filter((s) => s.subPhase === 'selecting');
     let chopsticks = 0;
@@ -87,13 +87,26 @@ describe('sushi-go action space', () => {
           chopsticks++;
           expect(picks.some((a) => a.cardIds.length === 2)).toBe(true);
         }
-        if (obs.decision.canSpoon) {
-          expect(picks.some((a) => a.useSpoon)).toBe(true);
-          expect(picks.some((a) => !a.useSpoon)).toBe(true);
-        }
       }
     }
     expect(chopsticks).toBeGreaterThan(0);
+  });
+
+  it('a spoon at the reveal can be kept or name any menu card, by face or in general', () => {
+    const states = sampleStates({ players: 3, menu: MENUS[1], matches: 4, seed: 12 })
+      .filter((s) => s.subPhase === 'resolving' && s.resolution!.steps[0].type === 'spoon');
+    expect(states.length).toBeGreaterThan(0);
+    for (const state of states) {
+      const owner = state.resolution!.steps[0].playerId;
+      const obs = observe(state, owner);
+      expect(obs.decision).toMatchObject({ type: 'spoon', stage: 'use' });
+      const actions = reachable(state, owner);
+      expect(actions.filter((a) => a.type === 'keepSpoon')).toHaveLength(1);
+      const asks = actions.filter((a) => a.type === 'askSpoon');
+      expect(asks.some((a) => a.type === 'askSpoon' && a.kind === 'nigiri' && a.variant === undefined)).toBe(true);
+      expect(asks.some((a) => a.type === 'askSpoon' && a.kind === 'nigiri' && a.variant === 'squid')).toBe(true);
+      expect(new Set(asks.map((a) => a.type === 'askSpoon' && a.kind))).toEqual(new Set(MENUS[1]));
+    }
   });
 
   it('a spoon giver chooses among the asked variants it holds', () => {
@@ -105,7 +118,7 @@ describe('sushi-go action space', () => {
     s0.players[0].hand = [card('tempura'), card('tempura'), card('tempura')];
     s0.players[1].hand = [card('tempura'), card('nigiri', 'egg'), card('nigiri', 'squid')];
     s0.players[2].hand = [card('tempura'), card('tofu'), card('tofu')];
-    let s = applyAction(s0, { type: 'submitPick', playerId: 'p0', cardIds: [s0.players[0].hand[0].id], useSpoon: true });
+    let s = applyAction(s0, { type: 'submitPick', playerId: 'p0', cardIds: [s0.players[0].hand[0].id] });
     s = applyAction(s, { type: 'submitPick', playerId: 'p1', cardIds: [s0.players[1].hand[0].id] });
     s = applyAction(s, { type: 'submitPick', playerId: 'p2', cardIds: [s0.players[2].hand[0].id] });
     const ask = reachable(s, 'p0').find((a) => a.type === 'askSpoon' && a.kind === 'nigiri' && a.variant === undefined)!;

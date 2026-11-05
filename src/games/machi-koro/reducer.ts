@@ -261,6 +261,7 @@ export function createMatch(config: MkConfig, seed: number, seats: Seat[]): MkSt
 function emptyMarket(): Record<MkRowId, MkMarketRow> {
   return {
     low: { deck: [], slots: [] }, high: { deck: [], slots: [] }, landmark: { deck: [], slots: [] }, mixed: { deck: [], slots: [] },
+    major: { deck: [], slots: [] },
   };
 }
 
@@ -288,6 +289,12 @@ export function setupMatch(state: MkState): void {
   } else if (R.market === 'marketplace') {
     state.market.mixed.deck = shuffle(state.rngState, copiesOf(R.establishments));
     refillRow(state.market.mixed, rowSize('mixed'));
+  } else if (R.market === 'hybrid') {
+    const major = R.establishments.filter((d) => rowOf(R, d.id) === 'major');
+    state.market.low.deck = shuffle(state.rngState, copiesOf(low));
+    state.market.high.deck = shuffle(state.rngState, copiesOf(high));
+    state.market.major.deck = shuffle(state.rngState, copiesOf(major));
+    for (const row of ['low', 'high', 'major'] as const) refillRow(state.market[row], rowSize(row));
   } else {
     const open = (defs: MkEstablishmentDef[]): MkMarketRow => ({
       deck: [], slots: defs.map((d) => ({ cardId: d.id, count: copies(d) })),

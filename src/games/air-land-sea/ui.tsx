@@ -1,163 +1,164 @@
-// Air, Land & Sea — lobby config and in-game view.
+// Air, Land & Sea — lobby config, rule book and in-game view.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { GameUiBundle } from '@/core/module';
 import type { PlayerId, Seat } from '@/core/types';
-import type {
-  AlsState, AlsAction, AlsConfig, AlsTheaterId,
-} from './types';
-import { AlsCardView, FaceDownCard } from './Card';
+import type { AlsAction, AlsAnswer, AlsConfig, AlsPending, AlsState, AlsTheaterId } from './types';
+import { AlsCardView, FaceDownCard, MiniFace } from './Card';
 import { TheaterColumn } from './Theater';
-import { Sidebar } from './Sidebar';
+import { Sidebar, abilityName, possessive, wins } from './Sidebar';
 import { RulesBook, RulesHero, RulesGrid, RulesTile } from '@/ui/RulesBook';
 import {
-  BASE_THEATER_IDS, SLS_THEATER_IDS, THEATER_DEFS, DEFAULT_TARGET_VP, ALL_THEATER_IDS, CARD_TEMPLATES,
+  ALL_THEATER_IDS, BASE_THEATER_IDS, CARD_TEMPLATES, DEFAULT_TARGET_VP, SLS_THEATER_IDS, THEATER_DEFS,
+  WITHDRAW_CHARTS, cardById, cardIdsForTheaters, cardLabel,
 } from './cards';
-import { ownerHasOngoing, vpForWithdraw, adjacentTheaters } from './scoring';
-import { ControlFlag, MedalIcon, TheaterBanner, TheaterEmblem } from './art';
+import { isEpic, locate, otherSeat, playOptions, vpForWithdraw } from './rules';
+import { ControlFlag, MedalIcon, SupplyToken, TheaterBanner, TheaterEmblem } from './art';
 import './als.css';
 
 // ============================================================================
 // Lobby config
 // ============================================================================
 
-function LobbyConfig({ config, seats, onChange }: { config: AlsConfig; seats: Seat[]; onChange: (c: AlsConfig) => void }) {
-  void seats;
-  const slsOn = !!config.expansions?.spiesLiesSupplies;
-  const epic = config.theaters.length === 5;
+const EPIC_DEFAULT: AlsTheaterId[] = ['intel', 'diplo', 'econ', 'land', 'sea'];
 
-  const setExp = (sls: boolean) => {
-    const next: AlsConfig = {
-      ...config,
-      expansions: { ...config.expansions, spiesLiesSupplies: sls },
-    };
-    if (!sls) {
-      // Strip SLS theaters and force back to base 3.
-      next.theaters = BASE_THEATER_IDS.slice();
-    }
-    onChange(next);
+function LobbyConfig({ config, onChange }: { config: AlsConfig; seats: Seat[]; onChange: (c: AlsConfig) => void }) {
+  const sls = !!config.expansions?.spiesLiesSupplies;
+  const epic = config.theaters.length > 3 || !!config.epic;
+  const want = epic ? 5 : 3;
+
+  const setSls = (on: boolean) => onChange({
+    ...config,
+    expansions: { ...config.expansions, spiesLiesSupplies: on },
+    epic: false,
+    theaters: on ? SLS_THEATER_IDS.slice() : BASE_THEATER_IDS.slice(),
+  });
+  const setEpic = (on: boolean) => onChange({
+    ...config,
+    epic: on,
+    theaters: on ? EPIC_DEFAULT.slice() : config.theaters.slice(0, 3),
+    targetVp: config.beginner ? config.targetVp : on ? 6 : DEFAULT_TARGET_VP,
+  });
+  const toggle = (id: AlsTheaterId) => {
+    if (config.theaters.includes(id)) onChange({ ...config, theaters: config.theaters.filter((t) => t !== id) });
+    else if (config.theaters.length < want) onChange({ ...config, theaters: [...config.theaters, id] });
   };
-
-  const toggleTheater = (id: AlsTheaterId) => {
-    const inList = config.theaters.includes(id);
-    const next = inList
-      ? config.theaters.filter((t) => t !== id)
-      : [...config.theaters, id];
-    onChange({ ...config, theaters: next });
-  };
-
-  const setEpic = (on: boolean) => {
-    if (on) {
-      if (!slsOn) {
-        // Turn SLS on and seed with all 5 of base + intel + diplo.
-        onChange({
-          ...config,
-          expansions: { ...config.expansions, spiesLiesSupplies: true },
-          theaters: ['intel', 'diplo', 'econ', 'land', 'sea'],
-        });
-      } else {
-        onChange({ ...config, theaters: ['intel', 'diplo', 'econ', 'land', 'sea'] });
-      }
-    } else {
-      onChange({ ...config, theaters: config.theaters.slice(0, 3) });
-    }
-  };
-
-  const availableTheaters: AlsTheaterId[] = slsOn ? ALL_THEATER_IDS.slice() : BASE_THEATER_IDS.slice();
+  const setBeginner = (on: boolean) => onChange({ ...config, beginner: on, targetVp: on ? 3 : epic ? 6 : DEFAULT_TARGET_VP });
+  const available = sls ? ALL_THEATER_IDS : BASE_THEATER_IDS;
+  const random = config.randomOrder !== false;
 
   return (
-    <div className="game-config">
-      <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <span>Target VP:</span>
-        <input
-          type="number"
-          min={6}
-          max={30}
-          value={config.targetVp}
-          onChange={(e) => onChange({ ...config, targetVp: Number(e.target.value) || DEFAULT_TARGET_VP })}
-          style={{ width: 80 }}
-        />
-      </label>
-
-      <h4 style={{ margin: '14px 0 6px', fontSize: 13, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--fg-muted)' }}>
-        Expansion
-      </h4>
-      <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '4px 0' }}>
-        <input
-          type="checkbox"
-          checked={slsOn}
-          onChange={(e) => setExp(e.target.checked)}
-          style={{ marginTop: 3 }}
-        />
+    <div className="game-config als-lobby">
+      <label className="als-lobby-check">
+        <input type="checkbox" checked={sls} onChange={(e) => setSls(e.target.checked)} />
         <span>
-          <strong>Spies, Lies, &amp; Supplies</strong>
-          <span style={{ display: 'block', fontSize: 12, color: 'var(--fg-muted)' }}>
-            Adds 3 theaters (Intelligence, Diplomacy, Economics) and 18 cards. Per-card abilities not yet modeled — cards play with raw strength only.
-          </span>
+          <strong>Spies, Lies &amp; Supplies</strong>
+          <small>Intelligence, Diplomacy and Economics: 18 new cards and supply tokens. Play any three theaters from either box.</small>
         </span>
       </label>
-
-      <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '4px 0', opacity: slsOn ? 1 : 0.5 }}>
-        <input
-          type="checkbox"
-          checked={epic}
-          onChange={(e) => setEpic(e.target.checked)}
-          disabled={!slsOn}
-          style={{ marginTop: 3 }}
-        />
-        <span>
-          <strong>Epic Mode</strong>
-          <span style={{ display: 'block', fontSize: 12, color: 'var(--fg-muted)' }}>
-            5 theaters at once (instead of 3); each player draws 9 cards per battle instead of 6. Requires the expansion.
+      {sls && (
+        <label className="als-lobby-check">
+          <input type="checkbox" checked={epic} onChange={(e) => setEpic(e.target.checked)} />
+          <span>
+            <strong>Epic Mode</strong>
+            <small>Five theaters, 10-card hands; win a battle by holding 3. Withdrawals use the Epic column, and ongoing abilities reach only their own and the adjacent theaters.</small>
           </span>
-        </span>
-      </label>
+        </label>
+      )}
 
-      <h4 style={{ margin: '14px 0 6px', fontSize: 13, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--fg-muted)' }}>
-        Theaters in play ({config.theaters.length}/{epic ? 5 : 3})
-      </h4>
-      <p className="als-cheat-note" style={{ marginTop: 0 }}>
-        Pick {epic ? 5 : 3} theaters. Order is L→R on the board for battle 1; the rightmost shifts to the left front after each battle.
-      </p>
+      <h4 className="als-lobby-heading">Theaters ({config.theaters.length}/{want})</h4>
       <div className="als-theater-picker">
-        {availableTheaters.map((t) => {
-          const def = THEATER_DEFS[t];
-          const selected = config.theaters.includes(t);
+        {available.map((t) => {
+          const at = config.theaters.indexOf(t);
+          const full = at === -1 && config.theaters.length >= want;
           return (
             <button
               key={t}
               type="button"
-              className={`als-theater-pill ${selected ? 'selected' : ''}`}
-              onClick={() => toggleTheater(t)}
+              className={`als-theater-pill ${at !== -1 ? 'selected' : ''}`}
+              disabled={full}
+              onClick={() => toggle(t)}
             >
               <TheaterEmblem theater={t} size={16} />
-              {def.name}
-              {def.expansion ? <small> (SLS)</small> : null}
+              {THEATER_DEFS[t].name}
+              {!random && at !== -1 && <small>#{at + 1}</small>}
             </button>
           );
         })}
       </div>
+      <label className="als-lobby-check">
+        <input type="checkbox" checked={random} onChange={(e) => onChange({ ...config, randomOrder: e.target.checked })} />
+        <span>Deal the theater row in a random order <small>(otherwise left to right in the order picked)</small></span>
+      </label>
 
+      <h4 className="als-lobby-heading">Scoring</h4>
+      <label className="als-lobby-inline">
+        <span>Play to</span>
+        <input
+          type="number"
+          min={1}
+          max={30}
+          value={config.targetVp}
+          onChange={(e) => onChange({ ...config, targetVp: Math.max(1, Math.min(30, Number(e.target.value) || DEFAULT_TARGET_VP)) })}
+        />
+        <span>VP</span>
+        <small>12 standard · 18 for a longer war{epic ? ' · 6 suggested for Epic' : ''}</small>
+      </label>
+      <label className="als-lobby-check">
+        <input type="checkbox" checked={!!config.beginner} onChange={(e) => setBeginner(e.target.checked)} />
+        <span>
+          <strong>Beginner Mode</strong>
+          <small>Every battle won is 1 VP, however it ends; first to 3.</small>
+        </span>
+      </label>
     </div>
   );
 }
 
-function Rules() {
-  // Group cards by theater for the per-theater reference pages.
-  const byTheater: Record<string, typeof CARD_TEMPLATES[number][]> = {};
-  for (const c of CARD_TEMPLATES) {
-    if (!byTheater[c.theater]) byTheater[c.theater] = [];
-    byTheater[c.theater].push(c);
-  }
-  for (const k of Object.keys(byTheater)) byTheater[k].sort((a, b) => a.strength - b.strength);
-  const cardRows = (tid: AlsTheaterId) => (byTheater[tid] ?? []).map((c) => (
-    <tr key={c.id}>
-      <td className="num">{c.strength}</td>
-      <td>{c.name}</td>
-      <td className="muted">{c.abilityText}</td>
-    </tr>
-  ));
+// ============================================================================
+// Rule book
+// ============================================================================
 
+function CardTable({ theater }: { theater: AlsTheaterId }) {
+  return (
+    <table className="tight">
+      <thead><tr><th className="num">Str</th><th>{THEATER_DEFS[theater].name}</th><th>Ability</th></tr></thead>
+      <tbody>
+        {CARD_TEMPLATES.filter((c) => c.theater === theater).map((c) => (
+          <tr key={c.id}>
+            <td className="num">{c.strength}</td>
+            <td>{c.name}</td>
+            <td className="muted">{c.trigger ? <><strong>{c.trigger === 'instant' ? 'Instant' : 'Ongoing'}:</strong> {c.text}</> : '—'}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function ChartTable({ mode }: { mode: 'standard' | 'epic' }) {
+  const rows = (seat: 'first' | 'second') => {
+    const chart = WITHDRAW_CHARTS[mode][seat];
+    return chart.map((r, i) => {
+      const top = i === 0 ? null : chart[i - 1].minCards - 1;
+      return { vp: r.vp, cards: i === 0 ? `${r.minCards}+` : top === r.minCards ? `${r.minCards}` : `${r.minCards}–${top}` };
+    });
+  };
+  const first = rows('first');
+  const second = rows('second');
+  return (
+    <table className="tight">
+      <thead><tr><th className="num">Opponent scores</th><th>1st Player has left</th><th>2nd Player has left</th></tr></thead>
+      <tbody>
+        {first.map((r, i) => (
+          <tr key={r.vp}><td className="num">{r.vp} VP</td><td>{r.cards}</td><td>{second[i].cards}</td></tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function Rules() {
   return (
     <RulesBook
       pages={[
@@ -167,104 +168,121 @@ function Rules() {
             <>
               <RulesHero
                 title="Air, Land & Sea"
-                subtitle="2-player tactical battles. First to 12 VP across multiple battles."
-                accent="linear-gradient(135deg, #234d5e 0%, #2ecc71 100%)"
+                subtitle="Two commanders, a row of theaters, a series of battles. First to 12 VP wins the war."
+                accent="linear-gradient(135deg, #4d5a66 0%, #5f8f3e 50%, #2f7db3 100%)"
               />
-              <h3>Turn options (alternating single actions)</h3>
+              <p>
+                Each battle, the theaters are laid in a row (random order). The red Supreme Commander is the
+                1st Player: they move first and win tied theaters. The deck is the six cards of each theater in
+                play; each player is dealt 6 and the rest stay face down. You don't draw during a battle unless
+                an ability says so.
+              </p>
+              <h3>On your turn, do one thing</h3>
               <RulesGrid cols={3}>
-                <RulesTile icon="⚡" label="Deploy" hint="Face-up to matching theater. Triggers the card's ability." accent="#9ed27c" />
-                <RulesTile icon="🃏" label="Improvise" hint="Face-down to ANY theater for strength 2. No ability." accent="#6aa0ff" />
-                <RulesTile icon="🏳️" label="Withdraw" hint="Battle ends. Opponent scores VP." accent="#ff7070" />
+                <RulesTile icon="⚡" label="Deploy" hint="Play a card face up to its matching theater. Its Tactical Ability takes effect." accent="#9ed27c" />
+                <RulesTile icon="🃏" label="Improvise" hint="Play a card face down to any theater: strength 2, no ability." accent="#6aa0ff" />
+                <RulesTile icon="🏳️" label="Withdraw" hint="Concede the battle. Your opponent scores off your Supreme Commander card." accent="#ff7070" />
               </RulesGrid>
-              <h3>Withdraw VP</h3>
+              <p>A newly played card covers your earlier cards in that theater; only the top one is uncovered.</p>
+            </>
+          ),
+        },
+        {
+          title: 'Winning battles',
+          body: (
+            <>
+              <p>
+                A battle ends when someone withdraws, or once both players have played every card in hand. You
+                control a theater with more total strength there than your opponent; the 1st Player wins ties
+                and empty theaters. Whoever controls more theaters (2 of 3, or 3 of 5 in Epic Mode) wins.
+              </p>
+              <RulesGrid cols={2}>
+                <RulesTile icon="🏆" label="Fought to the end" hint="The winner scores 6 VP." accent="#f4d268" />
+                <RulesTile icon="🏳️" label="Withdrawal" hint="The more cards you still hold, the fewer VP your opponent gets." accent="#ff7070" />
+              </RulesGrid>
+              <h3>Supreme Commander charts</h3>
+              <ChartTable mode="standard" />
+              <p className="muted">
+                Between battles the rightmost theater moves to the left end, and the players swap Supreme
+                Commanders. Beginner Mode: every battle won is 1 VP; first to 3.
+              </p>
+            </>
+          ),
+        },
+        {
+          title: 'Tactical abilities',
+          body: (
+            <>
+              <p>
+                <strong>Instant</strong> abilities take effect right after the card is played face up, or when a
+                face-down card is flipped face up. When several happen together they resolve in the order they
+                happened, each fully before the next — and once one starts it always finishes, even if its card
+                is flipped face down meanwhile. <strong>Ongoing</strong> abilities work while their card is face
+                up, covered or not.
+              </p>
+              <p>You must carry out an ability unless it says “may”; one that is impossible does nothing.</p>
               <table className="tight">
-                <thead><tr><th>Cards left in hand</th><th className="num">VP to opponent</th></tr></thead>
                 <tbody>
-                  <tr><td>6+ cards</td><td className="num">2</td></tr>
-                  <tr><td>4–5 cards</td><td className="num">3</td></tr>
-                  <tr><td>2–3 cards</td><td className="num">4</td></tr>
-                  <tr><td>0–1 cards (full-play loss)</td><td className="num">6</td></tr>
+                  <tr><td><strong>Flip</strong></td><td>Turn a card over — yours or your opponent's, unless the ability says otherwise.</td></tr>
+                  <tr><td><strong>Uncovered</strong></td><td>If an ability doesn't say uncovered or covered, it can affect any card.</td></tr>
+                  <tr><td><strong>Play</strong></td><td>Taking a card from your hand into a theater, following the normal rules unless told otherwise.</td></tr>
+                  <tr><td><strong>Non-matching</strong></td><td>A card that ends up in another type's theater stays there and counts normally.</td></tr>
+                  <tr><td><strong>Destroy</strong></td><td>Face down to the bottom of the deck. A card destroyed as it is played never uses its ability.</td></tr>
+                  <tr><td><strong>Occupied</strong></td><td>Count both players' cards in the theater.</td></tr>
+                  <tr><td><strong>Move</strong></td><td>To another theater on the same side, on top. Moving is not playing.</td></tr>
                 </tbody>
               </table>
             </>
           ),
         },
         {
-          title: 'Battles',
+          title: 'Air, Land & Sea cards',
           body: (
             <>
-              <p>
-                A battle ends when either player withdraws or both hands are empty.
-              </p>
-              <RulesGrid cols={2}>
-                <RulesTile icon="📊" label="Control" hint="Higher total strength on your side wins that theater." accent="#f4d268" />
-                <RulesTile icon="🏆" label="Win condition" hint="Control more than half the theaters (2/3 or 3/5)." accent="#9ed27c" />
-                <RulesTile icon="🥇" label="Ties" hint="Go to the player whose card landed in the theater first." accent="#6aa0ff" />
-                <RulesTile icon="🔁" label="Between battles" hint="Theater row rotates 1 step right→front; 1st-player swaps." accent="#b984c9" />
-              </RulesGrid>
-              <h3>Hidden info</h3>
-              <p>
-                Face-down cards are hidden from the opponent (and from the inactive
-                seat in hot-seat play). Ongoing abilities still emit while covered
-                — being flipped face-down is the only way to silence them.
-              </p>
+              <CardTable theater="air" />
+              <CardTable theater="land" />
+              <CardTable theater="sea" />
             </>
           ),
         },
         {
-          title: 'Air cards',
-          body: (
-            <table className="tight">
-              <thead><tr><th className="num">Str</th><th>Name</th><th>Ability</th></tr></thead>
-              <tbody>{cardRows('air')}</tbody>
-            </table>
-          ),
-        },
-        {
-          title: 'Land cards',
-          body: (
-            <table className="tight">
-              <thead><tr><th className="num">Str</th><th>Name</th><th>Ability</th></tr></thead>
-              <tbody>{cardRows('land')}</tbody>
-            </table>
-          ),
-        },
-        {
-          title: 'Sea cards',
-          body: (
-            <table className="tight">
-              <thead><tr><th className="num">Str</th><th>Name</th><th>Ability</th></tr></thead>
-              <tbody>{cardRows('sea')}</tbody>
-            </table>
-          ),
-        },
-        {
-          title: 'SLS expansion',
+          title: 'Spies, Lies & Supplies',
           body: (
             <>
               <p>
-                Adds 3 theaters (Intelligence / Diplomacy / Economics) and 18
-                cards. Epic Mode plays with all 5 theaters and 9-card hands.
+                Three new theaters — Intelligence, Diplomacy, Economics — played on their own or mixed with the
+                base game: any three theaters from either box.
               </p>
-              <p className="muted">
-                Per-card SLS abilities are placeholder no-ops in v1; cards still
-                contribute their raw strength normally.
+              <table className="tight">
+                <tbody>
+                  <tr><td><SupplyToken size={16} /> <strong>Supply</strong></td><td>A token on your side of a theater, worth +1 strength there.</td></tr>
+                  <tr><td><strong>Reveal</strong></td><td>Show a card from your hand to your enemy, then keep it. No reveal, no benefit.</td></tr>
+                  <tr><td><strong>Higher / lower</strong></td><td>A card in hand counts its printed strength; in play, the value showing (a face-down card is 2).</td></tr>
+                  <tr><td><strong>Name</strong></td><td>A card is named by theater and strength (“Diplomacy 3”), not just its title.</td></tr>
+                </tbody>
+              </table>
+              <CardTable theater="intel" />
+              <CardTable theater="diplo" />
+              <CardTable theater="econ" />
+            </>
+          ),
+        },
+        {
+          title: 'Epic Mode',
+          body: (
+            <>
+              <p>
+                Five theaters from either box, 10-card hands. If nobody withdraws, the winner is whoever controls
+                at least 3 theaters. Ongoing abilities reach only their own theater and the adjacent ones.
+                Playing to 6 VP keeps the war a sensible length.
               </p>
-              <h3>Intel cards</h3>
-              <table className="tight">
-                <thead><tr><th className="num">Str</th><th>Name</th><th>Ability</th></tr></thead>
-                <tbody>{cardRows('intel')}</tbody>
-              </table>
-              <h3>Diplomacy cards</h3>
-              <table className="tight">
-                <thead><tr><th className="num">Str</th><th>Name</th><th>Ability</th></tr></thead>
-                <tbody>{cardRows('diplo')}</tbody>
-              </table>
-              <h3>Economics cards</h3>
-              <table className="tight">
-                <thead><tr><th className="num">Str</th><th>Name</th><th>Ability</th></tr></thead>
-                <tbody>{cardRows('econ')}</tbody>
-              </table>
+              <h3>Epic Supreme Commander charts</h3>
+              <ChartTable mode="epic" />
+              <h3>Notes for this table</h3>
+              <ul>
+                <li>A player whose hand is empty while the opponent still holds cards passes their turn.</li>
+                <li>Revealed cards stay visible in the revealer's hand (marked) until they are played.</li>
+              </ul>
             </>
           ),
         },
@@ -277,333 +295,385 @@ function Rules() {
 // In-game view
 // ============================================================================
 
-function GameView({
-  state,
-  localPlayerId,
-  dispatch,
-}: {
-  state: AlsState;
-  localPlayerId: PlayerId | null;
-  dispatch: (a: AlsAction) => void;
-}) {
-  // Selected card in hand (waiting for the user to click a theater).
-  const [selectedCardId, setSelectedCardId] = useState<number | null>(null);
-  const [pendingAction, setPendingAction] = useState<'deploy' | 'improvise' | null>(null);
+interface Selection { cardId: number; faceDown: boolean }
 
-  // Reset selection on turn change or sub-phase change.
-  useEffect(() => {
-    setSelectedCardId(null);
-    setPendingAction(null);
-  }, [state.activePlayerId, state.subPhase, state.battleNumber]);
+const BOARD_PICK = new Set(['flip', 'destroy', 'destroyOwn', 'redeployPick', 'incite', 'retrofit']);
 
-  const localSeatIdx = useMemo<0 | 1 | -1>(() => {
+function GameView({ state, localPlayerId, dispatch }: { state: AlsState; localPlayerId: PlayerId | null; dispatch: (a: AlsAction) => void }) {
+  const viewer = useMemo<0 | 1 | -1>(() => {
     if (state.players[0].id === localPlayerId) return 0;
     if (state.players[1].id === localPlayerId) return 1;
     return -1;
   }, [state.players, localPlayerId]);
-  const isLocalActive = localSeatIdx !== -1 && state.activePlayerId === localPlayerId;
-  const me = localSeatIdx === -1 ? null : state.players[localSeatIdx];
-  const opp = localSeatIdx === -1 ? null : state.players[localSeatIdx === 0 ? 1 : 0];
-  const mySeatName = state.seats.find((s) => s.id === localPlayerId)?.name ?? 'You';
+  const [sel, setSel] = useState<Selection | null>(null);
+  const [moving, setMoving] = useState<number | null>(null);
+  const [confirmWithdraw, setConfirmWithdraw] = useState(false);
+  useEffect(() => {
+    setSel(null);
+    setMoving(null);
+    setConfirmWithdraw(false);
+  }, [state.logSeq, state.activePlayerId, state.subPhase, state.battleNumber]);
 
-  if (state.phase === 'gameOver') {
+  const name = (s: 0 | 1) => state.seats.find((x) => x.id === state.players[s].id)?.name ?? `Seat ${s + 1}`;
+
+  if (state.phase === 'gameOver' || state.subPhase === 'battleEnd') {
     return (
       <div className="als-layout">
         <div className="als">
-          <GameOver state={state} />
+          {state.phase === 'gameOver' ? <GameOver state={state} name={name} /> : <BattleEnd state={state} viewer={viewer} name={name} dispatch={dispatch} />}
         </div>
-        <Sidebar state={state} mySeatName={mySeatName} />
+        <Sidebar state={state} viewer={viewer} />
       </div>
     );
   }
 
-  if (state.subPhase === 'battleEnd') {
-    return (
-      <div className="als-layout">
-        <div className="als">
-          <BattleEndPanel state={state} localSeatIdx={localSeatIdx} dispatch={dispatch} />
-        </div>
-        <Sidebar state={state} mySeatName={mySeatName} />
-      </div>
-    );
-  }
+  const me = viewer === -1 ? null : state.players[viewer];
+  const myTurn = viewer !== -1 && state.subPhase === 'action' && state.activePlayerId === me!.id;
+  const pending: AlsPending | null = state.subPhase === 'resolving' ? state.pending : null;
+  const mine = pending && viewer !== -1 && pending.seat === viewer ? pending : null;
+  const playMode = myTurn || mine?.prompt === 'redeployPlay';
+  const answer = (a: AlsAnswer) => me && dispatch({ type: 'answer', playerId: me.id, answer: a });
 
-  // Compute theater highlights based on selection / sub-phase.
-  const highlightTheaters = new Set<number>();
-  const highlightCards = new Set<string>();
-  if (isLocalActive && pendingAction && selectedCardId !== null && me) {
-    const card = state.deckPool[selectedCardId];
-    if (card) {
-      if (pendingAction === 'deploy') {
-        const matchIdx = state.config.theaters.findIndex((t) => t === card.theater);
-        if (matchIdx !== -1) highlightTheaters.add(matchIdx);
-        if (card.strength <= 3 && ownerHasOngoing(state, localSeatIdx as 0 | 1, 'aerodrome')) {
-          for (let i = 0; i < state.config.theaters.length; i++) highlightTheaters.add(i);
-        }
-        if (state.players[localSeatIdx as 0 | 1].airDropArmed) {
-          for (let i = 0; i < state.config.theaters.length; i++) highlightTheaters.add(i);
-        }
-      } else {
-        for (let i = 0; i < state.config.theaters.length; i++) highlightTheaters.add(i);
-      }
-    }
+  // ----- what can be picked
+  const playable = (cardId: number) => {
+    if (!playMode || viewer === -1) return null;
+    if (mine?.prompt === 'redeployPlay' && !(mine.cards ?? []).includes(cardId)) return null;
+    const o = playOptions(state, viewer, cardId);
+    return o.faceUp.length + o.faceDown.length > 0 ? o : null;
+  };
+  const targetTheaters = new Set<number>();
+  if (sel && viewer !== -1) {
+    const o = playOptions(state, viewer, sel.cardId);
+    for (const t of sel.faceDown ? o.faceDown : o.faceUp) targetTheaters.add(t);
   }
-  if (isLocalActive && state.subPhase === 'awaitingFlipTarget' && state.pendingAbility) {
-    const pa = state.pendingAbility;
-    const allowedSides: Array<0 | 1> = pa.kind === 'disrupt' ? [pa.chooserSeatIdx] : [0, 1];
-    const allowedTheaters = pa.kind === 'maneuver'
-      ? adjacentTheaters(state.config.theaters.length, pa.sourceTheaterIdx)
-      : Array.from({ length: state.config.theaters.length }, (_, i) => i);
-    for (const t of allowedTheaters) {
-      for (const side of allowedSides) {
-        const stack = state.playedCards[t][side];
-        if (stack.length === 0) continue;
-        const top = stack[stack.length - 1];
-        highlightCards.add(`${t}:${side}:${top.cardId}`);
-      }
-    }
+  if (mine && (mine.prompt === 'reinforce' || mine.prompt === 'supply')) for (const t of mine.theaters ?? []) targetTheaters.add(t);
+  if (mine?.prompt === 'transport' && moving !== null) {
+    const from = locate(state, moving)?.theaterIdx;
+    state.theaters.forEach((_, t) => { if (t !== from) targetTheaters.add(t); });
   }
-  if (isLocalActive && state.subPhase === 'awaitingTransportTarget' && state.pendingAbility?.kind === 'transport') {
-    const pa = state.pendingAbility;
-    if (pa.pickedCardId === undefined) {
-      // Step 1: highlight own top cards.
-      for (let t = 0; t < state.playedCards.length; t++) {
-        const stack = state.playedCards[t][pa.chooserSeatIdx];
-        if (stack.length === 0) continue;
-        const top = stack[stack.length - 1];
-        highlightCards.add(`${t}:${pa.chooserSeatIdx}:${top.cardId}`);
-      }
-    } else {
-      // Step 2: highlight all theaters except the source.
-      for (let i = 0; i < state.config.theaters.length; i++) {
-        if (i !== pa.pickedFromTheaterIdx) highlightTheaters.add(i);
-      }
-    }
+  const boardTargets = new Set<number>();
+  if (mine && (BOARD_PICK.has(mine.prompt) || (mine.prompt === 'transport' && moving === null))) {
+    for (const c of mine.cards ?? []) boardTargets.add(c);
   }
-  if (isLocalActive && state.subPhase === 'awaitingRedeployTarget' && me) {
-    for (let t = 0; t < state.playedCards.length; t++) {
-      const stack = state.playedCards[t][localSeatIdx as 0 | 1];
-      if (stack.length === 0) continue;
-      const top = stack[stack.length - 1];
-      if (top.faceDown) highlightCards.add(`${t}:${localSeatIdx}:${top.cardId}`);
-    }
-  }
-  if (isLocalActive && state.subPhase === 'awaitingReinforcePlacement') {
-    for (let i = 0; i < state.config.theaters.length; i++) highlightTheaters.add(i);
-  }
+  const marked = new Set<number>();
+  if (pending?.prompt === 'envoy') for (const c of pending.cards ?? []) marked.add(c);
+  if (moving !== null) marked.add(moving);
+  const handTargets = new Set<number>(mine?.prompt === 'reveal' ? mine.cards ?? [] : []);
 
-  // Handler when a theater is clicked.
-  const onTheaterClick = (theaterIdx: number) => {
-    if (!isLocalActive || !me) return;
-    if (state.subPhase === 'awaitingAction' && pendingAction && selectedCardId !== null) {
-      const card = state.deckPool[selectedCardId];
-      if (!card) return;
-      // Validate legal target client-side; reducer also validates.
-      if (pendingAction === 'deploy') {
-        const ok = highlightTheaters.has(theaterIdx);
-        if (!ok) return;
-        dispatch({ type: 'deploy', playerId: me.id, cardId: selectedCardId, theaterIdx });
-      } else {
-        dispatch({ type: 'improvise', playerId: me.id, cardId: selectedCardId, theaterIdx });
-      }
-      setSelectedCardId(null);
-      setPendingAction(null);
-      return;
-    }
-    if (state.subPhase === 'awaitingTransportTarget' && state.pendingAbility?.kind === 'transport') {
-      const pa = state.pendingAbility;
-      if (pa.pickedCardId !== undefined && pa.pickedFromTheaterIdx !== theaterIdx) {
-        dispatch({ type: 'chooseTransportDestination', playerId: me.id, theaterIdx });
-      }
-      return;
-    }
-    if (state.subPhase === 'awaitingReinforcePlacement') {
-      dispatch({ type: 'reinforcePlace', playerId: me.id, theaterIdx });
-      return;
+  // ----- clicks
+  const onTheater = (t: number) => {
+    if (!me || !targetTheaters.has(t)) return;
+    if (sel) {
+      if (mine?.prompt === 'redeployPlay') answer({ kind: 'play', cardId: sel.cardId, theaterIdx: t, faceDown: sel.faceDown });
+      else dispatch({ type: sel.faceDown ? 'improvise' : 'deploy', playerId: me.id, cardId: sel.cardId, theaterIdx: t });
+    } else if (mine?.prompt === 'transport' && moving !== null) {
+      answer({ kind: 'move', cardId: moving, theaterIdx: t });
+    } else if (mine) {
+      answer({ kind: 'theater', theaterIdx: t });
     }
   };
-
-  // Handler when a placed card is clicked.
-  const onCardClick = (theaterIdx: number, sideIdx: 0 | 1, cardId: number) => {
-    if (!isLocalActive || !me) return;
-    const key = `${theaterIdx}:${sideIdx}:${cardId}`;
-    if (!highlightCards.has(key)) return;
-    if (state.subPhase === 'awaitingFlipTarget') {
-      dispatch({ type: 'chooseFlipTarget', playerId: me.id, theaterIdx, sideIdx });
-    } else if (state.subPhase === 'awaitingTransportTarget') {
-      dispatch({ type: 'chooseTransportCard', playerId: me.id, theaterIdx, cardId });
-    } else if (state.subPhase === 'awaitingRedeployTarget') {
-      dispatch({ type: 'chooseRedeployTarget', playerId: me.id, theaterIdx, cardId });
-    }
+  const onBoardCard = (cardId: number) => {
+    if (!mine || !boardTargets.has(cardId)) return;
+    if (mine.prompt === 'transport') setMoving(cardId);
+    else answer({ kind: 'card', cardId });
+  };
+  const onHandCard = (cardId: number) => {
+    if (handTargets.has(cardId)) return answer({ kind: 'card', cardId });
+    const o = playable(cardId);
+    if (!o) return;
+    if (sel?.cardId === cardId) return setSel(null);
+    setSel({ cardId, faceDown: o.faceUp.length === 0 });
   };
 
   return (
     <div className="als-layout">
       <div className="als">
-        <Header state={state} me={me} opp={opp} mySeatName={mySeatName} />
-
-        {state.subPhase === 'awaitingReinforcePlacement' && state.pendingAbility?.kind === 'reinforce' && me && (
-          <ReinforcePreview state={state} dispatch={dispatch} myId={me.id} />
-        )}
-
-        <div className="als-board" style={{ ['--als-theater-count' as string]: state.config.theaters.length }}>
-          {state.config.theaters.map((_, t) => (
+        <Header state={state} viewer={viewer} name={name} />
+        {mine && mine.prompt !== 'redeployPlay'
+          ? <Decision state={state} p={mine} name={name} moving={moving} onAnswer={answer} onCancelMove={() => setMoving(null)} />
+          : pending && <Waiting p={pending} name={name} viewer={viewer} />}
+        <div className={`als-board ${isEpic(state) ? 'epic' : ''}`} style={{ ['--als-theater-count' as string]: state.theaters.length }}>
+          {state.theaters.map((_, t) => (
             <TheaterColumn
-              key={t}
+              key={`${state.battleNumber}-${t}`}
               state={state}
               theaterIdx={t}
-              localSeatIdx={localSeatIdx}
-              onCardClick={onCardClick}
-              onTheaterClick={onTheaterClick}
-              highlightTheaters={highlightTheaters}
-              highlightCards={highlightCards}
+              viewer={viewer}
+              onCardClick={onBoardCard}
+              onTheaterClick={onTheater}
+              highlighted={targetTheaters.has(t)}
+              highlightCards={boardTargets}
+              markedCards={marked}
             />
           ))}
         </div>
-
         {me ? (
-          <HandArea
+          <Hand
             state={state}
-            me={me}
-            isLocalActive={isLocalActive}
-            localSeatIdx={localSeatIdx as 0 | 1}
-            selectedCardId={selectedCardId}
-            setSelectedCardId={setSelectedCardId}
-            pendingAction={pendingAction}
-            setPendingAction={setPendingAction}
+            viewer={viewer as 0 | 1}
+            sel={sel}
+            setSel={setSel}
+            playable={playable}
+            handTargets={handTargets}
+            onHandCard={onHandCard}
+            myTurn={myTurn}
+            redeploying={mine?.prompt === 'redeployPlay'}
+            confirmWithdraw={confirmWithdraw}
+            setConfirmWithdraw={setConfirmWithdraw}
             dispatch={dispatch}
+            drawnCardId={mine?.drawnCardId}
           />
         ) : (
-          <p className="help">Spectator view.</p>
+          <p className="help">Spectating — every card is shown.</p>
         )}
-
-        {!isLocalActive && me && (
-          <p className="help center" style={{ marginTop: 12 }}>
-            Waiting for {(state.seats.find((s) => s.id === state.activePlayerId)?.name ?? 'opponent')}…
-          </p>
+        {me && !myTurn && !mine && state.subPhase === 'action' && (
+          <p className="help center als-waiting-line">Waiting for {name(state.turnSeatIdx)}…</p>
         )}
       </div>
-
-      <Sidebar state={state} mySeatName={mySeatName} />
+      <Sidebar state={state} viewer={viewer} />
     </div>
   );
 }
 
-// ============================================================================
-// Sub-components
-// ============================================================================
+// ----- header
 
-function Header({ state, me, opp, mySeatName }: { state: AlsState; me: AlsState['players'][0] | null; opp: AlsState['players'][0] | null; mySeatName: string }) {
-  const firstName = state.seats.find((s) => s.id === state.players[state.firstPlayerSeatIdx].id)?.name ?? '?';
-  const activeName = state.seats.find((s) => s.id === state.activePlayerId)?.name ?? '?';
-  // Spectators: seat 0 on the left, seat 1 on the right.
-  const left = me ?? state.players[0];
-  const right = opp ?? state.players[1];
-  const seatOf = (p: AlsState['players'][0]) => state.seats.find((s) => s.id === p.id);
-  const first = state.players[state.firstPlayerSeatIdx].id;
+function Header({ state, viewer, name }: { state: AlsState; viewer: 0 | 1 | -1; name: (s: 0 | 1) => string }) {
+  const left: 0 | 1 = viewer === -1 ? 0 : viewer;
+  const right = otherSeat(left);
+  const seatColor = (s: 0 | 1) => state.seats.find((x) => x.id === state.players[s].id)?.color;
   return (
     <div className="als-header">
-      <CommanderPanel
-        name={me ? mySeatName : (seatOf(left)?.name ?? 'Seat 1')}
-        color={seatOf(left)?.color}
-        vp={left.vp}
-        target={state.config.targetVp}
-        active={state.activePlayerId === left.id}
-        first={first === left.id}
-        tag={left.airDropArmed ? 'Air Drop armed' : null}
-      />
+      <CommanderPanel state={state} seat={left} name={name(left)} color={seatColor(left)} />
       <div className="als-header-middle">
         <div className="als-header-battle">Battle {state.battleNumber}</div>
-        <div className="als-header-sub">First to {state.config.targetVp} VP &nbsp;·&nbsp; {firstName} is 1st player</div>
-        <div className="als-header-sub">{activeName}'s turn</div>
+        <div className="als-header-sub">
+          First to {state.config.targetVp} VP{state.config.beginner ? ' (Beginner)' : ''}{isEpic(state) ? ' · Epic Mode' : ''} · deck {state.deck.length}
+        </div>
+        <div className="als-header-sub als-header-turn">{possessive(name(state.turnSeatIdx))} turn</div>
       </div>
-      <CommanderPanel
-        name={seatOf(right)?.name ?? 'Opponent'}
-        color={seatOf(right)?.color}
-        vp={right.vp}
-        target={state.config.targetVp}
-        active={state.activePlayerId === right.id}
-        first={first === right.id}
-        tag={right.airDropArmed ? 'Air Drop armed' : null}
-        alignRight
-      />
+      <CommanderPanel state={state} seat={right} name={name(right)} color={seatColor(right)} alignRight />
     </div>
   );
 }
 
-function CommanderPanel({ name, color, vp, target, active, first, tag, alignRight }: {
-  name: string; color?: string; vp: number; target: number; active: boolean; first: boolean; tag: string | null; alignRight?: boolean;
-}) {
-  const pct = Math.max(0, Math.min(100, (vp / Math.max(1, target)) * 100));
+function CommanderPanel({ state, seat, name, color, alignRight }: { state: AlsState; seat: 0 | 1; name: string; color?: string; alignRight?: boolean }) {
+  const p = state.players[seat];
+  const pct = Math.max(0, Math.min(100, (p.vp / Math.max(1, state.config.targetVp)) * 100));
+  const first = state.firstPlayerSeatIdx === seat;
+  const tags: string[] = [];
+  if (p.airDrop) tags.push('Air Drop ready');
+  if (p.neutralized.length) tags.push(`Neutralized: ${p.neutralized.map((c) => cardById(c).name).join(', ')}`);
   return (
-    <div className={`als-header-side ${alignRight ? 'right' : ''} ${active ? 'active' : ''}`}>
+    <div className={`als-header-side ${alignRight ? 'right' : ''} ${state.activePlayerId === p.id ? 'active' : ''}`}>
       <div className="als-commander">
         <span className="als-seat-dot" style={{ background: color ?? '#888' }} />
         <strong>{name}</strong>
-        {first && <span className="als-first-tag" title="1st player — wins tied theaters">1st</span>}
+        <span className={`als-first-tag ${first ? '' : 'second'}`} title={first ? '1st Player — wins tied theaters' : '2nd Player'}>{first ? '1st' : '2nd'}</span>
       </div>
-      <div className="als-vp" title={`${vp} of ${target} VP`}>
+      <div className="als-vp" title={`${p.vp} of ${state.config.targetVp} VP`}>
         <MedalIcon size={18} />
-        <span className="als-vp-num">{vp}</span>
+        <span className="als-vp-num">{p.vp}</span>
         <span className="als-vp-unit">VP</span>
         <span className="als-vp-bar"><span style={{ width: `${pct}%` }} /></span>
       </div>
-      {tag ? <span className="als-tag">{tag}</span> : null}
+      {tags.map((t) => <span key={t} className="als-tag">{t}</span>)}
     </div>
   );
 }
 
-function HandArea({
-  state, me, isLocalActive, localSeatIdx, selectedCardId, setSelectedCardId,
-  pendingAction, setPendingAction, dispatch,
+// ----- decisions
+
+function theaterName(state: AlsState, t: number | undefined): string {
+  return t === undefined ? '' : THEATER_DEFS[state.theaters[t]].name;
+}
+
+/** What the chooser is asked, in their words. */
+function promptText(state: AlsState, p: AlsPending, moving: number | null): string {
+  const src = locate(state, p.sourceCardId);
+  const here = theaterName(state, src?.theaterIdx);
+  switch (p.prompt) {
+    case 'flip':
+      if (p.ability === 'maneuver' || p.ability === 'manipulate') return `Flip an uncovered card in a theater next to ${here}.`;
+      if (p.ability === 'ambush') return 'Flip any uncovered card.';
+      if (p.ability === 'disrupt') return 'Disrupt — flip one of your own uncovered cards.';
+      if (p.ability === 'leverage') return 'Flip one of the highlighted cards (no stronger than the card you revealed).';
+      if (p.ability === 'surveil') return 'Flip an uncovered face-up card.';
+      return 'Flip one of the highlighted cards.';
+    case 'transport':
+      return moving === null
+        ? 'You may move one of your cards to a different theater — pick the card.'
+        : `Move ${cardById(moving).name} to which theater?`;
+    case 'redeployPick':
+      return 'You may return one of your face-down cards to your hand. If you do, you play a card.';
+    case 'redeployPlay':
+      return 'Play a card.';
+    case 'reinforce':
+      return `Play ${cardById(p.drawnCardId!).name} face down to a theater next to ${here}.`;
+    case 'destroyOwn':
+      return 'You may destroy one of your other cards — then destroy any uncovered card.';
+    case 'destroy':
+      return 'Destroy any uncovered card.';
+    case 'reveal':
+      if (p.ability === 'leverage') return 'You may reveal a card from your hand, then flip an uncovered card no stronger than it.';
+      if (p.ability === 'requisition') return "You may reveal a card from your hand: 2 supplies in that card's theater.";
+      if (p.ability === 'surveil' && p.revealedCardId !== undefined) {
+        return `Your enemy revealed ${cardById(p.revealedCardId).name} (${cardById(p.revealedCardId).strength}). You may reveal a lower card to flip an uncovered face-up card.`;
+      }
+      return 'Surveil — you must reveal a card from your hand.';
+    case 'giveOrKeep':
+      return `You drew ${cardById(p.drawnCardId!).name}. Give it to your enemy and draw another, or keep it and your enemy draws 1.`;
+    case 'incite':
+      return "Use the instant ability of one of the highlighted cards as if it were on Incite.";
+    case 'name':
+      return "Name a card. If it's in your enemy's hand, they must reveal it and play it face down next time they play.";
+    case 'retrofit':
+      return "Choose one of your uncovered cards: gain supplies equal to its strength in its theater, then flip it.";
+    case 'supply':
+      return p.ability === 'armsRace' && p.seat !== locate(state, p.sourceCardId)?.side
+        ? 'Arms Race — gain 2 supplies in a different theater from your enemy’s.'
+        : 'Gain 2 supplies in a theater.';
+    case 'envoy':
+      return `Move Envoy onto ${cardById(p.cards![0]).name}?`;
+  }
+}
+
+const SKIP_LABEL: Partial<Record<AlsPending['prompt'], string>> = {
+  transport: "Don't move",
+  redeployPick: "Don't return",
+  destroyOwn: "Don't destroy",
+  reveal: "Don't reveal",
+};
+
+function Decision({ state, p, name, moving, onAnswer, onCancelMove }: {
+  state: AlsState; p: AlsPending; name: (s: 0 | 1) => string; moving: number | null;
+  onAnswer: (a: AlsAnswer) => void; onCancelMove: () => void;
+}) {
+  const source = cardById(p.sourceCardId);
+  const showCard = p.drawnCardId !== undefined ? cardById(p.drawnCardId) : null;
+  return (
+    <div className="als-decision" data-prompt={p.prompt}>
+      <div className="als-decision-head">
+        <span className="als-decision-ability">{abilityName(p.ability)}</span>
+        {source.ability !== p.ability && <span className="als-decision-via">via {source.name}</span>}
+        <span className="als-decision-who">{name(p.seat)}, your call</span>
+      </div>
+      <div className="als-decision-body">
+        {showCard && <AlsCardView card={showCard} />}
+        <div className="als-decision-text">
+          <p>{promptText(state, p, moving)}</p>
+          {p.prompt === 'name' && <NamePicker state={state} p={p} onName={(cardId) => onAnswer({ kind: 'name', cardId })} />}
+          <div className="als-actions">
+            {p.prompt === 'giveOrKeep' && (
+              <>
+                <button className="primary" onClick={() => onAnswer({ kind: 'option', option: 'give' })}>Give it, draw another</button>
+                <button onClick={() => onAnswer({ kind: 'option', option: 'keep' })}>Keep it</button>
+              </>
+            )}
+            {p.prompt === 'envoy' && (
+              <>
+                <button className="primary" onClick={() => onAnswer({ kind: 'option', option: 'move' })}>Move Envoy</button>
+                <button onClick={() => onAnswer({ kind: 'option', option: 'stay' })}>Leave it</button>
+              </>
+            )}
+            {p.prompt === 'transport' && moving !== null && <button onClick={onCancelMove}>Pick another card</button>}
+            {p.optional && <button className="secondary" onClick={() => onAnswer({ kind: 'skip' })}>{SKIP_LABEL[p.prompt] ?? 'Skip'}</button>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Neutralize: every card of this battle, by theater. Cards you can see
+ *  elsewhere (your hand, face up on the board) are dimmed — they can't be in
+ *  your enemy's hand. */
+function NamePicker({ state, p, onName }: { state: AlsState; p: AlsPending; onName: (cardId: number) => void }) {
+  const seen = new Set<number>(state.players[p.seat].hand);
+  for (const stacks of state.board) {
+    for (const side of [0, 1] as const) for (const c of stacks[side]) if (!c.faceDown || side === p.seat) seen.add(c.cardId);
+  }
+  for (const c of state.players[otherSeat(p.seat)].known) seen.delete(c);
+  const ids = new Set(cardIdsForTheaters(state.theaters));
+  return (
+    <div className="als-name-picker">
+      {state.theaters.map((t) => (
+        <div key={t} className="als-name-row">
+          <TheaterEmblem theater={t} size={18} />
+          {CARD_TEMPLATES.filter((c) => c.theater === t && ids.has(c.id)).map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              className={`als-name-btn ${seen.has(c.id) ? 'seen' : ''}`}
+              title={`${cardLabel(c.id)} — ${c.name}${seen.has(c.id) ? ' (you can see it is not in their hand)' : ''}`}
+              onClick={() => onName(c.id)}
+            >
+              <span className="num">{c.strength}</span> {c.name}
+            </button>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Waiting({ p, name, viewer }: { p: AlsPending; name: (s: 0 | 1) => string; viewer: 0 | 1 | -1 }) {
+  let what = `deciding (${abilityName(p.ability)})`;
+  if (p.prompt === 'reveal' && p.ability === 'surveil' && p.revealedCardId === undefined) what = 'choosing a card to reveal for Surveil';
+  else if (p.prompt === 'flip') what = `choosing a card to flip (${abilityName(p.ability)})`;
+  else if (p.prompt === 'supply') what = `choosing where to put supplies (${abilityName(p.ability)})`;
+  else if (p.prompt === 'name') what = 'naming a card (Neutralize)';
+  else if (p.prompt === 'envoy') what = 'deciding whether to move Envoy';
+  return (
+    <div className="als-decision waiting">
+      <span className="als-decision-ability">{abilityName(p.ability)}</span>
+      <span>{viewer === -1 ? '' : 'Waiting — '}{name(p.seat)} is {what}…</span>
+    </div>
+  );
+}
+
+// ----- hand
+
+function Hand({
+  state, viewer, sel, setSel, playable, handTargets, onHandCard, myTurn, redeploying, confirmWithdraw, setConfirmWithdraw, dispatch, drawnCardId,
 }: {
   state: AlsState;
-  me: AlsState['players'][0];
-  isLocalActive: boolean;
-  localSeatIdx: 0 | 1;
-  selectedCardId: number | null;
-  setSelectedCardId: (v: number | null) => void;
-  pendingAction: 'deploy' | 'improvise' | null;
-  setPendingAction: (v: 'deploy' | 'improvise' | null) => void;
+  viewer: 0 | 1;
+  sel: Selection | null;
+  setSel: (s: Selection | null) => void;
+  playable: (cardId: number) => { faceUp: number[]; faceDown: number[] } | null;
+  handTargets: Set<number>;
+  onHandCard: (cardId: number) => void;
+  myTurn: boolean;
+  redeploying: boolean;
+  confirmWithdraw: boolean;
+  setConfirmWithdraw: (b: boolean) => void;
   dispatch: (a: AlsAction) => void;
+  drawnCardId?: number;
 }) {
-  const opp = state.players[localSeatIdx === 0 ? 1 : 0];
-  const canAct = isLocalActive && state.subPhase === 'awaitingAction';
+  const me = state.players[viewer];
+  const opp = state.players[otherSeat(viewer)];
+  const selOptions = sel ? playable(sel.cardId) : null;
+  const wvp = vpForWithdraw(state, viewer);
   const hint = (() => {
-    if (!isLocalActive) return null;
-    switch (state.subPhase) {
-      case 'awaitingAction':
-        if (selectedCardId !== null && pendingAction) {
-          return pendingAction === 'deploy'
-            ? 'Click a highlighted theater to deploy face-up.'
-            : 'Click any theater to improvise (face-down, strength 2, no ability).';
-        }
-        return 'Pick a card from your hand, then choose Deploy / Improvise.';
-      case 'awaitingFlipTarget':
-        if (state.pendingAbility?.kind === 'maneuver') return 'Maneuver — click a card in an adjacent theater to flip it.';
-        if (state.pendingAbility?.kind === 'ambush') return 'Ambush — click any uncovered card to flip it.';
-        if (state.pendingAbility?.kind === 'disrupt') return 'Disrupt — flip one of your own uncovered cards.';
-        return 'Pick a target to flip.';
-      case 'awaitingTransportTarget':
-        return state.pendingAbility?.kind === 'transport' && state.pendingAbility.pickedCardId === undefined
-          ? 'Transport — click one of your cards to move.'
-          : 'Transport — click a different theater for the destination.';
-      case 'awaitingRedeployTarget':
-        return 'Redeploy — click one of your face-down cards to return to your hand. You will take another turn.';
-      case 'awaitingReinforcePlacement':
-        return 'Reinforce — click a theater to place the top card face-down, or skip.';
-      default:
-        return null;
-    }
+    if (redeploying) return sel ? (sel.faceDown ? 'Click any highlighted theater to play it face down.' : 'Click a highlighted theater to deploy it.') : 'Redeploy — play a card: pick one from your hand.';
+    if (!myTurn) return null;
+    if (me.neutralized.length) return `Neutralized: you must play ${me.neutralized.map((c) => cardById(c).name).join(' or ')} face down (or withdraw).`;
+    if (sel) return sel.faceDown ? 'Click any theater to play it face down (strength 2, no ability).' : 'Click a highlighted theater to deploy it face up.';
+    return 'Pick a card, then a theater — or withdraw.';
   })();
 
   return (
     <div className="als-hand-area">
       <div className="als-opp-hand">
         <div className="als-opp-hand-row">
-          {opp.hand.map((_, i) => <FaceDownCard key={i} size="mini" />)}
+          {opp.hand.map((c, i) => (opp.known.includes(c)
+            ? <MiniFace key={c} card={cardById(c)} label="Revealed" />
+            : <FaceDownCard key={`b${i}`} size="mini" />))}
         </div>
-        <span className="als-opp-hand-label">{opp.hand.length} card{opp.hand.length === 1 ? '' : 's'} in opponent's hand</span>
+        <span className="als-opp-hand-label">
+          {opp.hand.length} card{opp.hand.length === 1 ? '' : 's'} in hand
+          {opp.known.length > 0 && ` · ${opp.known.length} revealed`}
+        </span>
       </div>
 
       {hint && <div className="als-hint">{hint}</div>}
@@ -611,154 +681,137 @@ function HandArea({
       <div className="als-hand">
         {me.hand.length === 0 && <p className="help">No cards in hand.</p>}
         {me.hand.map((cardId) => {
-          const card = state.deckPool[cardId];
-          if (!card) return null;
-          const selected = selectedCardId === cardId;
+          const can = playable(cardId) !== null || handTargets.has(cardId);
+          const anyChoice = myTurn || redeploying || handTargets.size > 0;
+          const badge = cardId === drawnCardId ? 'Drawn'
+            : me.neutralized.includes(cardId) ? 'Face down next'
+              : me.known.includes(cardId) ? 'Revealed' : null;
           return (
             <AlsCardView
               key={cardId}
-              card={card}
-              selectable={canAct}
-              selected={selected}
-              onClick={canAct ? () => {
-                setSelectedCardId(cardId);
-                if (!pendingAction) setPendingAction('deploy');
-              } : undefined}
+              card={cardById(cardId)}
+              selectable={can}
+              selected={sel?.cardId === cardId || handTargets.has(cardId)}
+              muted={anyChoice && !can}
+              onClick={() => onHandCard(cardId)}
+              badge={badge}
             />
           );
         })}
       </div>
 
       <div className="als-actions">
-        {canAct && (
+        {(myTurn || redeploying) && (
           <>
             <button
-              className="primary"
-              disabled={selectedCardId === null}
-              onClick={() => setPendingAction('deploy')}
+              className={sel && !sel.faceDown ? 'primary' : ''}
+              disabled={!sel || !selOptions || selOptions.faceUp.length === 0}
+              onClick={() => sel && setSel({ ...sel, faceDown: false })}
             >
-              Deploy (face-up)
+              Deploy<span className="als-btn-detail"> (face up)</span>
             </button>
             <button
-              className="secondary"
-              disabled={selectedCardId === null}
-              onClick={() => setPendingAction('improvise')}
+              className={sel && sel.faceDown ? 'primary' : ''}
+              disabled={!sel || !selOptions || selOptions.faceDown.length === 0}
+              onClick={() => sel && setSel({ ...sel, faceDown: true })}
             >
-              Improvise (face-down)
-            </button>
-            <button
-              className="danger"
-              onClick={() => {
-                if (window.confirm(`Withdraw with ${me.hand.length} card${me.hand.length === 1 ? '' : 's'} in hand?\nOpponent gains ${vpForWithdraw(me.hand.length)} VP.`)) {
-                  dispatch({ type: 'withdraw', playerId: me.id });
-                }
-              }}
-            >
-              Withdraw ({vpForWithdraw(me.hand.length)} VP to opp)
+              Improvise<span className="als-btn-detail"> (face down)</span>
             </button>
           </>
         )}
-        {isLocalActive && state.subPhase === 'awaitingReinforcePlacement' && (
-          <button onClick={() => dispatch({ type: 'reinforcePlace', playerId: me.id, theaterIdx: null })}>
-            Skip Reinforce
+        {myTurn && !confirmWithdraw && (
+          <button className="danger" onClick={() => setConfirmWithdraw(true)}>
+            Withdraw<span className="als-btn-detail"> — opponent +{wvp} VP</span>
           </button>
+        )}
+        {myTurn && confirmWithdraw && (
+          <>
+            <button className="danger" onClick={() => dispatch({ type: 'withdraw', playerId: me.id })}>
+              Confirm withdraw (+{wvp} VP to opponent)
+            </button>
+            <button className="secondary" onClick={() => setConfirmWithdraw(false)}>Keep fighting</button>
+          </>
         )}
       </div>
     </div>
   );
 }
 
-function ReinforcePreview({ state, dispatch, myId }: { state: AlsState; dispatch: (a: AlsAction) => void; myId: PlayerId }) {
-  const pa = state.pendingAbility;
-  if (!pa || pa.kind !== 'reinforce') return null;
-  const id = pa.revealedTopCardId;
-  if (id === null) return null;
-  const card = state.deckPool[id];
-  if (!card) return null;
-  void dispatch; void myId;
+// ----- battle end / game over
+
+function ResultTable({ state, name }: { state: AlsState; name: (s: 0 | 1) => string }) {
+  const r = state.lastBattleResult;
+  if (!r) return null;
+  const color = (s: 0 | 1) => state.seats.find((x) => x.id === state.players[s].id)?.color ?? '#888';
   return (
-    <div className="als-reinforce-preview">
-      <span>Top of deck (reveal):</span>
-      <AlsCardView card={card} />
-      <span className="als-cheat-note">If placed, it goes face-down (strength 2, no ability).</span>
-    </div>
+    <table className="als-result-table">
+      <thead>
+        <tr>
+          <th>Theater</th>
+          {([0, 1] as const).map((s) => <th key={s} className="num"><span className="als-seat-dot" style={{ background: color(s) }} /> {name(s)}</th>)}
+          <th>Held by</th>
+        </tr>
+      </thead>
+      <tbody>
+        {r.theaters.map((tid, t) => {
+          const holder = r.theaterControl[t];
+          return (
+            <tr key={tid}>
+              <td><span className="als-result-theater"><TheaterEmblem theater={tid} size={20} /> {THEATER_DEFS[tid].name}</span></td>
+              <td className={`num ${holder === 0 ? 'won' : ''}`}>{r.theaterStrengths[t][0]}</td>
+              <td className={`num ${holder === 1 ? 'won' : ''}`}>{r.theaterStrengths[t][1]}</td>
+              <td><span className="als-result-holder"><ControlFlag size={14} /> {name(holder)}</span></td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
   );
 }
 
-function BattleEndPanel({ state, localSeatIdx, dispatch }: { state: AlsState; localSeatIdx: 0 | 1 | -1; dispatch: (a: AlsAction) => void }) {
-  const result = state.lastBattleResult;
-  if (!result) return null;
-  const seatName = (i: 0 | 1) => state.seats.find((s) => s.id === state.players[i].id)?.name ?? `Seat ${i + 1}`;
-  const seatColor = (i: 0 | 1) => state.seats.find((s) => s.id === state.players[i].id)?.color ?? '#888';
-  const winnerName = result.winnerSeatIdx !== null ? seatName(result.winnerSeatIdx) : 'Nobody';
-  const isMyTurn = localSeatIdx !== -1 && state.activePlayerId === state.players[localSeatIdx].id;
-  const how = result.endedBy === 'withdraw'
-    ? `${result.withdrawerSeatIdx !== null ? seatName(result.withdrawerSeatIdx) : 'A commander'} withdrew`
-    : 'Fought to the last card';
+function BattleEnd({ state, viewer, name, dispatch }: { state: AlsState; viewer: 0 | 1 | -1; name: (s: 0 | 1) => string; dispatch: (a: AlsAction) => void }) {
+  const r = state.lastBattleResult;
+  if (!r) return null;
+  const canContinue = viewer !== -1 && state.activePlayerId === state.players[viewer].id;
+  const how: ReactNode = r.endedBy === 'withdraw'
+    ? <>{name(r.withdrawerSeatIdx!)} withdrew with {r.cardsLeft} card{r.cardsLeft === 1 ? '' : 's'} left</>
+    : <>Fought to the last card</>;
   return (
     <div className="als-battle-end">
-      <div className="als-panel-eyebrow">Battle {result.battleNumber} complete</div>
-      <h2><MedalIcon size={30} /> {winnerName} wins the battle</h2>
-      <p className="als-panel-sub">{how} · +{result.vpAwardedToWinner} VP to {winnerName}</p>
-      <table className="als-result-table">
-        <thead>
-          <tr>
-            <th>Theater</th>
-            <th className="num"><span className="als-seat-dot" style={{ background: seatColor(0) }} /> {seatName(0)}</th>
-            <th className="num"><span className="als-seat-dot" style={{ background: seatColor(1) }} /> {seatName(1)}</th>
-            <th>Held by</th>
-          </tr>
-        </thead>
-        <tbody>
-          {state.config.theaters.map((tid, t) => {
-            const holder = result.theaterControl[t];
-            return (
-              <tr key={t}>
-                <td><span className="als-result-theater"><TheaterEmblem theater={tid} size={20} /> {THEATER_DEFS[tid].name}</span></td>
-                <td className={`num ${holder === 0 ? 'won' : ''}`}>{result.theaterStrengths[t][0]}</td>
-                <td className={`num ${holder === 1 ? 'won' : ''}`}>{result.theaterStrengths[t][1]}</td>
-                <td><span className="als-result-holder"><ControlFlag size={14} /> {seatName(holder)}</span></td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+      <div className="als-panel-eyebrow">Battle {r.battleNumber} complete</div>
+      <h2><MedalIcon size={30} /> {name(r.winnerSeatIdx)} {wins(name(r.winnerSeatIdx))} the battle</h2>
+      <p className="als-panel-sub">{how} · +{r.vpAwarded} VP to {name(r.winnerSeatIdx)}</p>
+      <ResultTable state={state} name={name} />
       <div className="als-result-score">
-        {([0, 1] as const).map((i) => (
-          <span key={i} className="als-result-vp">
-            <span className="als-seat-dot" style={{ background: seatColor(i) }} /> {seatName(i)} <MedalIcon size={16} /> <strong>{state.players[i].vp}</strong>
-          </span>
+        {([0, 1] as const).map((s) => (
+          <span key={s} className="als-result-vp">{name(s)} <MedalIcon size={16} /> <strong>{state.players[s].vp}</strong></span>
         ))}
         <span className="als-panel-sub">first to {state.config.targetVp}</span>
       </div>
-      {isMyTurn && (
-        <button className="primary" onClick={() => dispatch({ type: 'continueBattle' })}>
-          Next battle →
-        </button>
-      )}
+      <p className="als-panel-sub">Next: the rightmost theater moves to the left end and the Supreme Commanders swap.</p>
+      {canContinue
+        ? <button className="primary" onClick={() => dispatch({ type: 'continueBattle' })}>Next battle →</button>
+        : <p className="help">Waiting for {name(state.firstPlayerSeatIdx)} to start the next battle…</p>}
     </div>
   );
 }
 
-function GameOver({ state }: { state: AlsState }) {
-  const winnerSeatIdx: 0 | 1 = state.players[0].vp >= state.players[1].vp ? 0 : 1;
-  const seatName = (i: 0 | 1) => state.seats.find((s) => s.id === state.players[i].id)?.name ?? '?';
+function GameOver({ state, name }: { state: AlsState; name: (s: 0 | 1) => string }) {
+  const winner: 0 | 1 = state.players[0].vp >= state.config.targetVp ? 0 : 1;
   return (
     <div className="als-gameover">
       <div className="als-gameover-banners">
-        {state.config.theaters.map((tid) => <div key={tid}><TheaterBanner theater={tid} /></div>)}
+        {state.theaters.map((tid) => <div key={tid}><TheaterBanner theater={tid} /></div>)}
       </div>
       <MedalIcon size={72} />
-      <h1>{seatName(winnerSeatIdx)} wins the war!</h1>
+      <h1>{name(winner)} {wins(name(winner))} the war!</h1>
       <p className="als-panel-sub">
-        Final VP — {seatName(0)} <strong>{state.players[0].vp}</strong> · {seatName(1)} <strong>{state.players[1].vp}</strong>
+        Final VP — {name(0)} <strong>{state.players[0].vp}</strong> · {name(1)} <strong>{state.players[1].vp}</strong>
       </p>
+      {state.lastBattleResult && <ResultTable state={state} name={name} />}
     </div>
   );
 }
-
-// ---------- Unused-imports placation ----------
-void SLS_THEATER_IDS;
 
 export const bundle: GameUiBundle<AlsState, AlsAction, AlsConfig> = {
   LobbyConfig,

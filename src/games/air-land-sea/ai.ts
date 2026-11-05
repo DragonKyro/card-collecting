@@ -1,291 +1,196 @@
-// Air, Land & Sea AI — heuristic, single difficulty.
+// Air, Land & Sea — heuristic AI.
 //
-// Strategy
-// --------
-// 1. Always answer follow-up sub-phases first (flip target, transport target,
-//    redeploy target, reinforce placement). These pick the locally-best target
-//    (highest opponent strength to flip / closest theater to swing / etc.).
-// 2. On `awaitingAction`:
-//    a. Compute strength on every theater for both sides + a "value" for the
-//       cards in hand.
-//    b. Consider withdrawing if expected VP loss from continuing > VP loss
-//       from withdrawing now.
-//    c. Otherwise score every legal deploy and every legal improvise; pick
-//       the highest-scoring action.
+// One-ply search over sampled worlds. The AI never reads hidden cards: it
+// builds a few `determinize`d copies of the state (unseen cards shuffled among
+// the unseen places, knowledge.ts), plays each candidate move in each copy
+// through the real reducer, lets the follow-up ability decisions resolve
+// greedily (each chooser — either side — takes the answer that looks best to
+// it right away), and scores the result. Withdrawing is scored exactly.
 //
-// Scoring an action ≈ delta in (theaters likely to be won by us) × big weight
-// + raw strength delta + ability value bonus − penalty for "burning" a high-
-// value card too early.
+// The score: the chance of winning the battle (per-theater margins, softened
+// by the cards still to come, combined into "controls a majority") weighs
+// what winning and losing it are worth, clamped between what withdrawing next
+// turn would cost and what the opponent would concede by withdrawing. Every
+// outcome is valued by how it moves a race-model match equity (so a trailing
+// AI takes more risks, a leading one fewer), plus small terms for lingering
+// effects (Air Drop, Neutralize obligations, revealed cards, Aerodrome /
+// Supply Lines / Envoy flexibility).
 
 import type { PlayerId } from '@/core/types';
-import type { AlsState, AlsAction, AlsCardTemplate } from './types';
-import { theaterStrength, ownerHasOngoing, vpForWithdraw, FULL_BATTLE_VP } from './scoring';
+import { createRng } from '@/core/rng';
+import type { AlsAction, AlsState } from './types';
+import { cardById } from './cards';
+import { applyAction, seatIdxOf } from './reducer';
+import { legalActions, legalAnswers } from './moves';
+import { determinize, unseenCards, type World } from './knowledge';
+import { fullBattleVp, ongoingSources, otherSeat, theaterStrength, vpForWithdraw } from './rules';
 
-// Rough ability value table — added as a bonus when scoring an Instant/Ongoing
-// play. Tuned by feel, not optimized.
-const ABILITY_VALUE: Partial<Record<NonNullable<AlsCardTemplate['ability']>, number>> = {
-  // Instants
-  maneuver: 2.5,
-  ambush: 3.0,
-  disrupt: 4.0,
-  transport: 2.0,
-  transportSea: 2.0,
-  redeploy: 1.5,
-  reinforce: 2.0,
-  airDrop: 1.0,
-  // Ongoings (high — they keep working)
-  aerodrome: 3.5,
-  escalation: 3.0,
-  containment: 4.0,
-  support: 3.0,
-  coverFire: 3.0,
-  coverFireSea: 3.0,
-  blockade: 3.0,
-  // 6-strength = pure strength (handled separately via raw strength)
-  heavyBombers: 0,
-  heavyTanks: 0,
-  superBattleship: 0,
-};
-
-function seatIdxOf(state: AlsState, id: PlayerId): 0 | 1 | null {
-  if (state.players[0].id === id) return 0;
-  if (state.players[1].id === id) return 1;
-  return null;
-}
-function other(s: 0 | 1): 0 | 1 { return s === 0 ? 1 : 0; }
-
-function controlMargin(state: AlsState, seatIdx: 0 | 1): number {
-  let wins = 0;
-  for (let t = 0; t < state.config.theaters.length; t++) {
-    const me = theaterStrength(state, t, seatIdx);
-    const opp = theaterStrength(state, t, other(seatIdx));
-    if (me > opp) wins += 1;
-    else if (me === opp) {
-      // tie goes to first player
-      if (state.firstPlayerSeatIdx === seatIdx) wins += 1;
-    }
-  }
-  return wins;
-}
-
-/** Estimate the value of deploying `card` to theaterIdx. Mutates a clone. */
-function scoreDeploy(state: AlsState, seatIdx: 0 | 1, card: AlsCardTemplate, theaterIdx: number): number {
-  // Forecast: roughly, this card contributes its strength to that theater on
-  // our side. Plus ability bonus.
-  const opp = other(seatIdx);
-  const myCurrent = theaterStrength(state, theaterIdx, seatIdx);
-  const oppCurrent = theaterStrength(state, theaterIdx, opp);
-  const myAfter = myCurrent + card.strength;
-  // Crossing thresholds: going from "behind" to "ahead" is most valuable.
-  let v = card.strength * 0.4;
-  if (myCurrent <= oppCurrent && myAfter > oppCurrent) v += 6;
-  else if (myAfter > oppCurrent) v += 2;
-  // Ability bonus.
-  if (card.ability) v += ABILITY_VALUE[card.ability] ?? 0;
-  // Penalty: burning a 5 or 6 too early (round-1).
-  if (card.strength >= 5 && state.players[seatIdx].hand.length >= 4) v -= 1;
-  return v;
-}
-
-function scoreImprovise(state: AlsState, seatIdx: 0 | 1, card: AlsCardTemplate, theaterIdx: number): number {
-  const opp = other(seatIdx);
-  // Face-down strength: 2 base, 4 with own Escalation in play.
-  const fdStrength = ownerHasOngoing(state, seatIdx, 'escalation') ? 4 : 2;
-  const myCurrent = theaterStrength(state, theaterIdx, seatIdx);
-  const oppCurrent = theaterStrength(state, theaterIdx, opp);
-  const myAfter = myCurrent + fdStrength;
-  let v = fdStrength * 0.3;
-  if (myCurrent <= oppCurrent && myAfter > oppCurrent) v += 4;
-  else if (myAfter > oppCurrent) v += 1;
-  // Improvise hides our strong cards — bonus for using strong cards face-down
-  // when we don't have a matching theater.
-  if (card.strength >= 5) v += 1.5;
-  // Strong penalty if Containment is in play (card would be discarded).
-  if (ownerHasOngoing(state, 0, 'containment') || ownerHasOngoing(state, 1, 'containment')) {
-    v -= 6;
-  }
-  return v;
-}
-
-function deployLegalTheaters(state: AlsState, seatIdx: 0 | 1, card: AlsCardTemplate): number[] {
-  const out: number[] = [];
-  const matching = state.config.theaters.findIndex((t) => t === card.theater);
-  if (matching !== -1) out.push(matching);
-  // Aerodrome: 1-3 strength cards can go anywhere.
-  if (card.strength <= 3 && ownerHasOngoing(state, seatIdx, 'aerodrome')) {
-    for (let i = 0; i < state.config.theaters.length; i++) {
-      if (!out.includes(i)) out.push(i);
-    }
-  }
-  // Air Drop: one-shot anywhere.
-  if (state.players[seatIdx].airDropArmed) {
-    for (let i = 0; i < state.config.theaters.length; i++) {
-      if (!out.includes(i)) out.push(i);
-    }
-  }
-  return out;
-}
+/** Match equity (0..1) to VP-like units: winning a 6-VP battle at 0–0 of a 12-VP match ≈ 7.5. */
+const EQUITY_SCALE = 25;
+/** Race-model exponent (1–2 all played alike in self-play; 1.5 edged it). */
+const EQUITY_EXPONENT = 1.5;
+/** Sampled worlds per decision (fewer when there are many moves, as in Epic Mode). */
+const SAMPLES = 6;
+const SETTLE_BUDGET = 6;
 
 export function chooseAIAction(state: AlsState, playerId: PlayerId): AlsAction | null {
-  if (state.phase !== 'playing') return null;
-  const seatIdx = seatIdxOf(state, playerId);
-  if (seatIdx === null) return null;
+  if (state.phase === 'gameOver' || state.activePlayerId !== playerId) return null;
+  if (state.subPhase === 'battleEnd') return { type: 'continueBattle' };
+  const actions = legalActions(state, playerId);
+  if (actions.length === 0) return null;
+  if (actions.length === 1) return actions[0];
+  const seat = seatIdxOf(state, playerId);
 
-  // Battle-end advance: anyone (in our two-player setup, the active player)
-  // can press continue. Just do it.
-  if (state.subPhase === 'battleEnd') {
-    if (state.activePlayerId === playerId) return { type: 'continueBattle' };
-    return null;
-  }
+  const samples = actions.length > 40 ? SAMPLES / 2 : SAMPLES;
+  const rng = createRng(((state.rngState.seed ^ Math.imul(state.logSeq + 1, 2654435761)) + seat * 97) >>> 0);
+  const worlds = Array.from({ length: samples }, () => determinize(state, seat, rng));
 
-  // Must be the active player for everything else.
-  if (state.activePlayerId !== playerId) return null;
-
-  // ---------- Follow-up handlers ----------
-  switch (state.subPhase) {
-    case 'awaitingFlipTarget': {
-      // Find the highest-strength uncovered card on the legal side(s).
-      const pending = state.pendingAbility;
-      if (!pending) return null;
-      let bestT = -1, bestSide: 0 | 1 = 0, bestVal = -1;
-      const allowedSides: Array<0 | 1> =
-        pending.kind === 'disrupt' ? [pending.chooserSeatIdx] : [0, 1];
-      const allowedTheaters =
-        pending.kind === 'maneuver'
-          ? [pending.sourceTheaterIdx - 1, pending.sourceTheaterIdx + 1].filter(
-              (i) => i >= 0 && i < state.config.theaters.length,
-            )
-          : Array.from({ length: state.config.theaters.length }, (_, i) => i);
-      for (const t of allowedTheaters) {
-        for (const side of allowedSides) {
-          const stack = state.playedCards[t][side];
-          if (stack.length === 0) continue;
-          const top = stack[stack.length - 1];
-          const tpl = state.deckPool[top.cardId];
-          if (!tpl) continue;
-          // Higher-strength face-up enemy card = best flip target.
-          let val = 0;
-          if (side !== seatIdx && !top.faceDown) val = tpl.strength;
-          else if (side === seatIdx && top.faceDown) val = 5; // flip own face-down up = often good
-          else val = 1;
-          if (val > bestVal) { bestVal = val; bestT = t; bestSide = side; }
-        }
-      }
-      if (bestT === -1) {
-        // No legal target — shouldn't happen since reducer guards. Skip via no-op.
-        return null;
-      }
-      return { type: 'chooseFlipTarget', playerId, theaterIdx: bestT, sideIdx: bestSide };
+  let best = actions[0];
+  let bestValue = -Infinity;
+  for (const action of actions) {
+    let value: number;
+    if (action.type === 'withdraw') {
+      value = outcomeUtility(state, seat, otherSeat(seat), vpForWithdraw(state, seat)) - 0.05;
+    } else {
+      value = 0;
+      for (const w of worlds) value += simulate(w, action, seat);
+      value /= worlds.length;
     }
-    case 'awaitingTransportTarget': {
-      const pending = state.pendingAbility;
-      if (!pending || pending.kind !== 'transport') return null;
-      if (pending.pickedCardId === undefined) {
-        // Step 1: pick a card. Pick top-of-stack with the most "swing" potential
-        // — the top card on a theater where we're losing (move it to a theater
-        // where we might win).
-        let bestT = -1, bestId = -1, bestVal = -Infinity;
-        for (let t = 0; t < state.playedCards.length; t++) {
-          const stack = state.playedCards[t][seatIdx];
-          if (stack.length === 0) continue;
-          const top = stack[stack.length - 1];
-          // Score: prefer face-up high-strength on losing theater.
-          const opp = other(seatIdx);
-          const meS = theaterStrength(state, t, seatIdx);
-          const oppS = theaterStrength(state, t, opp);
-          const margin = meS - oppS;
-          const v = -margin; // bigger loss = better to move from
-          if (v > bestVal) { bestVal = v; bestT = t; bestId = top.cardId; }
-        }
-        if (bestT === -1) return null;
-        return { type: 'chooseTransportCard', playerId, theaterIdx: bestT, cardId: bestId };
-      }
-      // Step 2: pick destination — the most-contested theater we could swing.
-      let bestDest = -1, bestVal = -Infinity;
-      for (let t = 0; t < state.config.theaters.length; t++) {
-        if (t === pending.pickedFromTheaterIdx) continue;
-        const opp = other(seatIdx);
-        const meS = theaterStrength(state, t, seatIdx);
-        const oppS = theaterStrength(state, t, opp);
-        const gap = oppS - meS;
-        if (gap > bestVal) { bestVal = gap; bestDest = t; }
-      }
-      if (bestDest === -1) return null;
-      return { type: 'chooseTransportDestination', playerId, theaterIdx: bestDest };
-    }
-    case 'awaitingRedeployTarget': {
-      // Recall the face-down card on our weakest losing theater.
-      let bestT = -1, bestId = -1, bestVal = -Infinity;
-      for (let t = 0; t < state.playedCards.length; t++) {
-        const stack = state.playedCards[t][seatIdx];
-        const top = stack[stack.length - 1];
-        if (!top || !top.faceDown) continue;
-        const opp = other(seatIdx);
-        const margin = theaterStrength(state, t, seatIdx) - theaterStrength(state, t, opp);
-        const v = -margin;
-        if (v > bestVal) { bestVal = v; bestT = t; bestId = top.cardId; }
-      }
-      if (bestT === -1) return null;
-      return { type: 'chooseRedeployTarget', playerId, theaterIdx: bestT, cardId: bestId };
-    }
-    case 'awaitingReinforcePlacement': {
-      // Almost always place the free face-down on a losing theater.
-      let bestT = -1, bestVal = -Infinity;
-      for (let t = 0; t < state.config.theaters.length; t++) {
-        const opp = other(seatIdx);
-        const gap = theaterStrength(state, t, opp) - theaterStrength(state, t, seatIdx);
-        if (gap > bestVal) { bestVal = gap; bestT = t; }
-      }
-      if (bestT === -1) {
-        return { type: 'reinforcePlace', playerId, theaterIdx: null };
-      }
-      return { type: 'reinforcePlace', playerId, theaterIdx: bestT };
-    }
-    default:
-      break;
-  }
-
-  if (state.subPhase !== 'awaitingAction') return null;
-  const me = state.players[seatIdx];
-
-  // ---------- Withdraw decision ----------
-  // If we're losing badly (control margin < 0 and most of hand played), withdraw
-  // when withdraw cost < expected loss cost.
-  const myMargin = controlMargin(state, seatIdx);
-  const halfTheaters = state.config.theaters.length / 2;
-  const losing = myMargin < halfTheaters;
-  const cardsLeft = me.hand.length;
-  if (losing && cardsLeft >= 1 && cardsLeft <= 4) {
-    // Withdrawing gives opp: vpForWithdraw(cardsLeft). Full-play loss gives 6.
-    // If they're already winning theaters AND likely to keep them, withdraw.
-    const oppMargin = controlMargin(state, other(seatIdx));
-    if (oppMargin > halfTheaters && vpForWithdraw(cardsLeft) < FULL_BATTLE_VP) {
-      return { type: 'withdraw', playerId };
+    if (value > bestValue + 1e-9) {
+      best = action;
+      bestValue = value;
     }
   }
+  return best;
+}
 
-  // ---------- Score every legal deploy + improvise ----------
-  let bestAction: AlsAction | null = null;
-  let bestScore = -Infinity;
-  for (const cardId of me.hand) {
-    const card = state.deckPool[cardId];
-    if (!card) continue;
-    // Deploy options
-    for (const t of deployLegalTheaters(state, seatIdx, card)) {
-      const v = scoreDeploy(state, seatIdx, card, t);
-      if (v > bestScore) {
-        bestScore = v;
-        bestAction = { type: 'deploy', playerId, cardId, theaterIdx: t };
-      }
-    }
-    // Improvise options
-    for (let t = 0; t < state.config.theaters.length; t++) {
-      const v = scoreImprovise(state, seatIdx, card, t);
-      if (v > bestScore) {
-        bestScore = v;
-        bestAction = { type: 'improvise', playerId, cardId, theaterIdx: t };
-      }
-    }
+function simulate(world: World, action: AlsAction, seat: 0 | 1): number {
+  let s: AlsState;
+  try {
+    s = applyAction(world.state, inWorld(action, world));
+  } catch {
+    return -Infinity;
   }
-  return bestAction;
+  return evaluate(settle(s), seat);
+}
+
+/** The same move in a sampled world: a card picked by its place (a board card,
+ *  e.g. an opponent's face-down one) is whatever card sits there now. A named
+ *  card (Neutralize) is an identity, not a place. */
+function inWorld(action: AlsAction, world: World): AlsAction {
+  if (action.type !== 'answer') return action;
+  const a = action.answer;
+  if (a.kind === 'card' || a.kind === 'move') return { ...action, answer: { ...a, cardId: world.map(a.cardId) } };
+  return action;
+}
+
+/** Answer pending decisions greedily, each by its own chooser. */
+function settle(state: AlsState): AlsState {
+  let s = state;
+  for (let i = 0; i < SETTLE_BUDGET && s.subPhase === 'resolving' && s.pending; i++) {
+    const chooser = s.pending.seat;
+    const playerId = s.players[chooser].id;
+    let next: AlsState | null = null;
+    let nextValue = -Infinity;
+    for (const answer of legalAnswers(s)) {
+      let after: AlsState;
+      try {
+        after = applyAction(s, { type: 'answer', playerId, answer });
+      } catch {
+        continue;
+      }
+      const v = evaluate(after, chooser);
+      if (v > nextValue) { next = after; nextValue = v; }
+    }
+    if (!next) break;
+    s = next;
+  }
+  return s;
+}
+
+// ---------- Evaluation ----------
+
+/** Chance `me` wins the match from these scores — a race model on the VP
+ *  each side still needs. */
+function matchEquity(state: AlsState, myVp: number, oppVp: number): number {
+  const needMe = Math.max(0, state.config.targetVp - myVp);
+  const needOpp = Math.max(0, state.config.targetVp - oppVp);
+  if (needMe === 0) return 1;
+  if (needOpp === 0) return 0;
+  return needOpp ** EQUITY_EXPONENT / (needMe ** EQUITY_EXPONENT + needOpp ** EQUITY_EXPONENT);
+}
+
+/** Value for `me` of `winner` scoring `vp` now: the change in match equity,
+ *  scaled to read like VP at the start of a 12-VP match. */
+function outcomeUtility(state: AlsState, me: 0 | 1, winner: 0 | 1, vp: number): number {
+  const mine = state.players[me].vp;
+  const theirs = state.players[otherSeat(me)].vp;
+  const after = winner === me ? matchEquity(state, mine + vp, theirs) : matchEquity(state, mine, theirs + vp);
+  return EQUITY_SCALE * (after - matchEquity(state, mine, theirs));
+}
+
+/** What a hand card is worth for the rest of the battle. */
+const future = (strength: number) => 1.2 + 0.45 * strength;
+
+/** Chance that `me` wins the battle from here. */
+export function winProbability(state: AlsState, me: 0 | 1): number {
+  const opp = otherSeat(me);
+  const n = state.theaters.length;
+  const myHand = state.players[me].hand;
+  const oppPlayer = state.players[opp];
+  const pool = unseenCards(state, me);
+  const poolMean = pool.length ? pool.reduce((a, c) => a + future(cardById(c).strength), 0) / pool.length : 2.8;
+  const oppKnown = oppPlayer.known.filter((c) => oppPlayer.hand.includes(c));
+  const myFuture = myHand.reduce((a, c) => a + future(cardById(c).strength), 0);
+  const oppFuture = oppKnown.reduce((a, c) => a + future(cardById(c).strength), 0)
+    + (oppPlayer.hand.length - oppKnown.length) * poolMean;
+  const edge = (myFuture - oppFuture) / n;
+  const spread = 0.8 + 0.9 * Math.sqrt(myHand.length + oppPlayer.hand.length);
+  const tie = state.firstPlayerSeatIdx === me ? 0.5 : -0.5;
+
+  // dist[k] = chance of holding exactly k theaters so far.
+  let dist = [1];
+  for (let t = 0; t < n; t++) {
+    const margin = theaterStrength(state, t, me) - theaterStrength(state, t, opp) + edge + tie;
+    const p = 1 / (1 + Math.exp((-1.7 * margin) / spread));
+    const next = new Array(dist.length + 1).fill(0);
+    dist.forEach((q, k) => {
+      next[k] += q * (1 - p);
+      next[k + 1] += q * p;
+    });
+    dist = next;
+  }
+  return dist.reduce((a, q, k) => (k * 2 > n ? a + q : a), 0);
+}
+
+export function evaluate(state: AlsState, me: 0 | 1): number {
+  const opp = otherSeat(me);
+  if (state.subPhase === 'battleEnd' || state.phase === 'gameOver') {
+    const r = state.lastBattleResult;
+    if (!r) return 0;
+    // Score it from before the battle's VP were added.
+    const before: AlsState = { ...state, players: [{ ...state.players[0] }, { ...state.players[1] }] };
+    before.players[r.winnerSeatIdx].vp -= r.vpAwarded;
+    return outcomeUtility(before, me, r.winnerSeatIdx, r.vpAwarded);
+  }
+  const p = winProbability(state, me);
+  const vp = fullBattleVp(state);
+  const fight = p * outcomeUtility(state, me, me, vp) + (1 - p) * outcomeUtility(state, me, opp, vp);
+  // Either side can still withdraw: I needn't lose more than withdrawing would
+  // cost me, and the opponent won't concede more than their withdrawal gives.
+  const floor = outcomeUtility(state, me, opp, vpForWithdraw(state, me));
+  const ceiling = outcomeUtility(state, me, me, vpForWithdraw(state, opp));
+  let v = Math.max(Math.min(fight, ceiling), floor) + 0.1 * fight;
+
+  for (const side of [me, opp] as const) {
+    const sign = side === me ? 1 : -1;
+    const pl = state.players[side];
+    if (pl.airDrop) v += sign * 0.4;
+    for (const c of pl.neutralized) v -= sign * (0.3 + 0.2 * cardById(c).strength);
+    v -= sign * 0.12 * pl.known.length;
+    v += sign * 0.35 * ongoingSources(state, 'aerodrome', side).length;
+    v += sign * 0.25 * ongoingSources(state, 'supplyLines', side).length;
+    v += sign * 0.15 * ongoingSources(state, 'envoy', side).length;
+  }
+  return v;
 }

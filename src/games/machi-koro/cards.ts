@@ -178,7 +178,8 @@ const MK1_LANDMARKS: MkLandmarkDef[] = [
 // ---------- MK1 expansions ----------
 
 const HARBOR_ESTABLISHMENTS: MkEstablishmentDef[] = [
-  { id: 'sushiBar', name: 'Sushi Bar', color: 'red', symbol: 'cup', activation: [1], cost: 2, copies: 6,
+  // Cost 4 as printed outside Japan (the Japanese card costs 2).
+  { id: 'sushiBar', name: 'Sushi Bar', color: 'red', symbol: 'cup', activation: [1], cost: 4, copies: 6,
     condition: { kind: 'ownerHas', landmark: 'harbor' }, effect: { kind: 'takeFromRoller', amount: 3 },
     text: 'If you have a Harbor, take 3 coins from the player who rolled. (opponents’ turns)', art: 'sushiBar' },
   { id: 'flowerOrchard', name: 'Flower Orchard', color: 'blue', symbol: 'wheat', activation: [4], cost: 2, copies: 6,
@@ -306,7 +307,8 @@ export interface MkEditionRules {
   /** Build-only opening rounds before the first roll. */
   setupRounds: number;
   /** 'rows' = MK2's 5-5-5 market dealt from decks; 'open' = every pile
-   *  face-up; 'marketplace' = Harbor's ten piles dealt from one deck. */
+   *  face-up; 'marketplace' = Harbor's ten piles dealt from one deck;
+   *  'hybrid' = the 5-5-2 market (1–6 / 7+ / majors, each from its own deck). */
   market: 'rows' | MkSupply;
   /** 'market' = landmarks are bought from the landmark row (one copy each);
    *  'personal' = every player builds their own copy of each landmark. */
@@ -385,9 +387,11 @@ export function rulesFor(config: MkConfig): MkEditionRules {
 export const MARKET_ROW_SIZE = 5;
 /** Different piles Harbor's marketplace shows. */
 export const MARKETPLACE_SIZE = 10;
+/** Different majors the 5-5-2 market shows. */
+export const MAJOR_ROW_SIZE = 2;
 
 export function rowSize(row: MkRowId): number {
-  return row === 'mixed' ? MARKETPLACE_SIZE : MARKET_ROW_SIZE;
+  return row === 'mixed' ? MARKETPLACE_SIZE : row === 'major' ? MAJOR_ROW_SIZE : MARKET_ROW_SIZE;
 }
 
 // MK1's indexes hold the expansion cards too (their ids never clash with the
@@ -428,7 +432,9 @@ export function isLandmark(edition: MkEdition, id: string): boolean {
 export function rowOf(R: MkEditionRules, id: string): MkRowId | null {
   if (isEstablishment(R.id, id)) {
     if (R.market === 'marketplace') return 'mixed';
-    return estDef(R.id, id).activation[0] <= 6 ? 'low' : 'high';
+    const d = estDef(R.id, id);
+    if (R.market === 'hybrid' && d.color === 'purple') return 'major';
+    return d.activation[0] <= 6 ? 'low' : 'high';
   }
   return R.landmarks === 'market' && isLandmark(R.id, id) ? 'landmark' : null;
 }

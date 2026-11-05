@@ -21,7 +21,8 @@
 // untuned outside the 2-player case.
 
 import type { PlayerId } from '@/core/types';
-import type { SushiGoAction, SushiGoAiLevel, SushiGoConfig, SushiGoState } from './types';
+import type { SushiGoAction, SushiGoAiLevel, SushiGoState } from './types';
+import { aiLevelOfSeat } from './levels';
 import type { SlotPolicy } from './nn/agent';
 import { actWithPolicy } from './nn/agent';
 import { greedyPolicy, loadSushiGoPolicy, type SushiGoPolicyFile } from './nn/policy';
@@ -29,22 +30,10 @@ import easyUrl from './policies/easy-update100.json?url';
 import normalUrl from './policies/normal-update1000.json?url';
 import hardUrl from './policies/hard-update10000.json?url';
 
-export const AI_LEVELS: ReadonlyArray<{ id: SushiGoAiLevel; label: string }> = [
-  { id: 'easy', label: 'Easy' },
-  { id: 'normal', label: 'Normal' },
-  { id: 'hard', label: 'Hard' },
-];
-
-export const DEFAULT_AI_LEVEL: SushiGoAiLevel = 'normal';
-
 const POLICY_URLS: Record<SushiGoAiLevel, string> = { easy: easyUrl, normal: normalUrl, hard: hardUrl };
 
 const policies = new Map<SushiGoAiLevel, SlotPolicy>();
 const loading = new Map<SushiGoAiLevel, Promise<void>>();
-
-export function aiLevelOf(config: SushiGoConfig): SushiGoAiLevel {
-  return config.aiLevel ?? DEFAULT_AI_LEVEL;
-}
 
 /** Fetch and load a level's policy (no-op once loaded; concurrent calls share one fetch). */
 export function prepareAiLevel(level: SushiGoAiLevel): Promise<void> {
@@ -74,7 +63,8 @@ export function chooseLeveledAction(state: SushiGoState, playerId: PlayerId): Su
     // Click through the round summary only when no human needs to read it.
     return state.seats.some((s) => !s.isAI) ? null : { type: 'nextRound' };
   }
-  const level = aiLevelOf(state.config);
+  // Each AI seat plays at its own level.
+  const level = aiLevelOfSeat(state.seats.find((s) => s.id === playerId));
   const policy = policies.get(level);
   if (!policy) {
     // prepare() should have loaded it; start now so a later call can answer.

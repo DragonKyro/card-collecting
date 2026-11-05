@@ -406,3 +406,46 @@
 @media (prefers-reduced-motion: reduce) {
   .jp-card.fresh, .jp-overlay, .jp-overlay-card, .jp-seal-pop { animation: none; }
 }
+
+/* ---------- phones ---------- */
+
+/* Smaller full-size cards: five market cards then sit side by side instead of
+ * hiding each other's labels, and a hand of five fits without overlapping. */
+@media (max-width: 600px) {
+  .jp-board { padding: 10px 8px; }
+  .jp-status { gap: 4px 12px; }
+  .jp-player { padding: 8px 8px 10px; }
+  .jp-card-normal { width: 64px; height: 90px; }
+  .jp-hand:not(.jp-hand-small) { --card-w: 64px; --min-gap: -46px; min-height: 102px; }
+  .jp-rug { margin: 10px 0; padding: 10px 6px 8px; }
+  .jp-market { min-height: 100px; }
+  .jp-market .jp-card + .jp-card {
+    margin-left: clamp(-40px, calc((100% - var(--n) * 64px) / max(var(--n) - 1, 1)), 8px);
+  }
+  .jp-deck, .jp-discard { width: 64px; height: 90px; }
+  .jp-overlay { padding: 16px 8px; }
+  .jp-overlay-card { padding: 14px 12px; }
+}
+
+/* ---------- game-over match stats (StatsPanel.tsx; charts in src/ui/MatchCharts.tsx) ---------- */
+
+/* The final overlay grows with its content (the stats run past the board). */
+.jp-overlay.jp-final { bottom: auto; min-height: 100%; }
+.jp-overlay-card .match-stats {
+  --mc-surface: #241215;
+  --mc-ink: #f8ecd8;
+  --mc-muted: rgba(248, 236, 216, 0.66);
+  --mc-rule: rgba(231, 184, 74, 0.3);
+  --mc-grid: rgba(248, 236, 216, 0.09);
+  --mc-axis: rgba(248, 236, 216, 0.32);
+  --mc-hover: rgba(255, 255, 255, 0.07);
+  --mc-tooltip-bg: #3a1d22;
+  --mc-tooltip-border: rgba(231, 184, 74, 0.45);
+  --mc-control-bg: #3a1d22;
+  max-width: none;
+  margin: 16px 0 10px;
+  padding: 12px 14px;
+  border: 1px solid rgba(231, 184, 74, 0.2);
+}
+.jp-overlay-card .match-stats h2 { color: #f3cf63; font-family: Georgia, 'Times New Roman', serif; }
+.jp-overlay-card .match-stats .swatch { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2); }

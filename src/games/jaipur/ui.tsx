@@ -31,45 +31,32 @@ import { BonusTokenArt, CamelTokenArt, GoodsTokenArt, SealArt, TokenSvg, TypeIco
 import { BonusTokenView, CardBack, CardView, GoodsTokenView } from './Card';
 import { JaipurFlipProvider, cardKey, useFlipAnchor } from './flip';
 import { Rules } from './RuleBook';
-import { AI_LEVELS, aiLevelOf } from './levels';
+import { MatchStats } from './StatsPanel';
+import { aiLevelsOf } from './levels';
+import type { JaipurAiLevel } from './types';
 import './jaipur.css';
 
 // ---------------------------------------------------------------------------
 // Lobby
 
-function LobbyConfig({ config, seats, onChange }: { config: JaipurConfig; seats: Seat[]; onChange: (c: JaipurConfig) => void }) {
+function LobbyConfig({ config, seats, onChange, readOnly }: { config: JaipurConfig; seats: Seat[]; onChange: (c: JaipurConfig) => void; readOnly?: boolean }) {
   const options: Array<{ seals: number; label: string }> = [
     { seals: 1, label: 'Single round' },
     { seals: 2, label: 'Best of 3' },
     { seals: 3, label: 'Best of 5' },
   ];
-  const hasAI = seats.some((s) => s.isAI);
-  const level = aiLevelOf(config);
-  // Start fetching the level's policy while the lobby is still open (the
-  // Start button awaits it either way).
+  // Start fetching the AI seats' policies while the lobby is still open (the
+  // Start button awaits them either way). Each seat's level is picked on its
+  // seat row.
+  const levels = aiLevelsOf(seats).join(',');
   useEffect(() => {
-    if (hasAI) void import('./aiLevels').then((m) => m.prepareAiLevel(level)).catch(() => {});
-  }, [hasAI, level]);
+    if (readOnly || !levels) return;
+    void import('./aiLevels')
+      .then((m) => Promise.all(levels.split(',').map((l) => m.prepareAiLevel(l as JaipurAiLevel))))
+      .catch(() => {});
+  }, [levels, readOnly]);
   return (
     <div className="game-config">
-      {hasAI && AI_LEVELS.length > 1 && (
-        <>
-          <h4 className="jp-lobby-h">AI difficulty</h4>
-          <div role="radiogroup" aria-label="AI difficulty" style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
-            {AI_LEVELS.map((l) => (
-              <button
-                key={l.id}
-                role="radio"
-                aria-checked={level === l.id}
-                className={level === l.id ? undefined : 'secondary'}
-                onClick={() => onChange({ ...config, aiLevel: l.id })}
-              >
-                {l.label}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
       <h4 className="jp-lobby-h">Match length</h4>
       <div role="radiogroup" aria-label="Match length" style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
         {options.map((o) => (
@@ -841,7 +828,7 @@ function GameOver({ state }: { state: JaipurState }) {
   const s = state.lastRoundSummary;
   const winner = state.players.find((p) => p.id === state.winnerId);
   return (
-    <div className="jp-overlay">
+    <div className="jp-overlay jp-final">
       <div className="jp-overlay-card">
         <div className="jp-overlay-eyebrow">Match over</div>
         <h3>
@@ -879,6 +866,7 @@ function GameOver({ state }: { state: JaipurState }) {
             ))}
           </tbody>
         </table>
+        <MatchStats state={state} />
         <p className="muted">Use “Play again” above for a rematch.</p>
       </div>
     </div>

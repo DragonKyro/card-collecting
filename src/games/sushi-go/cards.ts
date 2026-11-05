@@ -142,7 +142,7 @@ export const KIND_INFO: Record<SushiGoCardKind, KindInfo> = {
   },
   spoon: {
     kind: 'spoon', category: 'special', label: 'Spoon',
-    rule: 'On a later turn, name a card: the first player to your left holding it gives it to you and takes the spoon. 3–8 players only.',
+    rule: 'On a later turn, after the reveal, you may name a card: the first player to your left holding it gives it to you and takes the spoon. 3–8 players only.',
     count: 3, minPlayers: 3,
   },
   menu: {

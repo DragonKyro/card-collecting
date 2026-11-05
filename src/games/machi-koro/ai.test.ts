@@ -84,7 +84,7 @@ describe('AI', () => {
     });
   }
 
-  for (const supply of ['marketplace', 'open'] as const) {
+  for (const supply of ['marketplace', 'open', 'hybrid'] as const) {
     it(`mk1 + Harbor + Millionaire’s Row (${supply}): AI-only matches finish (2/3/4/5 players)`, () => {
       for (const n of [2, 3, 4, 5]) {
         for (let seed = 1; seed <= 5; seed++) {

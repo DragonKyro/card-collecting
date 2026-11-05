@@ -238,7 +238,11 @@
 }
 
 .ssp .card.selectable { cursor: pointer; }
-.ssp .card.selectable:hover { transform: translateY(-3px); box-shadow: 0 5px 0 var(--paper-edge); }
+/* Hover lifts only where there's a real hover — on a touch screen the lift
+   sticks after a tap and reads as "selected". */
+@media (hover: hover) {
+  .ssp .card.selectable:hover { transform: translateY(-3px); box-shadow: 0 5px 0 var(--paper-edge); }
+}
 
 .ssp .card.selected,
 .ssp .card.selected.selectable:hover {
@@ -411,118 +415,6 @@
   color: var(--danger);
   text-decoration: line-through;
 }
-
-/* Match stats — same cream surface as the round summary so the recharts
- * dark-ink labels/grid render readable against a light background. */
-.ssp .ssp-stats {
-  background: var(--paper-cream);
-  color: var(--paper-ink);
-  padding: 18px 22px;
-  border-radius: 12px;
-  max-width: 720px;
-  margin: 18px auto 0;
-}
-.ssp .ssp-stats h2 { margin: 0 0 12px; color: var(--paper-ink); }
-.ssp .ssp-stats h3 {
-  margin: 18px 0 8px;
-  font-size: 14px;
-  color: var(--paper-ink);
-  border-bottom: 1px solid var(--paper-deep);
-  padding-bottom: 4px;
-}
-.ssp .ssp-stats table {
-  width: 100%;
-  border-collapse: collapse;
-  margin: 6px 0 8px;
-  font-size: 13px;
-  color: var(--paper-ink);
-}
-.ssp .ssp-stats th,
-.ssp .ssp-stats td {
-  padding: 5px 8px;
-  border-bottom: 1px solid var(--paper-deep);
-  text-align: left;
-}
-.ssp .ssp-stats td.num,
-.ssp .ssp-stats th.num { text-align: right; }
-/* Make sure recharts tooltips + legend text inherit dark ink. */
-/* Tabbed pagination of post-match charts. One chart per tab; horizontally
-   scrolling tab bar keeps the layout single-row on narrow widths. */
-.ssp .ssp-stats-tabs {
-  display: flex;
-  gap: 4px;
-  overflow-x: auto;
-  border-bottom: 1px solid var(--paper-deep);
-  margin-bottom: 12px;
-  padding-bottom: 0;
-}
-.ssp .ssp-stats-tabs button {
-  background: transparent;
-  border: none;
-  padding: 8px 12px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--paper-ink);
-  opacity: 0.6;
-  cursor: pointer;
-  border-bottom: 3px solid transparent;
-  margin-bottom: -1px;
-  white-space: nowrap;
-}
-.ssp .ssp-stats-tabs button:hover { opacity: 0.85; }
-.ssp .ssp-stats-tabs button.active {
-  opacity: 1;
-  border-bottom-color: var(--paper-ink);
-}
-.ssp .ssp-stats-panel { min-height: 360px; }
-
-/* SVG chart + right-side legend. */
-.ssp .ssp-svg-chart {
-  /* the layout is set inline (display:flex, gap) — this hook is for future
-     theming and to scope the legend rules below. */
-}
-.ssp .ssp-svg-legend {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 12px;
-  color: var(--paper-ink);
-  padding: 4px 4px 4px 8px;
-  min-width: 140px;
-  max-width: 200px;
-}
-.ssp .ssp-svg-legend-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: transparent;
-  border: none;
-  padding: 2px 0;
-  cursor: pointer;
-  text-align: left;
-  color: inherit;
-  font-size: 12px;
-}
-.ssp .ssp-svg-legend-row .swatch {
-  display: inline-block;
-  width: 12px; height: 12px;
-  border-radius: 2px;
-  flex-shrink: 0;
-}
-.ssp .ssp-svg-legend-row .lbl {
-  flex: 1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.ssp .ssp-svg-legend-row .num {
-  opacity: 0.7;
-  font-variant-numeric: tabular-nums;
-}
-
-.ssp .ssp-stats .recharts-default-tooltip { color: var(--paper-ink) !important; }
-.ssp .ssp-stats .recharts-legend-item-text { color: var(--paper-ink) !important; }
-.ssp .ssp-stats .recharts-cartesian-axis-tick-value { fill: var(--paper-ink); }
 
 .ssp .gameover-banner {
   background: var(--yellow);
@@ -906,7 +798,9 @@
   align-items: start;
 }
 @media (max-width: 1000px) {
-  .ssp-layout { grid-template-columns: 1fr; }
+  /* minmax(0, …): wide content (the match-stats tab bar) scrolls inside its
+     own box instead of stretching the column past the screen. */
+  .ssp-layout { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* Right sidebar */
@@ -1058,9 +952,11 @@
 .ssp .deck-stack.clickable, .ssp .pile.clickable {
   cursor: pointer;
 }
-.ssp .deck-stack.clickable:hover, .ssp .pile.clickable:hover {
-  background: rgba(255,255,255,0.08);
-  transform: translateY(-2px);
+@media (hover: hover) {
+  .ssp .deck-stack.clickable:hover, .ssp .pile.clickable:hover {
+    background: rgba(255,255,255,0.08);
+    transform: translateY(-2px);
+  }
 }
 .ssp .pile.target-discard {
   outline: 2px dashed var(--yellow);
@@ -1093,4 +989,67 @@
   color: rgba(255,255,255,0.9);
   text-align: center;
   margin-bottom: 8px;
+}
+
+/* ---------- phones ---------- */
+
+@media (max-width: 600px) {
+  .ssp .board { gap: 10px; padding: 10px; border-radius: 10px; }
+  .ssp .target-info { font-size: 12px; gap: 4px 10px; margin-bottom: 0; }
+  .ssp .match-progress { gap: 4px; }
+  .ssp .match-progress-pill { padding: 2px 8px; font-size: 11px; }
+  .ssp-event-banner { padding: 6px 10px; margin: 0; gap: 4px 8px; }
+
+  .ssp .opponents { gap: 8px; }
+  .ssp .player-strip { padding: 6px 8px; }
+  /* The shell's `.app-shell header` rule pads and rules every <header>; a
+     strip's name row needs none of that height. */
+  .ssp .player-strip header { padding: 0 0 4px; margin-bottom: 4px; font-size: 14px; }
+  .ssp .player-strip .table-strip { margin-top: 0; }
+
+  .ssp .center { gap: 6px; }
+  .ssp .deck-stack, .ssp .pile { padding: 4px; }
+
+  .ssp .hand-area { padding: 10px 8px; }
+  .ssp .hand-area h3 { flex-wrap: wrap; gap: 4px; }
+  .ssp-color-strip { margin-left: 0; }
+  /* 5px gaps: five cards to a row down to a 360px screen. */
+  .ssp .hand-area .cards { gap: 5px; min-height: 92px; }
+  .ssp .actions { gap: 6px; margin-top: 10px; min-height: 40px; }
+  /* Buttons fill each wrapped row: wide, even tap targets. */
+  .ssp .actions button { flex: 1 1 auto; padding: 9px 12px; }
+
+  /* The keep-a-card and dig-into-a-pile choosers sit at the bottom of the
+     screen, not of the board: the board is taller than a phone, and the
+     piles you click next have to stay in view. */
+  .ssp .pending-draw,
+  .ssp .crab-overlay {
+    position: fixed;
+    left: 50%;
+    bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+    transform: translateX(-50%);
+    width: calc(100vw - 20px);
+    max-width: 440px;
+    min-width: 0;
+    max-height: 55vh;
+    max-height: 55dvh;
+    overflow-y: auto;
+    padding: 10px 12px;
+    z-index: 150;
+  }
+
+  .ssp-lastchance-card { padding: 16px 20px; max-width: calc(100% - 24px); }
+  .ssp-lastchance-eyebrow { font-size: 18px; letter-spacing: 3px; }
+  .ssp-lastchance-name { font-size: 30px; }
+
+  .ssp .round-summary { padding: 12px; }
+  .ssp .round-summary h2 { font-size: 20px; }
+  .ssp .round-summary-header button { padding: 8px 12px; }
+  .ssp .round-summary td, .ssp .round-summary th { padding: 5px 4px; }
+  .ssp .round-summary-player .table-strip { gap: 4px; padding: 4px; }
+
+  .ssp .ssp-winner-banner { padding: 16px 12px; }
+  .ssp .ssp-winner-name { font-size: 26px; }
+
+  .ssp-sidebar { max-height: min(80vh, 420px); }
 }

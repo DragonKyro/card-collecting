@@ -1,7 +1,7 @@
 // Adapter from a slot policy to the GameModule-style `(state, playerId) →
 // action` shape. The policy only ever receives the seat's observation and
 // legal mask — this is the one hop where full state is narrowed down. A
-// multi-part answer (pick + chopsticks + spoon, takeout flips) takes one
+// multi-part answer (pick + chopsticks, spoon use + ask, takeout flips) takes one
 // policy call per part.
 
 import type { PlayerId } from '@/core/types';

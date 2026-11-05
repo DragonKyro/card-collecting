@@ -1,20 +1,25 @@
 // 7 Wonders Duel — card, wonder and progress-token views built on art.tsx.
 //
 // Cards follow the printed Duel layout: a colour frame, the effect in the top
-// band, the cost down the left edge (a chain link when another card makes it
-// free), the illustration and the name at the bottom. In the pyramid only the
-// top ~40 % of a covered card shows — band and first costs — as on the table.
-// Tucked cards in a city show just their band (`CardBand`).
+// band, the cost down the left edge (a chain symbol when an earlier card makes
+// it free), the chain symbol the card gives at the bottom right, the
+// illustration and the name at the bottom. In the pyramid only the top of a
+// covered card shows — band and first costs — as on the table. Tucked cards
+// in a city show just their band (`CardBand`).
 
-import type { CSSProperties, KeyboardEvent, ReactNode } from 'react';
+import type { CSSProperties, KeyboardEvent, ReactNode, Ref } from 'react';
 import type {
-  DuelCard, DuelCardEffect, DuelCost, DuelProduction, DuelProgressTokenId, DuelWonder, DuelWonderStageEffect,
+  DuelCard, DuelCardEffect, DuelCost, DuelCount, DuelProduction, DuelProgressTokenId, DuelWonder,
+  DuelWonderEffect,
 } from './types';
 import { progressTokenById } from './progress';
+import { mythologyInfo } from './pantheon';
 import {
-  CARD_HEX, CardArt, CardBackArt, ChainIcon, ChipGlyph, CoinGlyph, CoinIcon, DiscardPickGlyph, ExtraTurnGlyph,
-  Icon, LaurelIcon, ProgressTokenArt, ResourceIcon, ScienceIcon, ShieldIcon, TradeGlyph, WonderArt, WonderGlyph,
+  CARD_HEX, CardArt, CardBackArt, ChainSymbolIcon, ChipGlyph, CoinGlyph, CoinIcon, DestroyGlyph, DiscardPickGlyph,
+  ExtraTurnGlyph, Icon, LaurelIcon, ProgressGlyph, ProgressTokenArt, ResourceIcon, SCIENCE_NAMES, ScienceIcon,
+  ShieldIcon, TradeGlyph, WonderArt, WonderGlyph, type CardBackKind,
 } from './art';
+import { ConspiracyBackArt, CubeIcon, DivinityEmblem, MythologyGlyph } from './artExpansions';
 
 export type CardSize = 'lg' | 'md' | 'sm';
 
@@ -32,9 +37,9 @@ function effectUnits(effects: DuelCardEffect[]): number {
         for (const opts of eff.production) u += opts.length === 1 ? 1 : opts.length * 0.86 + (opts.length - 1) * 0.45;
         break;
       case 'shields': u += eff.shields; break;
-      case 'tradeDiscountRaw': case 'tradeDiscountManufactured': u += 2.25; break;
-      case 'endVp': u += (eff.coinsPerOnPlay ? 1 : 0) + (eff.vpPer ? 1 : 0) + 1.45; break;
-      case 'gainCoinsPerCardColor': u += 2.45; break;
+      case 'tradeFixed': u += 2.25; break;
+      case 'coinsPer': u += 2.45; break;
+      case 'guild': u += (eff.coinsPer ? 1 : 0) + 1 + 1.45; break;
       default: u += 1;
     }
   }
@@ -52,7 +57,7 @@ export function fitIcon(effects: DuelCardEffect[], room: number, max: number): n
 function Production({ opts, size }: { opts: DuelProduction; size: number }) {
   if (opts.length === 1) return <ResourceIcon r={opts[0]} size={size} />;
   return (
-    <span className="swd-choice" title={`one of ${opts.join(' / ')}`}>
+    <span className="swd-choice" title={`one of ${opts.join(' / ')} each turn`}>
       {opts.map((r, i) => (
         <span key={r} className="swd-choice-item">
           {i > 0 && <span className="swd-slash">/</span>}
@@ -67,34 +72,24 @@ function Shields({ n, size }: { n: number; size: number }) {
   return <>{Array.from({ length: n }, (_, i) => <ShieldIcon key={i} size={size} title={`${n} shield${n === 1 ? '' : 's'}`} />)}</>;
 }
 
-/** Trade discount: "these resources = 1 coin". */
-function Trade({ kind, size }: { kind: 'raw' | 'manufactured'; size: number }) {
-  const what = kind === 'raw' ? 'Raw resources (wood, stone, clay)' : 'Manufactured resources (glass, papyrus)';
+/** Fixed trading price: "these resources = 1 coin". */
+function Trade({ eff, size }: { eff: Extract<DuelCardEffect, { kind: 'tradeFixed' }>; size: number }) {
   return (
-    <span className="swd-per" title={`${what} cost 1 coin`}>
-      <Icon size={size}><TradeGlyph kind={kind} /></Icon>
+    <span className="swd-per" title={effectText(eff)}>
+      <Icon size={size}><TradeGlyph resources={eff.resources} /></Icon>
       <span className="swd-slash">=</span>
       <CoinIcon value={1} size={size * 0.8} title="1 coin" />
     </span>
   );
 }
 
-type EndVp = Extract<DuelCardEffect, { kind: 'endVp' }>;
-
-function EndVpIcons({ eff, size }: { eff: EndVp; size: number }) {
-  const w = eff.countWhat;
-  const target = w.kind === 'cardColor'
-    ? <Icon size={size} title={`${w.color} card`}><ChipGlyph color={w.color} both={eff.from === 'both'} /></Icon>
-    : w.kind === 'wonderStages'
-    ? <Icon size={size} title="wonder"><WonderGlyph /></Icon>
-    : <Icon size={size} title="3 coins"><CoinGlyph value={3} /></Icon>;
+function CountIcon({ what, both, size }: { what: DuelCount; both: boolean; size: number }) {
+  if (what.kind === 'wonders') return <Icon size={size} title="wonder built"><WonderGlyph /></Icon>;
+  if (what.kind === 'coins') return <Icon size={size} title="3 coins"><CoinGlyph value={3} /></Icon>;
   return (
-    <span className="swd-per" title={endVpText(eff)}>
-      {eff.coinsPerOnPlay ? <CoinIcon value={eff.coinsPerOnPlay} size={size} /> : null}
-      {eff.vpPer ? <LaurelIcon value={eff.vpPer} size={size} /> : null}
-      <span className="swd-slash">/</span>
-      {target}
-    </span>
+    <>
+      {what.colors.map((c) => <Icon key={c} size={size} title={`${c} card`}><ChipGlyph color={c} both={both} /></Icon>)}
+    </>
   );
 }
 
@@ -110,20 +105,45 @@ export function CardEffects({ effects, size }: { effects: DuelCardEffect[]; size
       case 'shields': out.push(<Shields key={i} n={eff.shields} size={size} />); break;
       case 'vp': out.push(<LaurelIcon key={i} value={eff.vp} size={size} />); break;
       case 'science': out.push(<ScienceIcon key={i} symbol={eff.symbol} size={size} />); break;
-      case 'tradeDiscountRaw':
-      case 'tradeDiscountManufactured':
-        out.push(<Trade key={i} kind={eff.kind === 'tradeDiscountRaw' ? 'raw' : 'manufactured'} size={size} />);
-        break;
-      case 'endVp': out.push(<EndVpIcons key={i} eff={eff} size={size} />); break;
-      case 'forceOpponentDiscardCoins': out.push(<CoinIcon key={i} value={eff.amount} negative size={size} />); break;
-      case 'gainCoinsPerCardColor':
+      case 'tradeFixed': out.push(<Trade key={i} eff={eff} size={size} />); break;
+      case 'coinsPer':
         out.push(
-          <span key={i} className="swd-per" title={`${eff.per} coin(s) per ${eff.color} card`}>
+          <span key={i} className="swd-per" title={effectText(eff)}>
             <CoinIcon value={eff.per} size={size} />
             <span className="swd-slash">/</span>
-            <Icon size={size} title={`${eff.color} card`}><ChipGlyph color={eff.color} /></Icon>
+            <CountIcon what={eff.what} both={false} size={size} />
           </span>,
         );
+        break;
+      case 'guild':
+        out.push(
+          <span key={i} className="swd-per" title={effectText(eff)}>
+            {eff.coinsPer ? <CoinIcon value={eff.coinsPer} size={size} /> : null}
+            <LaurelIcon value={eff.vpPer} size={size} />
+            <span className="swd-slash">/</span>
+            <CountIcon what={eff.what} both size={size} />
+          </span>,
+        );
+        break;
+      case 'politician':
+        out.push(
+          <span key={i} className="swd-per" title={effectText(eff)}>
+            <CubeIcon color="#e8c35a" size={size} />
+            <span className="swd-slash">{['◀', '▲', '▶'][eff.section - 1]}</span>
+          </span>,
+        );
+        break;
+      case 'conspirator':
+        out.push(
+          <span key={i} className="swd-per" title={effectText(eff)}>
+            <CubeIcon color="#e8c35a" size={size * 0.85} />
+            <span className="swd-slash">/</span>
+            <ConspiracyBackArt size={size} />
+          </span>,
+        );
+        break;
+      case 'grandTemple':
+        out.push(<span key={i} title={effectText(eff)}><MythologyGlyph mythology={eff.mythology} size={size} /></span>);
         break;
     }
   });
@@ -131,20 +151,24 @@ export function CardEffects({ effects, size }: { effects: DuelCardEffect[]; size
 }
 
 /** The icons for a wonder's effects. */
-export function WonderEffects({ effects, size }: { effects: DuelWonderStageEffect[]; size: number }) {
+export function WonderEffects({ effects, size }: { effects: DuelWonderEffect[]; size: number }) {
   const out: ReactNode[] = [];
   effects.forEach((eff, i) => {
     switch (eff.kind) {
-      case 'vp': out.push(<LaurelIcon key={i} value={eff.vp ?? 0} size={size} />); break;
-      case 'coins': out.push(<CoinIcon key={i} value={eff.coins ?? eff.amount ?? 0} size={size} />); break;
-      case 'shields': out.push(<Shields key={i} n={eff.shields ?? 0} size={size} />); break;
-      case 'produce': (eff.production ?? []).forEach((opts, j) => out.push(<Production key={`${i}.${j}`} opts={opts} size={size} />)); break;
-      case 'science': if (eff.symbol) out.push(<ScienceIcon key={i} symbol={eff.symbol} size={size} />); break;
-      case 'tradeDiscountRaw': out.push(<Trade key={i} kind="raw" size={size} />); break;
-      case 'tradeDiscountManufactured': out.push(<Trade key={i} kind="manufactured" size={size} />); break;
-      case 'forceOpponentDiscardCoins': out.push(<CoinIcon key={i} value={eff.amount ?? 0} negative size={size} />); break;
-      case 'extraTurn': out.push(<Icon key={i} size={size} title="Play again (not modelled yet)"><ExtraTurnGlyph /></Icon>); break;
-      case 'pickFromDiscard': out.push(<Icon key={i} size={size} title="Discard-pile effect (not modelled yet)"><DiscardPickGlyph /></Icon>); break;
+      case 'vp': out.push(<LaurelIcon key={i} value={eff.vp} size={size} />); break;
+      case 'coins': out.push(<CoinIcon key={i} value={eff.amount} size={size} />); break;
+      case 'opponentLosesCoins': out.push(<CoinIcon key={i} value={eff.amount} negative size={size} />); break;
+      case 'shields': out.push(<Shields key={i} n={eff.shields} size={size} />); break;
+      case 'produce': eff.production.forEach((opts, j) => out.push(<Production key={`${i}.${j}`} opts={opts} size={size} />)); break;
+      case 'playAgain': out.push(<Icon key={i} size={size} title="Play again"><ExtraTurnGlyph /></Icon>); break;
+      case 'destroy': out.push(<Icon key={i} size={size} title={`Discard a ${eff.color} card of your opponent's`}><DestroyGlyph color={eff.color} /></Icon>); break;
+      case 'buildFromDiscard': out.push(<Icon key={i} size={size} title="Build a discarded card for free"><DiscardPickGlyph /></Icon>); break;
+      case 'progressFromBox': out.push(<Icon key={i} size={size} title="Keep 1 of 3 Progress tokens from the box"><ProgressGlyph /></Icon>); break;
+      case 'placeInfluence': out.push(<span key={i} title="Place an Influence cube"><CubeIcon color="#e8c35a" size={size} /></span>); break;
+      case 'moveInfluence': out.push(<span key={i} className="swd-per" title="You may move an Influence cube"><CubeIcon color="#e8c35a" size={size * 0.8} /><span className="swd-slash">↔</span></span>); break;
+      case 'triggerUnprepared': out.push(<span key={i} title="You may trigger an unprepared Conspiracy"><ConspiracyBackArt size={size} /></span>); break;
+      case 'divinityDiscount': out.push(<span key={i} className="swd-per" title={`Divinities cost you ${eff.amount} coins less`}><CoinIcon value={-eff.amount} size={size} /><DivinityEmblem id="gate" mythology={null} size={size} /></span>); break;
+      case 'divineTheater': out.push(<span key={i} title="Invoke a Divinity from a Mythology deck of your choice, for free"><DivinityEmblem id="gate" mythology={null} size={size} /></span>); break;
     }
   });
   return <>{out}</>;
@@ -163,28 +187,32 @@ export function CostIcons({ cost, size }: { cost: DuelCost; size: number }) {
 // ---------------------------------------------------------------------------
 // Text (tooltips and the action panel)
 
-function endVpText(eff: EndVp): string {
-  const w = eff.countWhat;
-  const what = w.kind === 'cardColor' ? `${w.color} card` : w.kind === 'wonderStages' ? 'wonder built' : '3 coins';
-  const where = eff.from === 'self' ? 'in your city' : eff.from === 'opponent' ? "in your opponent's city" : 'in both cities';
-  const parts: string[] = [];
-  if (eff.coinsPerOnPlay) parts.push(`${eff.coinsPerOnPlay} coin${eff.coinsPerOnPlay === 1 ? '' : 's'} now`);
-  if (eff.vpPer) parts.push(`${eff.vpPer} VP at the end`);
-  return `${parts.join(' and ')} per ${what} ${where}`;
+function countText(what: DuelCount): string {
+  switch (what.kind) {
+    case 'color': return `${what.colors.join(' and ')} card`;
+    case 'wonders': return 'wonder built';
+    case 'coins': return 'set of 3 coins';
+  }
 }
 
 export function effectText(eff: DuelCardEffect): string {
   switch (eff.kind) {
     case 'produce': return `Produces ${eff.production.map((o) => o.join(' or ')).join(' + ')}`;
-    case 'coins': return `+${eff.amount} coins`;
+    case 'coins': return `Take ${eff.amount} coins`;
     case 'shields': return `${eff.shields} shield${eff.shields === 1 ? '' : 's'}`;
     case 'vp': return `${eff.vp} VP`;
-    case 'science': return `Science: ${eff.symbol}`;
-    case 'tradeDiscountRaw': return 'Raw resources cost 1 coin';
-    case 'tradeDiscountManufactured': return 'Manufactured resources cost 1 coin';
-    case 'endVp': return endVpText(eff);
-    case 'forceOpponentDiscardCoins': return `Opponent loses ${eff.amount} coins`;
-    case 'gainCoinsPerCardColor': return `${eff.per} coin(s) per ${eff.color} card`;
+    case 'science': return `Science symbol: ${SCIENCE_NAMES[eff.symbol]}`;
+    case 'tradeFixed': return `${eff.resources.join(' and ')} cost you 1 coin each`;
+    case 'coinsPer': return `Take ${eff.per} coin${eff.per === 1 ? '' : 's'} per ${countText(eff.what)} in your city`;
+    case 'guild': {
+      const parts = [eff.coinsPer ? `Take ${eff.coinsPer} coin per` : '', `${eff.vpPer} VP per`].filter(Boolean).join(' and ');
+      return `${parts} ${countText(eff.what)} in the city that has the most`;
+    }
+    case 'politician':
+      return `Senate actions in the ${['left', 'centre', 'right'][eff.section - 1]} section: 1 with 0–1 blue cards, 2 with 2–3, 3 with 4+ (place a cube there or move one)`;
+    case 'conspirator': return 'Place an Influence cube in any Chamber, or Conspire';
+    case 'grandTemple':
+      return `Free with a ${mythologyInfo(eff.mythology).name} Mythology token. Grand Temples: 5 / 12 / 21 VP for 1 / 2 / 3`;
   }
 }
 
@@ -199,8 +227,8 @@ export function costText(cost: DuelCost): string {
 
 export function describeCard(card: DuelCard): string {
   const lines = [`${card.name} (${card.color}, Age ${card.age})`, `Cost: ${costText(card.cost)}`, ...card.effects.map(effectText)];
-  if (card.chainFrom?.length) lines.push(`Free if you own ${card.chainFrom.join(' or ')}`);
-  if (card.chainTo?.length) lines.push(`Makes ${card.chainTo.join(' / ')} free`);
+  if (card.chainFrom) lines.push(`Free if you own ${card.chainFrom}`);
+  if (card.chain) lines.push(`Chain symbol: ${card.chain}`);
   return lines.join('\n');
 }
 
@@ -212,6 +240,8 @@ interface Clickable {
   title?: string;
   className?: string;
   style?: CSSProperties;
+  /** Ref to the card's root node (animation registration). */
+  nodeRef?: Ref<HTMLDivElement>;
 }
 
 function clickProps(onClick?: () => void) {
@@ -226,12 +256,13 @@ function clickProps(onClick?: () => void) {
   };
 }
 
-export function CardFace({ card, size = 'md', onClick, title, className = '', style }: Clickable & { card: DuelCard; size?: CardSize }) {
+export function CardFace({ card, size = 'md', onClick, title, className = '', style, nodeRef }: Clickable & { card: DuelCard; size?: CardSize }) {
   const science = card.effects.find((e) => e.kind === 'science');
   const symbol = science && science.kind === 'science' ? science.symbol : undefined;
   const hasCost = !!card.cost.coins || (card.cost.resources?.length ?? 0) > 0;
   return (
     <div
+      ref={nodeRef}
       className={`swd-card swd-card-${size} ${card.name.length > 14 ? 'swd-name-long' : ''} ${onClick ? 'clickable' : ''} ${className}`}
       style={{ ['--swd-card' as string]: CARD_HEX[card.color], ...style }}
       title={title ?? describeCard(card)}
@@ -239,43 +270,66 @@ export function CardFace({ card, size = 'md', onClick, title, className = '', st
     >
       <div className="swd-card-art"><CardArt name={card.name} color={card.color} symbol={symbol} /></div>
       <div className="swd-card-band"><CardEffects effects={card.effects} size={fitIcon(card.effects, BAND_PX[size], ICON_PX[size])} /></div>
-      {(hasCost || card.chainFrom?.length) && (
+      {(hasCost || card.chainCost) && (
         <div className="swd-card-cost">
           <CostIcons cost={card.cost} size={COST_PX[size]} />
-          {card.chainFrom?.length ? (
-            <span className="swd-card-chainfrom"><ChainIcon size={COST_PX[size]} title={`Free if you own ${card.chainFrom.join(' or ')}`} /></span>
+          {card.chainCost ? (
+            <span className="swd-card-chainfrom">
+              <ChainSymbolIcon symbol={card.chainCost} size={COST_PX[size]} title={`Free if you own ${card.chainFrom}`} />
+            </span>
           ) : null}
         </div>
       )}
-      {card.chainTo?.length ? (
-        <span className="swd-card-chainto"><ChainIcon size={COST_PX[size]} title={`Makes ${card.chainTo.join(' / ')} free`} /></span>
+      {card.chain ? (
+        <span className="swd-card-chainto"><ChainSymbolIcon symbol={card.chain} size={COST_PX[size] + 2} title={`Chain symbol: makes a later card free`} /></span>
       ) : null}
       <div className="swd-card-name">{card.name}</div>
     </div>
   );
 }
 
-export function CardBack({ age, guild = false, size = 'md', onClick, title, className = '', style }: Clickable & {
-  age: 1 | 2 | 3; guild?: boolean; size?: CardSize;
+const BACK_TITLE: Record<CardBackKind, string> = {
+  age: '', guild: 'Face-down guild card', temple: 'Face-down Grand Temple', senator: 'Face-down Senator',
+};
+
+/** Which back a face-down card shows (Guilds, Grand Temples and Senators have their own). */
+export function backKindOf(card: DuelCard | undefined): CardBackKind {
+  if (!card) return 'age';
+  if (card.color === 'senator') return 'senator';
+  if (card.color === 'purple') return card.effects.some((e) => e.kind === 'grandTemple') ? 'temple' : 'guild';
+  return 'age';
+}
+
+export function CardBack({ age, guild = false, kind, size = 'md', onClick, title, className = '', style, nodeRef, children }: Clickable & {
+  age: 1 | 2 | 3; guild?: boolean; kind?: CardBackKind; size?: CardSize; children?: ReactNode;
 }) {
+  const k: CardBackKind = kind ?? (guild ? 'guild' : 'age');
   return (
     <div
-      className={`swd-card swd-card-${size} swd-card-back ${className}`}
+      ref={nodeRef}
+      className={`swd-card swd-card-${size} swd-card-back ${onClick ? 'clickable' : ''} ${className}`}
       style={style}
-      title={title ?? (guild ? 'Face-down guild card' : `Face-down Age ${age} card`)}
+      title={title ?? (BACK_TITLE[k] || `Face-down Age ${age} card`)}
       {...clickProps(onClick)}
     >
-      <CardBackArt age={age} guild={guild} />
+      <CardBackArt age={age} kind={k} />
+      {children}
     </div>
   );
 }
 
 /** A built card tucked into a city: just its colour band and effect icons. */
-export function CardBand({ card }: { card: DuelCard }) {
+export function CardBand({ card, nodeRef, onClick, className = '' }: { card: DuelCard; nodeRef?: Ref<HTMLDivElement>; onClick?: () => void; className?: string }) {
   return (
-    <div className="swd-band" style={{ ['--swd-card' as string]: CARD_HEX[card.color] }} title={describeCard(card)}>
+    <div
+      ref={nodeRef}
+      className={`swd-band ${onClick ? 'clickable' : ''} ${className}`}
+      style={{ ['--swd-card' as string]: CARD_HEX[card.color] }}
+      title={describeCard(card)}
+      {...clickProps(onClick)}
+    >
       <CardEffects effects={card.effects} size={fitIcon(card.effects, 60, 17)} />
-      {card.chainTo?.length ? <span className="swd-band-chain"><ChainIcon size={10} title={`Makes ${card.chainTo.join(' / ')} free`} /></span> : null}
+      {card.chain ? <span className="swd-band-chain"><ChainSymbolIcon symbol={card.chain} size={10} /></span> : null}
     </div>
   );
 }
@@ -283,7 +337,7 @@ export function CardBand({ card }: { card: DuelCard }) {
 // ---------------------------------------------------------------------------
 // Wonders
 
-export function WonderCard({ wonder, size = 'lg', built = false, buriedAge, onClick, title, className = '', footer, costOverride }: Clickable & {
+export function WonderCard({ wonder, size = 'lg', built = false, buriedAge, onClick, title, className = '', footer, costOverride, nodeRef, tuckRef }: Clickable & {
   wonder: DuelWonder;
   size?: 'lg' | 'sm';
   built?: boolean;
@@ -292,16 +346,19 @@ export function WonderCard({ wonder, size = 'lg', built = false, buriedAge, onCl
   footer?: ReactNode;
   /** Show this cost instead of the printed one (e.g. after Architecture). */
   costOverride?: DuelCost;
+  /** Ref to the tucked card (animation registration). */
+  tuckRef?: Ref<HTMLDivElement>;
 }) {
   const icon = size === 'lg' ? 22 : 15;
   const cost = costOverride ?? wonder.cost;
   return (
     <div
+      ref={nodeRef}
       className={`swd-wonder swd-wonder-${size} ${built ? 'built' : ''} ${onClick ? 'clickable' : ''} ${className}`}
       title={title ?? `${wonder.name} — ${wonder.description}\nCost: ${costText(wonder.cost)}`}
       {...clickProps(onClick)}
     >
-      {built && buriedAge && <div className="swd-wonder-tuck"><CardBackArt age={buriedAge} /></div>}
+      {built && buriedAge && <div className="swd-wonder-tuck" ref={tuckRef}><CardBackArt age={buriedAge} /></div>}
       <div className="swd-wonder-face">
         <div className="swd-wonder-name">{wonder.name}</div>
         <div className="swd-wonder-art"><WonderArt id={wonder.id} /></div>
@@ -317,12 +374,13 @@ export function WonderCard({ wonder, size = 'lg', built = false, buriedAge, onCl
 // ---------------------------------------------------------------------------
 // Progress tokens
 
-export function ProgressToken({ id, size = 44, label = false, onClick, title, className = '' }: Clickable & {
+export function ProgressToken({ id, size = 44, label = false, onClick, title, className = '', nodeRef }: Clickable & {
   id: DuelProgressTokenId; size?: number; label?: boolean;
 }) {
   const t = progressTokenById(id);
   return (
     <div
+      ref={nodeRef}
       className={`swd-token ${onClick ? 'clickable' : ''} ${className}`}
       title={title ?? `${t.name} — ${t.description}`}
       {...clickProps(onClick)}

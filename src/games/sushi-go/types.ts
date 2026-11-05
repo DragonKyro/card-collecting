@@ -8,10 +8,12 @@
 // Turn structure: every round players are dealt a hand, simultaneously submit
 // one pick from their hand, then hands pass left. Engine waits at
 // `subPhase: 'selecting'` until all live players have submitted, then reveals.
-// Cards that need a decision once revealed (special order, spoon, menu,
-// takeout box) queue up in `resolution` and are answered one at a time in
-// `subPhase: 'resolving'` before hands pass. Three rounds; dessert pile
-// persists across rounds.
+// Chopsticks are part of the face-down pick (its second card); everything
+// else is decided at the reveal: cards that need a decision once revealed
+// (special order, menu, takeout box) and spoons on the table from earlier
+// turns (use it or keep it) queue up in `resolution` and are answered one at
+// a time in `subPhase: 'resolving'` before hands pass. Three rounds; dessert
+// pile persists across rounds.
 
 import type { Seat, PlayerId, GamePhase } from '@/core/types';
 import type { RngState } from '@/core/rng';
@@ -51,7 +53,7 @@ export interface SushiGoCard {
   copyOf?: SushiGoCopy;
 }
 
-/** Difficulty of the AI seats — each is a trained policy (see aiLevels.ts). */
+/** An AI seat's difficulty (`seat.aiLevel`) — each is a trained policy (see aiLevels.ts). */
 export type SushiGoAiLevel = 'easy' | 'normal' | 'hard';
 
 export interface SushiGoConfig {
@@ -59,8 +61,6 @@ export interface SushiGoConfig {
   menu: SushiGoCardKind[];
   /** Number of rounds (party = 3; configurable 1-5 for sanity testing). */
   rounds: number;
-  /** Difficulty of every AI seat in the match; omitted = 'normal'. */
-  aiLevel?: SushiGoAiLevel;
 }
 
 export interface SushiGoPlayer {
@@ -72,8 +72,6 @@ export interface SushiGoPlayer {
   dessertPile: SushiGoCard[];
   /** This round's submitted pick — set during the selection phase. */
   pendingPick: SushiGoCard[] | null;
-  /** Whether the pending pick also calls a spoon from the table. */
-  pendingSpoon: boolean;
   /** Uramaki points already scored this round by reaching 10 icons. */
   uramakiPoints: number;
   /** Per-round score breakdown; index 0 = round 1 total, etc. */
@@ -93,7 +91,7 @@ export type SushiGoSubPhase =
 export type SushiGoStep =
   /** A special order picks one of its owner's other played cards to copy. */
   | { type: 'copy'; playerId: PlayerId; cardId: number }
-  /** A spoon names the card it wants. */
+  /** A spoon from an earlier turn: name a card, or keep the spoon for later. */
   | { type: 'spoon'; playerId: PlayerId; cardId: number; order: number }
   /** The first player to the spoon's left holding the request picks which copy to hand over. */
   | { type: 'spoonGive'; playerId: PlayerId; toId: PlayerId; spoonId: number; options: number[] }
@@ -150,6 +148,8 @@ export interface SushiGoState {
 
   /** Last round's score breakdown (shown on the round-end screen). */
   lastRoundSummary: SushiGoRoundSummary | null;
+  /** Every scored round's breakdown, in order (the game-over stats read it). */
+  roundHistory: SushiGoRoundSummary[];
 
   /** Append-only event log for the history sidebar. */
   log: SushiGoLogEntry[];
@@ -171,13 +171,14 @@ export type SushiGoLogEntry =
   | { seq: number; round: number; kind: 'matchEnd'; winnerId: PlayerId | null };
 
 export type SushiGoAction =
-  /** Player submits their pick: 1 card, or 2 using chopsticks from their table.
-   *  `useSpoon` also calls a spoon from their table (the card is named once revealed). */
-  | { type: 'submitPick'; playerId: PlayerId; cardIds: number[]; useSpoon?: boolean }
+  /** Player submits their pick: 1 card, or 2 using chopsticks from their table. */
+  | { type: 'submitPick'; playerId: PlayerId; cardIds: number[] }
   /** Special order: copy one of your other played cards. */
   | { type: 'copyCard'; playerId: PlayerId; targetId: number }
   /** Spoon: name a card kind, optionally one exact variant. */
   | { type: 'askSpoon'; playerId: PlayerId; kind: SushiGoCardKind; variant?: string }
+  /** Spoon: don't use it this turn (it stays on the table). */
+  | { type: 'keepSpoon'; playerId: PlayerId }
   /** The asked player hands over one of the matching cards. */
   | { type: 'giveSpoon'; playerId: PlayerId; cardId: number }
   /** Menu: play one of the drawn cards. */

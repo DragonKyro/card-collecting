@@ -130,6 +130,23 @@
   gap: 6px;
 }
 
+/* An opponent's face-down hand: inline with their table on desktop, fanned
+ * into one stack on phones. */
+.sgp .backs { display: contents; }
+
+.sgp .pick-rules { display: none; }
+@media (hover: none) {
+  .sgp .pick-rules {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 10px;
+    font-size: 12px;
+    line-height: 1.35;
+    color: rgba(255,255,255,0.85);
+  }
+}
+
 .sgp .help {
   font-size: 12px;
   color: rgba(255,255,255,0.8);
@@ -196,7 +213,9 @@
 }
 
 .sgp-card.selectable { cursor: pointer; }
-.sgp-card.selectable:hover { transform: translateY(-3px); box-shadow: 0 5px 0 var(--edge, #8e7a52); }
+@media (hover: hover) {
+  .sgp-card.selectable:hover { transform: translateY(-3px); box-shadow: 0 5px 0 var(--edge, #8e7a52); }
+}
 
 .sgp-card.selected {
   box-shadow: 0 0 0 3px var(--sushi-yellow, #f4d268), 0 5px 0 var(--edge, #8e7a52);
@@ -317,7 +336,14 @@
   border: 6px solid transparent;
   border-top-color: #1c1a2e;
 }
-.sgp-card:hover .card-tooltip { opacity: 1; transform: translateX(-50%) translateY(0); }
+@media (hover: hover) {
+  .sgp-card:hover .card-tooltip { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+/* Touch: a tap would leave the tooltip stuck over the cards above, so the hand
+ * lists the picked cards' rules (.pick-rules) instead. */
+@media (hover: none) {
+  .sgp-card .card-tooltip { display: none; }
+}
 .sgp-card .card-tooltip strong { display: block; margin-bottom: 4px; }
 .sgp-card .card-tooltip .rule { color: rgba(251,246,234,0.85); }
 
@@ -395,3 +421,164 @@
   border-radius: 6px;
   font-size: 12px;
 }
+
+/* Two-column layout: board on the left, History & Chat on the right. Same
+ * shape as Sea Salt & Paper's sidebar, but its own rules — ssp.css is only
+ * loaded once an SSP match has been opened. */
+.sgp-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 1000px) {
+  .sgp-layout { grid-template-columns: 1fr; }
+}
+
+.sgp-sidebar {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  max-height: 80vh;
+}
+.sgp-sidebar-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+}
+.sgp-sidebar-tabs button {
+  flex: 1;
+  background: transparent;
+  color: var(--fg-muted);
+  border: none;
+  border-radius: 0;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+.sgp-sidebar-tabs button:hover { background: var(--bg-hover); color: var(--fg); }
+.sgp-sidebar-tabs button.active { color: var(--fg); border-bottom-color: var(--accent); }
+.sgp-sidebar-body {
+  padding: 12px;
+  overflow-y: auto;
+  font-size: 12px;
+  color: var(--fg);
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* The feed (not the body) owns scrolling so the chat input stays pinned. */
+.sgp-sidebar-body:has(.sgp-feed) { overflow: hidden; }
+.sgp-sidebar-body h4 {
+  margin: 8px 0 4px;
+  font-size: 12px;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.sgp-sidebar-body h4:first-child { margin-top: 0; }
+.sgp-cheat-row {
+  display: grid;
+  grid-template-columns: 60px 1fr;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  align-items: start;
+}
+.sgp-cheat-row:last-child { border-bottom: none; }
+.sgp-cheat-row .name { font-weight: 600; }
+.sgp-cheat-row .desc { color: var(--fg-muted); font-size: 11px; line-height: 1.4; }
+.sgp-cheat-row .ability { color: var(--warning); font-size: 11px; margin-top: 2px; }
+
+/* Combined History + Chat feed */
+.sgp-feed {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  gap: 8px;
+}
+.sgp-feed-thread {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-right: 2px;
+}
+.sgp-log-entry {
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--fg);
+}
+.sgp-log-entry.round-end { background: rgba(106, 160, 255, 0.15); font-weight: 600; }
+.sgp-log-entry.match-end { background: rgba(244, 210, 104, 0.2); font-weight: 700; }
+.sgp-log-entry .who { font-weight: 600; color: var(--accent); }
+.sgp-chat-msg {
+  font-size: 12px;
+  line-height: 1.4;
+  word-wrap: break-word;
+}
+.sgp-chat-msg .who { font-weight: 600; color: var(--accent); margin-right: 4px; }
+.sgp-chat-input { display: flex; gap: 6px; flex-shrink: 0; }
+.sgp-chat-input input { flex: 1; font-size: 12px; padding: 6px 8px; }
+.sgp-chat-input button { font-size: 12px; padding: 6px 12px; }
+
+/* ---------- phones ---------- */
+@media (max-width: 600px) {
+  /* Keeps the edge cards' (invisible) tooltips from widening the page. */
+  .sgp .board { padding: 10px; gap: 10px; overflow-x: clip; }
+  .sgp .target-info { justify-content: flex-start; gap: 2px 12px; font-size: 12px; }
+  .sgp .opponents { gap: 8px; }
+  .sgp .player-strip { padding: 6px 8px; }
+  .sgp .hand-area { padding: 10px; }
+  .sgp .backs { display: flex; }
+  .sgp .backs .sgp-card + .sgp-card { margin-left: -46px; }
+
+  /* Hand (and a menu's draw): four to a row, cards scaled to the screen. */
+  .sgp .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(68px, 1fr));
+    gap: 8px;
+  }
+  .sgp .cards .sgp-card { width: auto; height: auto; aspect-ratio: 88 / 124; }
+  .sgp .cards .sgp-card .art svg { width: 80%; height: auto; }
+  .sgp .cards .help { grid-column: 1 / -1; }
+
+  .sgp .sgp-spoon-row button { font-size: 13px; padding: 7px 10px; }
+
+  .sgp .round-summary { padding: 14px 12px; }
+  .sgp .round-summary td, .sgp .round-summary th { padding: 6px 4px; }
+  .sgp-sidebar { max-height: min(80vh, 380px); }
+}
+
+/* ---------- game-over match stats (StatsPanel.tsx; charts in src/ui/MatchCharts.tsx) ---------- */
+
+.sgp .match-stats { max-width: none; margin: 16px 0 0; }
+.sgp .match-stats .sgp-picks td,
+.sgp .match-stats .sgp-picks th { text-align: left; }
+.sgp .match-stats .sgp-picks td:first-child { width: 44px; font-variant-numeric: tabular-nums; }
+.sgp .match-stats .sgp-picks-total td { font-weight: 700; border-bottom: none; }
+.sgp-pick-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
+.sgp-chip {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #1c1a2e;
+  white-space: nowrap;
+  /* The card's background colour, softened so the dark ink stays readable. */
+  background: color-mix(in srgb, var(--chip) 70%, #ffffff);
+  box-shadow: inset 3px 0 0 var(--chip);
+}
+.sgp-chip-variant { font-weight: 400; }
+.sgp-pick-event { font-size: 11px; color: var(--mc-muted); }

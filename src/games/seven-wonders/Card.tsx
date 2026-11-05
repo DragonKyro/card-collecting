@@ -10,8 +10,8 @@ import type { CSSProperties, ReactNode } from 'react';
 import type { SwCard, SwCardColor, SwCardEffect, SwCost, SwResource, SwWonder } from './types';
 import { MANUFACTURED_RESOURCES, RAW_RESOURCES } from './types';
 import {
-  AgeIcon, ArrowIcon, CARD_COLOR_HEX, CardArt, ChainIcon, CoinIcon, ColorChip, DebtIcon, DiplomacyIcon,
-  MilitaryToken, ResourceIcon, ScienceIcon, ShieldIcon, VpIcon, WonderArt, WonderStageIcon,
+  ArrowIcon, CARD_COLOR_HEX, CardArt, ChainIcon, CoinIcon, ColorChip, DiplomacyIcon, LossIcon, MaskIcon,
+  MilitaryToken, ResourceIcon, ScienceIcon, ShieldIcon, VpIcon, WonderArt, WonderPowerIcon, WonderStageIcon,
 } from './art';
 
 const ROMAN = ['', 'I', 'II', 'III'] as const;
@@ -19,7 +19,7 @@ const ROMAN = ['', 'I', 'II', 'III'] as const;
 /** Text colour that reads on each card colour's band. */
 const BAND_INK: Record<SwCardColor, string> = {
   brown: '#fff4e0', gray: '#1d1f24', blue: '#fff', yellow: '#2a1c0e', red: '#fff', green: '#fff',
-  purple: '#fff', leader: '#2a1c0e', black: '#f3e9d6', orange: '#2a1c0e', navy: '#fff',
+  purple: '#fff', leader: '#2a1c0e', black: '#f3e9d6',
 };
 
 export function cardStyle(color: SwCardColor): CSSProperties {
@@ -92,11 +92,21 @@ function effectIcons(e: SwCardEffect, size: number): ReactNode {
         : <span className="sw-fx-group"><ShieldIcon size={size} /><span className="sw-fx-text">×{e.shields}</span></span>;
     case 'vp': return <VpIcon n={e.vp} size={size} />;
     case 'science': return <ScienceIcon s={e.symbol} size={size} />;
+    case 'scienceWild': return <ScienceIcon s="any" size={size} />;
+    case 'buildFromDiscard':
+    case 'playLastCard':
+    case 'freeBuildPerAge':
+    case 'copyGuild':
+      return <WonderPowerIcon power={e.kind} size={size} />;
     case 'tradeDiscountRaw': return <Trade sides={e.sides} goods={RAW_RESOURCES} size={size} />;
     case 'tradeDiscountManufactured': return <Trade sides={e.sides} goods={MANUFACTURED_RESOURCES} size={size} />;
     case 'endVp': {
-      const what = e.countWhat.kind === 'cardColor' ? <ColorChip color={e.countWhat.color} size={size} />
-        : e.countWhat.kind === 'wonderStages' ? <WonderStageIcon size={size} />
+      const w = e.countWhat;
+      const what = w.kind === 'cardColor' ? <ColorChip color={w.color} size={size} />
+        : w.kind === 'wonderStages' ? <WonderStageIcon size={size} />
+        : w.kind === 'victoryTokens' ? <MilitaryToken value={1} size={size} />
+        : w.kind === 'leaders' ? <ColorChip color="leader" size={size} />
+        : w.kind === 'coinSets' ? <CoinIcon n={3} size={size} />
         : <MilitaryToken value={-1} size={size} />;
       return (
         <span className="sw-fx-group">
@@ -108,84 +118,94 @@ function effectIcons(e: SwCardEffect, size: number): ReactNode {
         </span>
       );
     }
-    case 'citiesDebtToNeighbors':
-      return <span className="sw-fx-group"><Scope from="neighbors" size={size} /><DebtIcon n={e.amount} size={size} /></span>;
-    case 'citiesGainDiplomacy':
-      return Array.from({ length: e.amount }, (_, i) => <DiplomacyIcon key={i} size={size} />);
-    case 'citiesScoreExtra':
-      switch (e.rule.type) {
-        case 'completeAllColorsSet': return <span className="sw-fx-group"><VpIcon n={e.rule.vpPerSet} size={size} /><Per /><Chips colors={ALL_SEVEN} size={size} /></span>;
-        case 'vpPerDebtTotal': return <span className="sw-fx-group"><VpIcon n={e.rule.vpPer} size={size} /><Per /><Scope from="all" size={size} /><DebtIcon size={size} /></span>;
-        case 'coinsPerDebtTotal': return <span className="sw-fx-group"><CoinIcon size={size} /><Per /><Scope from="all" size={size} /><DebtIcon size={size} /></span>;
-      }
-      return null;
-    case 'babelScoreExtra':
-      switch (e.rule.type) {
-        case 'vpPerScienceSet':
-          return (
-            <span className="sw-fx-group">
-              <VpIcon n={e.rule.vpPerSet} size={size} /><Per />
-              <ScienceIcon s="compass" size={Math.round(size * 0.8)} /><ScienceIcon s="gear" size={Math.round(size * 0.8)} /><ScienceIcon s="tablet" size={Math.round(size * 0.8)} />
-            </span>
-          );
-        case 'vpPerNeighborCards': return <span className="sw-fx-group"><VpIcon n={e.rule.vpPer} size={size} /><Per /><Scope from="neighbors" size={size} /><ColorChip color={e.rule.color} size={size} /></span>;
-        case 'vpPerOwnColors': return <span className="sw-fx-group"><VpIcon n={e.rule.vpPer} size={size} /><Per /><Chips colors={e.rule.colors} size={size} /></span>;
-      }
-      return null;
-    case 'armadaScoreExtra':
-      switch (e.rule.type) {
-        case 'vpPerNeighborMilitaryLosses': return <span className="sw-fx-group"><VpIcon n={e.rule.vpPer} size={size} /><Per /><Scope from="neighbors" size={size} /><MilitaryToken value={-1} size={size} /></span>;
-        case 'vpPerOwnAgeIIIBuilds': return <span className="sw-fx-group"><VpIcon n={e.rule.vpPer} size={size} /><Per /><AgeIcon age={3} size={size} /></span>;
-        case 'vpPerOwnNavalSet': return <span className="sw-fx-group"><VpIcon n={e.rule.vpPerSet} size={size} /><Per /><Chips colors={['red', 'blue', 'green', 'yellow']} size={size} /></span>;
-      }
-      return null;
-    case 'leaderCostModifier': {
-      const target = e.target === 'cardColor' && e.targetColor ? <ColorChip color={e.targetColor} size={size} />
-        : e.target === 'wonderStage' ? <WonderStageIcon size={size} />
-        : e.target === 'guild' ? <ColorChip color="purple" size={size} />
-        : <ColorChip color="leader" size={size} />;
-      const label = e.remove === 'oneResource' ? '−1 resource' : e.remove === 'allResources' ? 'no resources' : 'no coins';
-      return <span className="sw-fx-group">{target}<span className="sw-fx-text">{label}</span></span>;
-    }
-    case 'leaderTrigger': {
+    case 'coinLoss':
+      return (
+        <span className="sw-fx-group" title={`Every other city loses ${e.amount} coin${e.amount === 1 ? '' : 's'}${e.per === 'victoryToken' ? ' per victory token' : e.per === 'wonderStage' ? ' per wonder stage' : ''}`}>
+          <LossIcon n={e.amount} size={size} />
+          {e.per === 'victoryToken' && <><Per /><MilitaryToken value={1} size={size} /></>}
+          {e.per === 'wonderStage' && <><Per /><WonderStageIcon size={size} /></>}
+        </span>
+      );
+    case 'neighborsGain':
+      return <span className="sw-fx-group" title={`Each neighbour takes ${e.amount} coin${e.amount === 1 ? '' : 's'}`}><Scope from="neighbors" size={size} /><CoinIcon n={e.amount} size={Math.round(size * 0.8)} /></span>;
+    case 'diplomacy': return <DiplomacyIcon size={size} />;
+    case 'mask': return <MaskIcon size={size} />;
+    case 'tradeRebate':
+      return (
+        <span className="sw-fx-group" title={`The first resource you buy from your ${e.side} neighbour each turn costs 1 coin less`}>
+          {e.side === 'west' && <ArrowIcon dir="west" size={Math.round(size * 0.75)} />}
+          <CoinIcon n="−1" size={size} />
+          {e.side === 'east' && <ArrowIcon dir="east" size={Math.round(size * 0.75)} />}
+        </span>
+      );
+    case 'produceOwned':
+      return <span className="sw-fx-group" title="One more of a resource your brown / gray cards or board produce"><ResourceIcon r="wood" size={Math.round(size * 0.8)} /><span className="sw-fx-text">+1 yours</span></span>;
+    case 'produceMissing':
+      return <span className="sw-fx-group" title="One resource your brown / gray cards and board don't produce"><ResourceIcon r="glass" size={Math.round(size * 0.8)} /><span className="sw-fx-text">+1 missing</span></span>;
+    case 'freeWonderResources':
+      return <span className="sw-fx-group" title="Wonder stages cost no resources"><WonderStageIcon size={size} /><span className="sw-fx-text">no resources</span></span>;
+    case 'costDiscount':
+      return (
+        <span className="sw-fx-group" title="One resource less (your choice)">
+          {e.target === 'wonderStage' ? <WonderStageIcon size={size} /> : <ColorChip color={e.color ?? 'brown'} size={size} />}
+          <span className="sw-fx-text">−1 resource</span>
+        </span>
+      );
+    case 'freeGuildResources':
+      return <span className="sw-fx-group"><ColorChip color="purple" size={size} /><span className="sw-fx-text">no resources</span></span>;
+    case 'freeLeaders':
+      return <span className="sw-fx-group"><ColorChip color="leader" size={size} /><span className="sw-fx-text">free</span></span>;
+    case 'leaderRebate':
+      return <span className="sw-fx-group"><ColorChip color="leader" size={size} /><CoinIcon n={`−${e.self}`} size={size} /><Scope from="neighbors" size={size} /><CoinIcon n={`−${e.neighbors}`} size={Math.round(size * 0.8)} /></span>;
+    case 'trigger': {
       const on = e.on.type === 'buildCardColor' ? <ColorChip color={e.on.color} size={size} />
         : e.on.type === 'buildViaChain' ? <ChainIcon size={size} />
-        : e.on.type === 'militaryWin' ? <MilitaryToken value={1} size={size} />
+        : e.on.type === 'victoryToken' ? <MilitaryToken value={1} size={size} />
         : <Scope from="neighbors" size={size} />;
-      return <span className="sw-fx-group">{on}<Arrow /><CoinIcon n={e.reward.coins ?? 0} size={size} /></span>;
+      return <span className="sw-fx-group">{on}<Arrow /><CoinIcon n={e.coins} size={size} /></span>;
     }
-    case 'leaderScoreExtra':
+    case 'scoreRule':
       switch (e.rule.type) {
-        case 'completeScienceSet':
-          return (
-            <span className="sw-fx-group">
-              <VpIcon n={e.rule.vpPerSet} size={size} /><Per />
-              <ScienceIcon s="compass" size={Math.round(size * 0.8)} /><ScienceIcon s="gear" size={Math.round(size * 0.8)} /><ScienceIcon s="tablet" size={Math.round(size * 0.8)} />
-            </span>
-          );
         case 'completeRGBSet': return <span className="sw-fx-group"><VpIcon n={e.rule.vpPerSet} size={size} /><Per /><Chips colors={['red', 'blue', 'green']} size={size} /></span>;
         case 'completeAllColorsSet': return <span className="sw-fx-group"><VpIcon n={e.rule.vpPerSet} size={size} /><Per /><Chips colors={ALL_SEVEN} size={size} /></span>;
-        case 'midasCoinBonus': return <span className="sw-fx-group"><VpIcon n={1} size={size} /><Per /><CoinIcon n={3} size={size} /></span>;
-        case 'alexanderTokenBonus': return <span className="sw-fx-group"><VpIcon n={1} size={size} /><Per /><MilitaryToken value={1} size={size} /></span>;
+        case 'vpPerCoinSet': return <span className="sw-fx-group"><VpIcon n={e.rule.vpPer} size={size} /><Per /><CoinIcon n={3} size={size} /></span>;
+        case 'vpPerVictoryToken': return <span className="sw-fx-group"><VpIcon n={e.rule.vpPer} size={size} /><Per /><MilitaryToken value={1} size={size} /></span>;
       }
       return null;
-    case 'leaderActivated':
-      return <span className="sw-fx-group"><CoinIcon n={1} size={size} /><Arrow /><span className="sw-fx-text">any resource</span></span>;
-    case 'leaderOnRecruit':
-      return <span className="sw-fx-text">build from discard</span>;
+    case 'scienceSetBonus':
+      return (
+        <span className="sw-fx-group">
+          <VpIcon n={`+${e.vp}`} size={size} /><Per />
+          <ScienceIcon s="compass" size={Math.round(size * 0.8)} /><ScienceIcon s="gear" size={Math.round(size * 0.8)} /><ScienceIcon s="tablet" size={Math.round(size * 0.8)} />
+        </span>
+      );
+    case 'buyAnyResource':
+      return <span className="sw-fx-group" title="Once a turn, buy any resource from the bank for 1 coin"><CoinIcon n={1} size={size} /><Arrow /><span className="sw-fx-text">any resource</span></span>;
+    case 'buildFromDiscardOnRecruit': return <WonderPowerIcon power="buildFromDiscard" size={size} />;
+    case 'defeatToVictor':
+      return <span className="sw-fx-group" title="Your defeat tokens go to the victor"><MilitaryToken value={-1} size={size} /><Arrow /><Scope from="neighbors" size={size} /></span>;
+    case 'defeatAsShield':
+      return <span className="sw-fx-group" title="Each defeat token counts as a shield"><MilitaryToken value={-1} size={size} /><span className="sw-fx-text">=</span><ShieldIcon size={size} /></span>;
+    case 'bankBonus':
+      return <span className="sw-fx-group" title="Once a turn, +1 on coins from the bank"><CoinIcon n="+1" size={size} /></span>;
+    case 'freeColorPerAge':
+      return <span className="sw-fx-group" title={`One ${e.color} card per Age for free`}><ColorChip color={e.color} size={size} /><span className="sw-fx-text">free / Age</span></span>;
+    case 'copyLeader':
+      return <span className="sw-fx-group" title="Copy a neighbour's leader"><Scope from="neighbors" size={size} /><ColorChip color="leader" size={size} /><span className="sw-fx-text">copy</span></span>;
+    case 'drawLeaders':
+      return <span className="sw-fx-group" title={`Draw ${e.count} leaders`}><ColorChip color="leader" size={size} /><span className="sw-fx-text">+{e.count}</span></span>;
+    case 'recruitNow':
+      return <span className="sw-fx-group" title="Recruit a leader now"><ColorChip color="leader" size={size} /><span className="sw-fx-text">now</span></span>;
   }
 }
 
-/** A row of effect icons. Empty when the effects aren't drawable (unmodelled). */
-export function EffectIcons({ effects, name, size = 18 }: { effects: readonly SwCardEffect[]; name?: string; size?: number }) {
-  const parts = effects.map((e, i) => <span key={i} className="sw-fx-group">{effectIcons(e, size)}</span>);
-  // The Scientists Guild's wild symbol is scored by name (see scoring.ts).
-  if (name === 'Scientists Guild') parts.push(<ScienceIcon key="any" s="any" size={size} />);
-  return <span className="sw-fx">{parts}</span>;
+/** A row of effect icons. */
+export function EffectIcons({ effects, size = 18 }: { effects: readonly SwCardEffect[]; size?: number }) {
+  return <span className="sw-fx">{effects.map((e, i) => <span key={i} className="sw-fx-group">{effectIcons(e, size)}</span>)}</span>;
 }
 
-export function hasEffectIcons(card: Pick<SwCard, 'effects' | 'name'>): boolean {
-  return card.effects.length > 0 || card.name === 'Scientists Guild';
+export function hasEffectIcons(card: Pick<SwCard, 'effects'>): boolean {
+  return card.effects.length > 0;
 }
 
 /** Resources (and coins) of a cost, one icon per unit. */
@@ -200,33 +220,73 @@ export function CostIcons({ cost, size = 16, free = false }: { cost: SwCost; siz
   );
 }
 
-/** Plain-text summary of a card's effects (tooltips, logs). */
-export function cardEffectsText(c: Pick<SwCard, 'effects' | 'name'>): string {
-  const parts: string[] = [];
-  for (const eff of c.effects) {
-    if (eff.kind === 'vp') parts.push(`+${eff.vp} VP`);
-    else if (eff.kind === 'coins') parts.push(`+${eff.amount} coins`);
-    else if (eff.kind === 'shields') parts.push(`+${eff.shields} shield${eff.shields === 1 ? '' : 's'}`);
-    else if (eff.kind === 'science') parts.push(`science: ${eff.symbol}`);
-    else if (eff.kind === 'produce') parts.push(eff.production.map((opts) => opts.join('/')).join(' + '));
-    else if (eff.kind === 'tradeDiscountRaw') parts.push(`raw materials cost 1 coin (${eff.sides.join('/')})`);
-    else if (eff.kind === 'tradeDiscountManufactured') parts.push(`manufactured goods cost 1 coin (${eff.sides.join('/')})`);
-    else if (eff.kind === 'endVp') {
-      const what =
-        eff.countWhat.kind === 'cardColor' ? `${eff.countWhat.color} card`
-        : eff.countWhat.kind === 'wonderStages' ? 'wonder stage'
-        : 'defeat token';
-      const scope = eff.from === 'self' ? 'yours' : eff.from === 'neighbors' ? "neighbours'" : 'yours and neighbours\'';
+/** Plain-text summary of one effect. */
+export function effectText(eff: SwCardEffect): string {
+  switch (eff.kind) {
+    case 'vp': return `+${eff.vp} VP`;
+    case 'coins': return `+${eff.amount} coins`;
+    case 'shields': return `+${eff.shields} shield${eff.shields === 1 ? '' : 's'}`;
+    case 'science': return `science: ${eff.symbol}`;
+    case 'scienceWild': return 'a science symbol of your choice';
+    case 'produce': return eff.production.map((opts) => opts.join('/')).join(' + ');
+    case 'tradeDiscountRaw': return `raw materials cost 1 coin (${eff.sides.join('/')})`;
+    case 'tradeDiscountManufactured': return `manufactured goods cost 1 coin (${eff.sides.join('/')})`;
+    case 'endVp': {
+      const w = eff.countWhat;
+      const what = w.kind === 'cardColor' ? `${w.color} card` : w.kind === 'wonderStages' ? 'wonder stage'
+        : w.kind === 'victoryTokens' ? 'victory token' : w.kind === 'leaders' ? 'recruited leader'
+        : w.kind === 'coinSets' ? '3 coins' : 'defeat token';
+      const scope = eff.from === 'self' ? 'yours' : eff.from === 'neighbors' ? "neighbours'" : "yours and neighbours'";
       const bits: string[] = [];
       if (eff.coinsPerOnPlay) bits.push(`+${eff.coinsPerOnPlay} coin${eff.coinsPerOnPlay === 1 ? '' : 's'} now`);
       if (eff.vpPer) bits.push(`+${eff.vpPer} VP at the end`);
-      parts.push(`${bits.join(' and ')} per ${what} (${scope})`);
+      return `${bits.join(' and ')} per ${what} (${scope})`;
     }
-    else if (eff.kind === 'citiesDebtToNeighbors') parts.push(`each neighbour takes ${eff.amount} debt`);
-    else if (eff.kind === 'citiesGainDiplomacy') parts.push(`+${eff.amount} diplomacy`);
+    case 'buildFromDiscard': return 'build a card from the discard pile for free';
+    case 'playLastCard': return "play each Age's last card";
+    case 'freeBuildPerAge': return 'once per Age, build a card for free';
+    case 'copyGuild': return "copy a neighbour's guild at the end";
+    case 'coinLoss': return `every other city loses ${eff.amount} coin${eff.amount === 1 ? '' : 's'}${eff.per === 'victoryToken' ? ' per victory token' : eff.per === 'wonderStage' ? ' per wonder stage' : ''}`;
+    case 'neighborsGain': return `each neighbour takes ${eff.amount} coin${eff.amount === 1 ? '' : 's'}`;
+    case 'diplomacy': return 'a diplomacy token (sit the next conflict out)';
+    case 'mask': return "a mask: copy a neighbour's green-card science symbol at the end";
+    case 'tradeRebate': return `the first resource bought from your ${eff.side} neighbour each turn costs 1 coin less`;
+    case 'produceOwned': return 'one more of a resource your city produces, each turn';
+    case 'produceMissing': return "one resource your city doesn't produce, each turn";
+    case 'freeWonderResources': return 'wonder stages cost no resources';
+    case 'costDiscount': return `${eff.target === 'wonderStage' ? 'wonder stages' : `${eff.color} cards`} cost one resource less`;
+    case 'freeGuildResources': return 'guilds cost no resources';
+    case 'freeLeaders': return 'recruit leaders for free';
+    case 'leaderRebate': return `your leaders cost ${eff.self} coins less, your neighbours' ${eff.neighbors} less`;
+    case 'trigger': {
+      const on = eff.on.type === 'buildCardColor' ? `you build a ${eff.on.color} card` : eff.on.type === 'buildViaChain' ? 'you build through a chain'
+        : eff.on.type === 'victoryToken' ? 'you take a victory token' : 'you buy from a neighbour';
+      return `+${eff.coins} coin${eff.coins === 1 ? '' : 's'} each time ${on}`;
+    }
+    case 'scoreRule':
+      switch (eff.rule.type) {
+        case 'completeRGBSet': return `${eff.rule.vpPerSet} VP per red + blue + green set`;
+        case 'completeAllColorsSet': return `${eff.rule.vpPerSet} VP per set of the seven Age colours`;
+        case 'vpPerCoinSet': return `${eff.rule.vpPer} VP per 3 coins`;
+        case 'vpPerVictoryToken': return `${eff.rule.vpPer} VP per victory token`;
+      }
+      return '';
+    case 'scienceSetBonus': return `+${eff.vp} VP per science set`;
+    case 'buyAnyResource': return 'once a turn, any resource from the bank for 1 coin';
+    case 'buildFromDiscardOnRecruit': return 'build a card from the discard pile for free';
+    case 'defeatToVictor': return 'your defeat tokens go to the victor';
+    case 'defeatAsShield': return 'each defeat token counts as a shield';
+    case 'bankBonus': return 'once a turn, +1 coin on coins from the bank';
+    case 'freeColorPerAge': return `one ${eff.color} card per Age for free`;
+    case 'copyLeader': return 'copy a leader of a neighbouring city';
+    case 'drawLeaders': return `draw ${eff.count} leaders`;
+    case 'recruitNow': return 'recruit a leader now';
   }
-  if (c.name === 'Scientists Guild') parts.push('one extra science symbol of your choice');
-  return parts.join(' · ') || '—';
+}
+
+/** Plain-text summary of a card's effects (tooltips, logs). */
+export function cardEffectsText(c: Pick<SwCard, 'effects' | 'name'>): string {
+  return c.effects.map(effectText).filter(Boolean).join(' · ') || '—';
 }
 
 // ---------------------------------------------------------------------------
@@ -281,7 +341,7 @@ export function CardFace({
       onKeyDown={onClick && !disabled ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } } : undefined}
     >
       <div className="sw-cf-band">
-        {hasEffectIcons(card) ? <EffectIcons effects={card.effects} name={card.name} size={icon} /> : <span className="sw-fx-text">special</span>}
+        {hasEffectIcons(card) ? <EffectIcons effects={card.effects} size={icon} /> : <span className="sw-fx-text">special</span>}
       </div>
       <div className="sw-cf-art">
         <CardArt card={card} />
@@ -306,22 +366,23 @@ export function CardFace({
   );
 }
 
-/** A tucked card: only the coloured effect band shows. */
-export function CardBand({ card, size = 'md' }: { card: SwCard; size?: 'md' | 'sm' }) {
+/** A tucked card: only the coloured effect band shows. `fresh`: built on the
+ *  last turn — it pops in and glows for a moment. */
+export function CardBand({ card, size = 'md', fresh = false }: { card: SwCard; size?: 'md' | 'sm'; fresh?: boolean }) {
   const icon = size === 'md' ? 17 : 13;
   return (
-    <div className={`sw-band sw-band-${size} sw-c-${card.color}`} style={cardStyle(card.color)} title={`${card.name} — ${cardEffectsText(card)}`}>
+    <div className={`sw-band sw-band-${size} sw-c-${card.color}${fresh ? ' sw-fresh' : ''}`} style={cardStyle(card.color)} title={`${card.name} — ${cardEffectsText(card)}`}>
       {hasEffectIcons(card)
-        ? <EffectIcons effects={card.effects} name={card.name} size={icon} />
+        ? <EffectIcons effects={card.effects} size={icon} />
         : <span className="sw-band-name">{card.name}</span>}
     </div>
   );
 }
 
 /** Cards of a city, tucked by colour into columns in the printed colour order. */
-export const TABLEAU_ORDER: SwCardColor[] = ['brown', 'gray', 'yellow', 'red', 'green', 'blue', 'purple', 'black', 'orange', 'navy', 'leader'];
+export const TABLEAU_ORDER: SwCardColor[] = ['brown', 'gray', 'yellow', 'red', 'green', 'blue', 'purple', 'black', 'leader'];
 
-export function TableauColumns({ cards, size = 'md' }: { cards: SwCard[]; size?: 'md' | 'sm' }) {
+export function TableauColumns({ cards, size = 'md', fresh }: { cards: SwCard[]; size?: 'md' | 'sm'; fresh?: ReadonlySet<number> }) {
   return (
     <div className={`sw-city sw-city-${size}`}>
       {TABLEAU_ORDER.map((color) => {
@@ -329,7 +390,7 @@ export function TableauColumns({ cards, size = 'md' }: { cards: SwCard[]; size?:
         if (col.length === 0) return null;
         return (
           <div key={color} className="sw-city-col">
-            {col.map((c) => <CardBand key={c.id} card={c} size={size} />)}
+            {col.map((c) => <CardBand key={c.id} card={c} size={size} fresh={fresh?.has(c.id)} />)}
           </div>
         );
       })}
@@ -340,9 +401,10 @@ export function TableauColumns({ cards, size = 'md' }: { cards: SwCard[]; size?:
 // ---------------------------------------------------------------------------
 // Wonder board
 
-const NOT_MODELLED = /not (fully )?modeled|placeholder/i;
+const POWERS = new Set<SwCardEffect['kind']>(['buildFromDiscard', 'playLastCard', 'freeBuildPerAge', 'copyGuild', 'scienceWild', 'coinLoss', 'drawLeaders', 'recruitNow']);
 
-export function WonderBoard({ wonder, built, highlightNext = false }: { wonder: SwWonder; built: number; highlightNext?: boolean }) {
+/** `fresh`: the last built stage went up on the last turn (it glows). */
+export function WonderBoard({ wonder, built, highlightNext = false, fresh = false }: { wonder: SwWonder; built: number; highlightNext?: boolean; fresh?: boolean }) {
   return (
     <div className="sw-wboard">
       <div className="sw-wboard-art">
@@ -355,13 +417,19 @@ export function WonderBoard({ wonder, built, highlightNext = false }: { wonder: 
           <span className="sw-wboard-side">{wonder.side}</span>
         </div>
       </div>
+      {wonder.boardText && (
+        <div className="sw-wboard-power" title="Board power, in force from the start">
+          <EffectIcons effects={wonder.boardEffects ?? []} size={18} /> <span>{wonder.boardText}</span>
+        </div>
+      )}
       <div className="sw-wboard-stages">
         {wonder.stages.map((stage, i) => {
           const isBuilt = i < built;
           const isNext = highlightNext && i === built;
-          const showText = stage.effects.length === 0 || NOT_MODELLED.test(stage.text);
+          // Powers don't read from an icon alone: spell them out.
+          const showText = stage.effects.length === 0 || stage.effects.some((e) => POWERS.has(e.kind));
           return (
-            <div key={i} className={`sw-wstage ${isBuilt ? 'built' : ''} ${isNext ? 'next' : ''}`} title={`Stage ${i + 1}: ${stage.text}`}>
+            <div key={i} className={`sw-wstage ${isBuilt ? 'built' : ''} ${isNext ? 'next' : ''} ${fresh && i === built - 1 ? 'sw-fresh' : ''}`} title={`Stage ${i + 1}: ${stage.text}`}>
               <div className="sw-wstage-cost"><CostIcons cost={stage.cost} size={17} /></div>
               <div className="sw-wstage-fx">
                 {stage.effects.length > 0 && <EffectIcons effects={stage.effects} size={26} />}
@@ -377,14 +445,14 @@ export function WonderBoard({ wonder, built, highlightNext = false }: { wonder: 
 }
 
 /** A small strip of a neighbour's wonder with built-stage pips. */
-export function WonderMini({ wonder, built }: { wonder: SwWonder; built: number }) {
+export function WonderMini({ wonder, built, fresh = false }: { wonder: SwWonder; built: number; fresh?: boolean }) {
   return (
     <div className="sw-wmini" title={`${wonder.name} (${wonder.side}) — ${built}/${wonder.stages.length} stages built`}>
       <WonderArt wonder={wonder} />
       <div className="sw-wmini-bar">
         <span className="sw-wmini-name">{wonder.name.replace(/^(Pyramids|Colossus|Lighthouse|Temple|Statue of Zeus|Mausoleum|Hanging Gardens) (of|at) /, '')}</span>
         <span className="sw-wmini-pips">
-          {wonder.stages.map((_, i) => <span key={i} className={i < built ? 'on' : ''} />)}
+          {wonder.stages.map((_, i) => <span key={i} className={`${i < built ? 'on' : ''}${fresh && i === built - 1 ? ' sw-fresh' : ''}`} />)}
         </span>
       </div>
     </div>

@@ -4,7 +4,7 @@ import type { GameModule } from '@/core/module';
 import type { Seat, PlayerId } from '@/core/types';
 import type { JaipurState, JaipurAction, JaipurConfig } from './types';
 import { applyAction, createJaipurState } from './reducer';
-import { DEFAULT_AI_LEVEL, aiLevelOf, isAiLevel } from './levels';
+import { AI_LEVELS, DEFAULT_AI_LEVEL, aiLevelsOf, isAiLevel } from './levels';
 import { JaipurThumbnail } from './Thumbnail';
 
 // The AI levels (encoder + network runtime) are loaded on demand by
@@ -21,9 +21,12 @@ export const jaipurModule: GameModule<JaipurState, JaipurAction, JaipurConfig> =
   tagline: 'Trade goods at the market, herd camels, and sell before your rival does.',
   minPlayers: 2,
   maxPlayers: 2,
+  // Each AI seat picks its own (seat.aiLevel): one per shipped policy.
+  aiLevels: AI_LEVELS,
+  defaultAiLevel: DEFAULT_AI_LEVEL,
 
   defaultConfig(_seats: Seat[]): JaipurConfig {
-    return { sealsToWin: 2, aiLevel: DEFAULT_AI_LEVEL };
+    return { sealsToWin: 2 };
   },
 
   validateConfig(config, seats) {
@@ -31,7 +34,7 @@ export const jaipurModule: GameModule<JaipurState, JaipurAction, JaipurConfig> =
     if (!(Number.isInteger(config.sealsToWin) && config.sealsToWin >= 1 && config.sealsToWin <= 3)) {
       errors.push('Seals to win must be 1–3.');
     }
-    if (config.aiLevel !== undefined && !isAiLevel(config.aiLevel)) errors.push('Unknown AI difficulty.');
+    if (seats?.some((s) => s.isAI && s.aiLevel !== undefined && !isAiLevel(s.aiLevel))) errors.push('Unknown AI difficulty.');
     if (seats && seats.length !== 2) errors.push('Jaipur is for exactly 2 players.');
     return errors;
   },
@@ -55,10 +58,11 @@ export const jaipurModule: GameModule<JaipurState, JaipurAction, JaipurConfig> =
     return aiLevels ? aiLevels.chooseLeveledAction(state, playerId) : null;
   },
 
-  async prepare(config, seats) {
+  async prepare(_config, seats) {
     if (!seats.some((s) => s.isAI)) return;
     aiLevels ??= await import('./aiLevels');
-    await aiLevels.prepareAiLevel(aiLevelOf(config));
+    const { prepareAiLevel } = aiLevels;
+    await Promise.all(aiLevelsOf(seats).map((level) => prepareAiLevel(level)));
   },
 
   Thumbnail: JaipurThumbnail,

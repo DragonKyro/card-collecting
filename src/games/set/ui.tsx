@@ -183,7 +183,11 @@ function GameView({ state, localPlayerId, dispatch }: {
               Space or Esc clears. {spec.chain > 0 && `Reuse exactly ${spec.chain} from the previous ${engine.rule.noun}.`}
             </>
           ) : (
-            <>Nothing left to find — your splits are in the panel on the right. <strong>Play again</strong> deals a fresh deck.</>
+            <>
+              Nothing left to find — your splits are in the panel
+              {' '}<span className="set-wide-only">on the right</span><span className="set-narrow-only">below</span>.
+              {' '}<strong>Play again</strong> deals a fresh deck.
+            </>
           )}
         </p>
       </div>

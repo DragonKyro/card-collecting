@@ -12,41 +12,56 @@
 //
 // Bump ENCODER_VERSION whenever a segment is added, removed, reordered or
 // rescaled; trained weights are only valid for the version they saw.
+//
+// v3 appended the Extra Pepper segments after all of v2's, leaving v2's
+// untouched — so a v2 network is a v3 one with zero weights on the new
+// inputs (see training/ssp/upgrade.py). Every `pepper*` input is zero in a
+// game without Pepper. The `pepperDecision.*` ones are only written in the
+// Pepper decision subphases (Water Rodeo, Angelfish, event choice), where
+// only Pepper action slots are legal: weights on them can't change any other
+// decision.
 
 import type { SspCard, SspCardFamily, SspColor, SspEventId, SspSubPhase } from '../types';
-import { FAMILY_COLORS, FAMILY_ORDER, DUO_PAIRS, buildDeck } from '../cards';
-import { specialColorBonus, totalScore, type CardPointsOpts } from '../scoring';
+import { FAMILY_COLORS, FAMILY_ORDER, DUO_PAIRS, PAIR_TYPES, RODEO_PAIRS, buildDeck, pairTypeIndex } from '../cards';
+import { specialColorBonus, tablePairs, totalScore, type CardPointsOpts } from '../scoring';
 import { ALL_EVENT_IDS } from '../events';
 import { buriedStillThere } from '../knowledge';
 import { FAMILY_COUNT, FAMILY_INDEX, type SspObservation, type SspObservedPlayer } from './observation';
 
-export const ENCODER_VERSION = 2;
+export const ENCODER_VERSION = 3;
+
+/** Input count of encoder v2 — v3's first inputs, unchanged. */
+export const V2_OBS_DIM = 632;
 
 const MAX_OPPONENTS = 3;
 const DECK_NORM = 66;
 const SCORE_NORM = 20;
 const MARGINAL_NORM = 5;
 
-// The Extra Pepper decisions (Water Rodeo, Angelfish, event choice) have no
-// action slots — fixedChoices.ts answers them, so the network never decides
-// in those subphases. They share the slot of the closest one, which keeps the
-// layout (and the shipped policies) unchanged.
-const SUBPHASE_INDEX: Record<SspSubPhase, number> = {
+// v2's subphase one-hot. The Pepper decision subphases leave it empty and set
+// `pepperDecision.kind` instead.
+const SUBPHASE_INDEX: Partial<Record<SspSubPhase, number>> = {
   awaitingAction: 0,
   awaitingKeep: 1,
   awaitingPlayOrEnd: 2,
   awaitingCrabPick: 3,
   awaitingSharkSteal: 4,
-  awaitingRodeoTarget: 4,
-  awaitingRodeoSwap: 4,
-  awaitingPairSteal: 4,
   awaitingLobsterPick: 5,
-  awaitingAngelfishPick: 5,
   roundEnd: 6,
-  awaitingEventChoice: 6,
   gameOver: 7,
 };
 const SUBPHASE_COUNT = 8;
+const PEPPER_DECISION_INDEX: Partial<Record<SspSubPhase, number>> = {
+  awaitingRodeoTarget: 0,
+  awaitingRodeoSwap: 1,
+  awaitingPairSteal: 2,
+  awaitingAngelfishPick: 3,
+  awaitingEventChoice: 4,
+};
+const PEPPER_DECISION_COUNT = 5;
+
+/** Segments only written in the Pepper decision subphases (see header). */
+export const isPepperDecisionSegment = (name: string): boolean => name.startsWith('pepperDecision.');
 
 const COLOR_INDEX: Record<SspColor, number> = {
   white: 0, yellow: 1, green: 2, pink: 3, purple: 4, teal: 5,
@@ -156,7 +171,8 @@ function writeFeatures(obs: SspObservation, w: Writer): void {
 
   // ---- global ----
   let o = w.seg('subPhase', SUBPHASE_COUNT);
-  x[o + SUBPHASE_INDEX[obs.subPhase]] = 1;
+  const sub = SUBPHASE_INDEX[obs.subPhase];
+  if (sub !== undefined) x[o + sub] = 1;
   w.scalar('isMyTurn', obs.activeOffset === 0 ? 1 : 0);
   o = w.seg('playerCount', 3);
   x[o + clamp(obs.players.length - 2, 0, 2)] = 1;
@@ -290,6 +306,107 @@ function writeFeatures(obs: SspObservation, w: Writer): void {
   let expected = 0;
   if (unseenTotal > 0) unseenF.forEach((u, i) => { expected += (u / unseenTotal) * familyMarginal[i]; });
   w.scalar('unseen.expectedMarginal', expected);
+
+  writePepperFeatures(obs, w, myCards, myOpts, myScore, marginalOf);
+}
+
+/** Encoder v3's Extra Pepper segments (see the header). */
+function writePepperFeatures(
+  obs: SspObservation, w: Writer, mine: SspCard[], myOpts: CardPointsOpts, myScore: number,
+  marginalOf: (card: SspCard) => number,
+): void {
+  const x = w.x;
+  const me = obs.players[0];
+  const scoreWithout = (ids: number[], add: SspCard[] = []) =>
+    scoreOf([...mine.filter((c) => !ids.includes(c.id)), ...add], myOpts);
+
+  // ---- every state of a Pepper game ----
+  w.events('pepper.eventsLeft', obs.eventsLeft);
+  let o = w.seg('pepper.coralShell', 1 + MAX_OPPONENTS);
+  obs.players.forEach((p, k) => { if (k <= MAX_OPPONENTS && p.coralShell) x[o + k] = 1; });
+  o = w.seg('pepper.threeMermaidsWin', 1 + MAX_OPPONENTS);
+  obs.players.forEach((p, k) => { if (k <= MAX_OPPONENTS && p.rules.mermaidsToWin < 4) x[o + k] = 1; });
+  w.scalar('pepper.canPlaceCoral', obs.canPlaceCoral ? 1 : 0);
+  o = w.seg('pepper.rodeoPairsInHand', RODEO_PAIRS.length);
+  const o2 = w.seg('pepper.rodeoTriosInHand', RODEO_PAIRS.length);
+  if (me.rules.waterRodeo) {
+    const hasStarfish = obs.hand.some((c) => c.family === 'starfish');
+    RODEO_PAIRS.forEach(([f], t) => {
+      const pairs = Math.floor(obs.hand.filter((c) => c.family === f).length / 2);
+      x[o + t] = pairs / 3;
+      x[o2 + t] = hasStarfish && pairs > 0 ? 1 : 0;
+    });
+  }
+
+  // ---- only in the Pepper decision subphases ----
+  o = w.seg('pepperDecision.kind', PEPPER_DECISION_COUNT);
+  const kind = PEPPER_DECISION_INDEX[obs.subPhase];
+  if (kind !== undefined && obs.activeOffset === 0) x[o + kind] = 1;
+
+  // Water Rodeo, choosing whose hand to look at: each opponent's match lead
+  // over the viewer, hand size, and whether they're the match leader.
+  o = w.seg('pepperDecision.target.matchLead', MAX_OPPONENTS);
+  const o4 = w.seg('pepperDecision.target.handSize', MAX_OPPONENTS);
+  const o5 = w.seg('pepperDecision.target.leader', MAX_OPPONENTS);
+  if (obs.subPhase === 'awaitingRodeoTarget' && obs.activeOffset === 0) {
+    const opps = obs.players.slice(1, 1 + MAX_OPPONENTS);
+    const top = Math.max(...opps.map((p) => p.matchScore));
+    opps.forEach((p, i) => {
+      x[o + i] = (p.matchScore - me.matchScore) / obs.targetScore;
+      x[o4 + i] = p.handSize / 15;
+      x[o5 + i] = p.matchScore === top ? 1 : 0;
+    });
+  }
+
+  // Water Rodeo swap: the hand being looked at, what each kind would add,
+  // the kind chosen to take (second step) and what giving each kind costs.
+  const look = obs.rodeoLook;
+  w.families('pepperDecision.look.families', look?.hand ?? []);
+  w.colors('pepperDecision.look.colors', look?.hand ?? []);
+  o = w.seg('pepperDecision.look.offset', MAX_OPPONENTS);
+  if (look && look.offset >= 1 && look.offset <= MAX_OPPONENTS) x[o + look.offset - 1] = 1;
+  o = w.seg('pepperDecision.look.takeGain', FAMILY_COUNT);
+  bestPerFamily(look?.hand ?? [], marginalOf, Math.max).forEach((v, i) => { x[o + i] = v; });
+  o = w.seg('pepperDecision.swap.take', FAMILY_COUNT);
+  if (look && obs.rodeoTake) x[o + FAMILY_INDEX[obs.rodeoTake]] = 1;
+  o = w.seg('pepperDecision.swap.giveLoss', FAMILY_COUNT);
+  if (look) {
+    const taken = look.hand.filter((c) => c.family === obs.rodeoTake).slice(0, 1);
+    const loss = (c: SspCard) => clamp((myScore - scoreWithout([c.id], taken)) / MARGINAL_NORM, -4, 4);
+    bestPerFamily(obs.hand, loss, Math.min).forEach((v, i) => { x[o + i] = v; });
+  }
+
+  // Water Rodeo shark pair: each opponent's pairs by type, and what the best
+  // of each would add to the viewer's score.
+  o = w.seg('pepperDecision.steal.pairs', MAX_OPPONENTS * PAIR_TYPES.length);
+  const o3 = w.seg('pepperDecision.steal.gain', MAX_OPPONENTS * PAIR_TYPES.length);
+  if (obs.subPhase === 'awaitingPairSteal' && obs.activeOffset === 0) {
+    for (let k = 1; k <= MAX_OPPONENTS && k < obs.players.length; k++) {
+      const p = obs.players[k];
+      for (const pair of tablePairs(p.table, p.trios)) {
+        const t = pairTypeIndex(pair[0].family, pair[1].family);
+        if (t === -1) continue;
+        const at = (k - 1) * PAIR_TYPES.length + t;
+        x[o + at] += 1 / 2;
+        x[o3 + at] = Math.max(x[o3 + at], clamp((scoreWithout([], pair) - myScore) / MARGINAL_NORM, -4, 4));
+      }
+    }
+  }
+
+  // Event choice: the card just won and the one already held.
+  w.events('pepperDecision.choice.new', obs.eventChoice ? [obs.eventChoice.newEventId] : []);
+  w.events('pepperDecision.choice.old', obs.eventChoice ? [obs.eventChoice.oldEventId] : []);
+}
+
+/** Per family (FAMILY_ORDER), the best of `value` over the cards of that family; 0 where there are none. */
+function bestPerFamily(cards: SspCard[], value: (c: SspCard) => number, pick: (a: number, b: number) => number): number[] {
+  const out = new Array<number | undefined>(FAMILY_COUNT);
+  for (const c of cards) {
+    const i = FAMILY_INDEX[c.family];
+    const v = value(c);
+    out[i] = out[i] === undefined ? v : pick(out[i]!, v);
+  }
+  return Array.from(out, (v) => v ?? 0);
 }
 
 function clamp(v: number, lo: number, hi: number): number {
@@ -302,10 +419,10 @@ const PLACEHOLDER_OBS: SspObservation = {
   lastChanceOffset: null, deckSize: 0, hand: [], pendingDraw: [],
   piles: [{ top: null, size: 0, buried: [], unknownRemovals: 0 }, { top: null, size: 0, buried: [], unknownRemovals: 0 }],
   crabLookPile: null, lobsterReveal: [], currentEvent: null, canStop: false, canLastChance: false,
-  crabPiles: [], canPlaceCoral: false, eventChoice: null, rodeoLook: null,
+  crabPiles: [], canPlaceCoral: false, eventChoice: null, rodeoLook: null, rodeoTake: null, eventsLeft: [],
   players: ['a', 'b'].map((id) => ({
     id, handSize: 0, table: [], trios: [], heldEvents: [], matchScore: 0, knownCards: [],
-    rules: { shellPerCard: false, octopusPerCard: false, mermaidsScoreZero: false, waterRodeo: false, stopThreshold: 7 },
+    rules: { shellPerCard: false, octopusPerCard: false, mermaidsScoreZero: false, waterRodeo: false, stopThreshold: 7, mermaidsToWin: 4 },
     locked: false, coralShell: false,
   })),
 };

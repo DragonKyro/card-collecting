@@ -70,7 +70,7 @@ function LmRow({ d }: { d: MkLandmarkDef }) {
 function OddsTable() {
   const pct = (p: number) => (p === 0 ? '—' : `${(p * 100).toFixed(1)}%`);
   return (
-    <table className="tight mk-rules-table">
+    <table className="tight mk-rules-table mk-odds">
       <thead>
         <tr><th>Total</th>{Array.from({ length: 12 }, (_, i) => <th key={i} className="num">{i + 1}</th>)}</tr>
       </thead>
@@ -257,6 +257,13 @@ export function Rules() {
                 Instead of putting every pile out, shuffle all the establishments into one deck and deal until <b>ten different</b>{' '}
                 piles show (duplicates stack). When a pile sells out, deal until there are ten again. This is the default
                 once an expansion is in; the lobby can switch back to every pile out. There is one of each purple per player.
+              </p>
+              <h3>5-5-2 market</h3>
+              <p>
+                The lobby's third supply (the &ldquo;hybrid supply&rdquo; variant): three decks — establishments that
+                activate on <b>6 or less</b>, on <b>7 or more</b>, and the <b>major establishments</b> — each dealt until{' '}
+                <b>5 / 5 / 2</b> different piles show (duplicates stack). A sold-out pile is replaced from its own deck, so
+                there are always cards for one die and for two.
               </p>
               <LmTable defs={EXPANSIONS.harbor.landmarkDefs} />
               <h3>Establishments</h3>

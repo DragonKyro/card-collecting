@@ -13,45 +13,27 @@ import { roundLog } from './knowledge';
 import { Sidebar } from './Sidebar';
 import { RulesBook, RulesHero, RulesGrid, RulesTile } from '@/ui/RulesBook';
 import { SspFlipProvider, useFlipAnchor } from './cardFlip';
-import { MultiLine, GroupedBar, StackedBar, HBarGrouped, Pie } from './SvgCharts';
+import { ChartControls, ChartSelect, GroupedBar, HBarGrouped, MultiLine, Pie, StackedBar, StatsTabs } from '@/ui/MatchCharts';
 import { useSspTiming, formatElapsed } from './timingStore';
-import { AI_LEVELS, aiLevelOf, prepareAiLevel } from './aiLevels';
+import { prepareAiLevel } from './aiLevels';
+import { aiLevelsOf } from './levels';
+import type { SspAiLevel } from './types';
 import './ssp.css';
 
-function LobbyConfig({ config, seats, onChange }: { config: SspConfig; seats: Seat[]; onChange: (c: SspConfig) => void }) {
+function LobbyConfig({ config, seats, onChange, readOnly }: { config: SspConfig; seats: Seat[]; onChange: (c: SspConfig) => void; readOnly?: boolean }) {
   const exp = config.expansions ?? {};
   const setExp = (patch: Partial<NonNullable<SspConfig['expansions']>>) =>
     onChange({ ...config, expansions: { ...exp, ...patch } });
-  const hasAI = seats.some((s) => s.isAI);
-  const level = aiLevelOf(config);
-  // Start fetching the chosen level's policy while the lobby is still open
-  // (the Start button awaits it either way).
+  // Start fetching the AI seats' policies while the lobby is still open (the
+  // Start button awaits them either way). Each seat's level is picked on its
+  // seat row.
+  const levels = aiLevelsOf(seats).join(',');
   useEffect(() => {
-    if (hasAI) prepareAiLevel(level).catch(() => {});
-  }, [hasAI, level]);
+    if (readOnly || !levels) return;
+    for (const level of levels.split(',')) prepareAiLevel(level as SspAiLevel).catch(() => {});
+  }, [levels, readOnly]);
   return (
     <div className="game-config">
-      {hasAI && (
-        <>
-          <h4 style={{ margin: '0 0 6px', fontSize: 13, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--fg-muted)' }}>
-            AI difficulty
-          </h4>
-          <div role="radiogroup" aria-label="AI difficulty" style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
-            {AI_LEVELS.map((l) => (
-              <button
-                key={l.id}
-                role="radio"
-                aria-checked={level === l.id}
-                className={level === l.id ? undefined : 'secondary'}
-                onClick={() => onChange({ ...config, aiLevel: l.id })}
-              >
-                {l.label}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-
       <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <span>Target score:</span>
         <input
@@ -1613,7 +1595,7 @@ function MatchStats({ state }: { state: SspState }) {
   const familyKeys = FAMILY_ORDER.filter((f) => extraSalt || FAMILY[f].expansion !== 'extraSalt');
   const familyLabels = familyKeys.map((k) => FAMILY[k].label);
   const familySeries = [
-    { id: 'deck', label: 'Deck', color: '#888',
+    { id: 'deck', label: 'Deck', color: '#888', baseline: true,
       values: familyKeys.map((k) => deckFamilyPct[k]) },
     ...playerIds.map((pid) => ({
       id: pid,
@@ -1629,7 +1611,7 @@ function MatchStats({ state }: { state: SspState }) {
     .sort((a, b) => deckColorPct[b] - deckColorPct[a]);
   const colorLabels: string[] = colorKeys;
   const colorSeries = [
-    { id: 'deck', label: 'Deck', color: '#888',
+    { id: 'deck', label: 'Deck', color: '#888', baseline: true,
       values: colorKeys.map((k) => deckColorPct[k]) },
     ...playerIds.map((pid) => ({
       id: pid,
@@ -1657,7 +1639,7 @@ function MatchStats({ state }: { state: SspState }) {
   type StatsTab =
     | 'score' | 'cardsCum' | 'cardsRound' | 'ptsPerCard' | 'category'
     | 'family' | 'color' | 'endings' | 'time';
-  const TABS: Array<{ key: StatsTab; label: string }> = [
+  const TABS: Array<{ key: StatsTab; label: string; table?: boolean }> = [
     { key: 'score',       label: 'Score' },
     { key: 'cardsCum',    label: 'Cards (cum)' },
     { key: 'cardsRound',  label: 'Cards / rd' },
@@ -1665,11 +1647,11 @@ function MatchStats({ state }: { state: SspState }) {
     { key: 'category',    label: 'Categories' },
     { key: 'family',      label: 'Family %' },
     { key: 'color',       label: 'Color %' },
-    { key: 'endings',     label: 'Endings' },
+    { key: 'endings',     label: 'Endings', table: false },
     { key: 'time',        label: 'Time' },
   ];
   return (
-    <MatchStatsTabs tabs={TABS}>
+    <StatsTabs tabs={TABS}>
       {(active) => (
         <>
           {active === 'score' && (
@@ -1715,7 +1697,7 @@ function MatchStats({ state }: { state: SspState }) {
           {active === 'endings' && (
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(260px, 360px) 1fr', gap: 16, alignItems: 'start' }}>
         <Pie slices={endingPieSlices} />
-        <table style={{ margin: 0 }}>
+        <div className="mc-table-wrap"><table className="mc-table" style={{ margin: 0 }}>
           <thead>
             <tr><th>Round</th><th>How it ended</th><th>By</th><th>Result</th></tr>
           </thead>
@@ -1738,41 +1720,12 @@ function MatchStats({ state }: { state: SspState }) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       </div>
           )}
         </>
       )}
-    </MatchStatsTabs>
-  );
-}
-
-/** Tabbed wrapper for the match-stats charts. Mirrors catan's MatchGraph
- *  navigation — tabs across the top, one chart per tab below. Tabs scroll
- *  horizontally on narrow widths so the layout stays single-row. */
-function MatchStatsTabs<T extends string>({ tabs, children }: {
-  tabs: Array<{ key: T; label: string }>;
-  children: (active: T) => React.ReactNode;
-}) {
-  const [active, setActive] = useState<T>(tabs[0].key);
-  return (
-    <div className="ssp-stats">
-      <h2 style={{ margin: '22px 0 8px' }}>📊 Match stats</h2>
-      <div className="ssp-stats-tabs" role="tablist">
-        {tabs.map((t) => (
-          <button
-            key={t.key}
-            role="tab"
-            aria-selected={active === t.key}
-            className={active === t.key ? 'active' : ''}
-            onClick={() => setActive(t.key)}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-      <div className="ssp-stats-panel">{children(active)}</div>
-    </div>
+    </StatsTabs>
   );
 }
 
@@ -1805,32 +1758,15 @@ function CategoryBreakdownChart({ data, playerIds, nameById, colorOf, roundLabel
   }));
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-        <label htmlFor="ssp-cat-player" style={{ fontSize: 12, color: 'var(--paper-ink)' }}>
-          Player:
-        </label>
-        <select
-          id="ssp-cat-player"
+      <ChartControls>
+        <ChartSelect
+          label="Player"
           value={selected}
-          onChange={(e) => setSelected(e.target.value as PlayerId)}
-          style={{
-            fontSize: 12,
-            padding: '4px 8px',
-            borderRadius: 4,
-            border: '1px solid var(--paper-deep)',
-            background: 'var(--paper-cream)',
-            color: 'var(--paper-ink)',
-          }}
-        >
-          {playerIds.map((pid) => (
-            <option key={pid} value={pid}>{nameById(pid)}</option>
-          ))}
-        </select>
-        <span style={{
-          display: 'inline-block', width: 10, height: 10, borderRadius: 2,
-          background: colorOf(selected), marginLeft: 4,
-        }} />
-      </div>
+          options={playerIds.map((pid) => ({ value: pid, label: nameById(pid) }))}
+          onChange={setSelected}
+        />
+        <span className="swatch" style={{ background: colorOf(selected) }} />
+      </ChartControls>
       <StackedBar xLabels={roundLabels} series={stackSeries}
                   xLabel="Round" yLabel="Points" />
     </div>

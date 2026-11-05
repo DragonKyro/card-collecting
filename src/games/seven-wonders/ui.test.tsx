@@ -1,17 +1,15 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/react';
 import type { Seat } from '@/core/types';
-import { createRng } from '@/core/rng';
 import type { SwCard, SwConfig, SwState } from './types';
 import { sevenWondersModule } from './module';
-import { buildAgeDeck, buildAgeIIIDeck } from './cards';
-import { buildLeaderDeck } from './expansions/leaders/cards';
-import { buildCitiesDeck } from './expansions/cities/cards';
-import { buildBabelDeck } from './expansions/babel/cards';
-import { buildArmadaDeck } from './expansions/armada/cards';
+import { baseGuilds, buildAgeDeck } from './cards';
+import { buildLeaderDeck, leadersGuilds } from './expansions/leaders/cards';
+import { blackCards, citiesGuilds } from './expansions/cities/cards';
 import { WONDERS } from './wonders';
 import { CardBand, CardFace, WonderBoard } from './Card';
 import { bundle } from './ui';
+import { discardAll, producer, realCard } from './testSupport';
 
 afterEach(cleanup);
 
@@ -110,11 +108,72 @@ describe('7 wonders game view', () => {
     expect(t.dispatch.mock.calls[0][0]).toMatchObject({ type: 'submitLeaderDraft', playerId: 'me' });
   });
 
+  it('Halicarnassus picks a card from the discard pile', () => {
+    const m = sevenWondersModule;
+    const config = { ...m.defaultConfig(SEATS), wonderAssignment: 'preset' as const, presetWonders: ['halicarnassus-a', '', '', ''] };
+    let s = m.createInitialState(config, 4, SEATS);
+    s.players[0].wonderStagesBuilt = 1;
+    s.players[0].tableau.push(producer('ore', 'ore', 'ore'));
+    s = m.applyAction(s, {
+      type: 'submitPick', playerId: 'me',
+      pick: { kind: 'wonder', cardId: s.players[0].hand[0].id, stageIndex: 1, payment: { fromWest: [], fromEast: [], coins: 0 } },
+    });
+    s = discardAll(s);
+    expect(s.subPhase).toBe('discardBuild');
+    const t = setup(s);
+    const cards = t.q('.sw-discard-build .sw-cardface');
+    expect(cards).toHaveLength(s.discard.length);
+    fireEvent.click(cards[0]);
+    fireEvent.click(t.button(/^Build /));
+    expect(t.dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: 'buildFromDiscard', playerId: 'me' }));
+    cleanup();
+    // Everyone else just waits.
+    const other = render(<bundle.GameView state={s} localPlayerId="b" dispatch={vi.fn()} />);
+    expect(other.container.textContent).toMatch(/is searching the discard pile/);
+  });
+
+  it("offers Olympia A's free build", () => {
+    const m = sevenWondersModule;
+    const config = { ...m.defaultConfig(SEATS), wonderAssignment: 'preset' as const, presetWonders: ['olympia-a', '', '', ''] };
+    const s = m.createInitialState(config, 4, SEATS);
+    s.players[0].wonderStagesBuilt = 2;
+    s.players[0].hand[0] = realCard('Palace');
+    const t = setup(s);
+    fireEvent.click(t.q('.sw-hand .sw-cardface')[0]);
+    fireEvent.click(t.button(/Build free/));
+    fireEvent.click(t.button(/^Confirm$/));
+    expect(t.dispatch.mock.calls[0][0]).toMatchObject({ type: 'submitPick', pick: { kind: 'build', free: 'olympia', cardId: s.players[0].hand[0].id } });
+  });
+
+  it('hides a locked-in hand when two humans share the table, and says what the others did', () => {
+    const m = sevenWondersModule;
+    const two = SEATS.map((x, i) => (i === 2 ? { ...x, isAI: false, isLocal: true } : x));
+    let s = m.createInitialState(m.defaultConfig(two), 7, two);
+    s = m.applyAction(s, { type: 'submitPick', playerId: 'me', pick: { kind: 'discard', cardId: s.players[0].hand[0].id } });
+    const t = setup(s);
+    expect(t.q('.sw-hand .sw-cardface')).toHaveLength(0);
+    expect(t.view.container.textContent).toMatch(/hand is hidden/);
+    cleanup();
+
+    // Online (each human on their own device) your locked-in hand stays in view.
+    const online = two.map((x) => ({ ...x, isLocal: false }));
+    let o = m.createInitialState(m.defaultConfig(online), 7, online);
+    o = m.applyAction(o, { type: 'submitPick', playerId: 'me', pick: { kind: 'discard', cardId: o.players[0].hand[0].id } });
+    const v = setup(o);
+    expect(v.q('.sw-hand .sw-cardface').length).toBeGreaterThan(0);
+    cleanup();
+
+    s = discardAll(s);
+    expect(s.ageRound).toBe(2);
+    const u = setup(s);
+    expect(u.q('.sw-opp-last').map((e) => e.textContent)).toEqual(Array(3).fill('Last turn: sold a card for 3 coins'));
+  });
+
   it('draws every card of every deck and every wonder board', () => {
     const all: SwCard[] = [
-      ...buildAgeDeck(1, 7), ...buildAgeDeck(2, 7), ...buildAgeIIIDeck(createRng(1), 8),
-      ...[1, 2, 3].flatMap((a) => [...buildCitiesDeck(a as 1, 7), ...buildBabelDeck(a as 1, 7), ...buildArmadaDeck(a as 1, 7)]),
-      ...buildLeaderDeck(),
+      ...buildAgeDeck(1, 7), ...buildAgeDeck(2, 7), ...buildAgeDeck(3, 7), ...baseGuilds(),
+      ...[1, 2, 3].flatMap((a) => blackCards(a as 1)), ...citiesGuilds(), ...leadersGuilds(),
+      ...buildLeaderDeck(true),
     ];
     const view = render(
       <div>

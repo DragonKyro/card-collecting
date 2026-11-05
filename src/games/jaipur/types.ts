@@ -68,11 +68,9 @@ export interface JaipurPlayer {
 }
 
 export interface JaipurConfig {
-  /** Seals of Excellence needed to win: 2 = best of three rounds. */
+  /** Seals of Excellence needed to win: 2 = best of three rounds. (Each AI
+   *  seat's trained policy is its own `seat.aiLevel`; see levels.ts.) */
   sealsToWin: number;
-  /** Which trained policy plays the AI seats (see levels.ts); omitted = the
-   *  default level. */
-  aiLevel?: JaipurAiLevel;
 }
 
 /** A trained policy shipped in ./policies. */

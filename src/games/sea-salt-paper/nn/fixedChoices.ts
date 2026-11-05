@@ -1,15 +1,16 @@
-// Sea Salt & Paper — fixed answers to the Extra Pepper decisions the policy
-// network has no action slots for: which of two event cards to keep, the
-// Angelfish pick, Water Rodeo pairs (playing them, whose hand to look at,
-// the swap, the pair to steal) and the Coral Reef shell.
+// Sea Salt & Paper — hand-written answers to the Extra Pepper decisions:
+// which of two event cards to keep, the Angelfish pick, Water Rodeo duos
+// (playing them, whose hand to look at, the swap, the pair to steal) and the
+// Coral Reef shell.
 //
-// Like the network, these read only the seat's observation. They choose by
-// score — what the cards involved are worth to each side, under that side's
-// own event rules. `actWithPolicy` asks here first; null means "the network
-// decides" (or, outside these decisions, that there is nothing to answer).
-//
-// Adding slots for these decisions would change ACTION_SPACE_VERSION, and so
-// mean retraining the shipped policies.
+// Not played at runtime — every decision is the network's (action space v3
+// has slots for all of these). These rules are the teacher that
+// training/ssp/teach.py copies into the Pepper slots of a policy upgraded
+// from v2, so it plays Pepper as well as before; a policy trained on Pepper
+// should then beat them. Like the network, they read only the seat's
+// observation, and choose by score — what the cards involved are worth to
+// each side, under that side's own event rules. null = "the network decides"
+// (or, outside these decisions, nothing to answer).
 
 import type { SspAction, SspCard, SspEventId } from '../types';
 import { tablePairs, totalScore } from '../scoring';

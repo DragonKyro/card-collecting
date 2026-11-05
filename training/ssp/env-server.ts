@@ -4,11 +4,11 @@
 //   → {"cmd":"spec"}
 //   ← {"ok":true,"obsDim":…,"numSlots":…,"slotNames":[…],"featureLayout":[…],
 //      "encoderVersion":…,"actionSpaceVersion":…}
-//   → {"cmd":"reset","options":{numEnvs, seed, extraSalt, extraPepper,
+//   → {"cmd":"reset","options":{numEnvs, seed, players, extraSalt, extraPepper,
 //      targetScore, opponent, learnerSeat, roundReward, maxSteps}}
 //   → {"cmd":"step","actions":[slot, …]}          (one per env)
 //   ← {"ok":true,"n":…,"seat":[…],"obs":"<base64 f32 n×obsDim>",
-//      "mask":"<base64 u8 n×numSlots>","reward":[r00,r01,r10,…],
+//      "mask":"<base64 u8 n×numSlots>","reward":[r00,r01,…,r10,…],   (n×players)
 //      "done":[…],"episodes":[…]}
 //   → {"cmd":"configure","options":{opponent}}  ← {"ok":true}
 //   → {"cmd":"policyLogits","path":"<policy.json>","obs":"<base64 f32>"}

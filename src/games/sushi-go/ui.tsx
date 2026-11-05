@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { GameUiBundle } from '@/core/module';
+import { sharedDeviceHumans } from '@/core/seats';
 import type { PlayerId, Seat } from '@/core/types';
 import type {
   SushiGoState, SushiGoAction, SushiGoConfig, SushiGoCardKind,
@@ -13,13 +14,16 @@ import {
 import { bonusCard, copyTargets, flipTargets } from './reducer';
 import { URAMAKI_PLACES } from './scoring';
 import { Sidebar } from './Sidebar';
+import { MatchStats } from './StatsPanel';
 import { RulesBook, RulesHero, RulesGrid, RulesTile } from '@/ui/RulesBook';
-import { AI_LEVELS, aiLevelOf, prepareAiLevel } from './aiLevels';
+import { prepareAiLevel } from './aiLevels';
+import { aiLevelsOf } from './levels';
+import type { SushiGoAiLevel } from './types';
 import './sushi-go.css';
 
 const CATEGORIES_ORDERED: SushiGoCategory[] = ['nigiri', 'roll', 'appetizer', 'special', 'dessert'];
 
-function LobbyConfig({ config, seats, onChange }: { config: SushiGoConfig; seats: Seat[]; onChange: (c: SushiGoConfig) => void }) {
+function LobbyConfig({ config, seats, onChange, readOnly }: { config: SushiGoConfig; seats: Seat[]; onChange: (c: SushiGoConfig) => void; readOnly?: boolean }) {
   const playerCount = seats.length;
   const byCat: Record<SushiGoCategory, SushiGoCardKind[]> = useMemo(() => {
     const m: Record<SushiGoCategory, SushiGoCardKind[]> = { nigiri: [], roll: [], appetizer: [], special: [], dessert: [] };
@@ -27,13 +31,14 @@ function LobbyConfig({ config, seats, onChange }: { config: SushiGoConfig; seats
     return m;
   }, []);
   const errors = validateMenu(config.menu, playerCount);
-  const hasAI = seats.some((s) => s.isAI);
-  const level = aiLevelOf(config);
-  // Start fetching the chosen level's policy while the lobby is still open
-  // (the Start button awaits it either way).
+  // Start fetching the AI seats' policies while the lobby is still open (the
+  // Start button awaits them either way). Each seat's level is picked on its
+  // seat row.
+  const levels = aiLevelsOf(seats).join(',');
   useEffect(() => {
-    if (hasAI) prepareAiLevel(level).catch(() => {});
-  }, [hasAI, level]);
+    if (readOnly || !levels) return;
+    for (const level of levels.split(',')) prepareAiLevel(level as SushiGoAiLevel).catch(() => {});
+  }, [levels, readOnly]);
   const isSelected = (k: SushiGoCardKind) => config.menu.includes(k);
   const togglePick = (k: SushiGoCardKind) => {
     const cat = KIND_INFO[k].category;
@@ -55,27 +60,6 @@ function LobbyConfig({ config, seats, onChange }: { config: SushiGoConfig; seats
 
   return (
     <div className="game-config sgp-lobby">
-      {hasAI && (
-        <>
-          <h4 style={{ margin: '0 0 6px', fontSize: 13, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--fg-muted)' }}>
-            AI difficulty
-          </h4>
-          <div role="radiogroup" aria-label="AI difficulty" style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
-            {AI_LEVELS.map((l) => (
-              <button
-                key={l.id}
-                type="button"
-                role="radio"
-                aria-checked={level === l.id}
-                className={level === l.id ? undefined : 'secondary'}
-                onClick={() => onChange({ ...config, aiLevel: l.id })}
-              >
-                {l.label}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
       <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center' }}>
         <button
           className="secondary"
@@ -190,16 +174,18 @@ function Rules() {
               <RulesGrid cols={2}>
                 <RulesTile icon="🌶️" label="Wasabi" hint="The next nigiri you play goes on it and scores triple." accent="#9ed27c" />
                 <RulesTile icon="🥢" label="Chopsticks" hint="On a later turn, pick 2 cards; the chopsticks go back into the hand." accent="#6aa0ff" />
-                <RulesTile icon="🥄" label="Spoon" hint="On a later turn, name a card: the first player to your left holding it gives it to you." accent="#98abc0" />
+                <RulesTile icon="🥄" label="Spoon" hint="On a later turn, after the reveal, you may name a card: the first player to your left holding it gives it to you." accent="#98abc0" />
                 <RulesTile icon="✨" label="Special Order" hint="When played, choose one of your other cards to copy." accent="#e8739c" />
                 <RulesTile icon="📜" label="Menu" hint="When played, draw 4 cards from the deck and play 1." accent="#a24a63" />
                 <RulesTile icon="🥡" label="Takeout Box" hint="When played, flip earlier cards face-down: 2 pts each." accent="#c97b55" />
               </RulesGrid>
               <h3>Order</h3>
               <p>
-                After a reveal, special orders resolve first. Then spoons, menus and
-                takeout boxes go in the order of the number in their corner — chopsticks
-                1–3, spoon 4–6, menu 7–9, takeout box 10–12. A card played off a spoon or
+                Chopsticks are used with the pick: choose both cards face-down. Everything
+                else happens at the reveal. Special orders resolve first. Then spoons, menus
+                and takeout boxes go in the order of the number in their corner — chopsticks
+                1–3, spoon 4–6, menu 7–9, takeout box 10–12; whoever has a spoon from an
+                earlier turn decides then whether to use it. A card played off a spoon or
                 menu counts as played that turn.
               </p>
               <h3>Round-end scoring</h3>
@@ -282,11 +268,9 @@ function GameView({
   dispatch: (a: SushiGoAction) => void;
 }) {
   const [selected, setSelected] = useState<number[]>([]);
-  const [useSpoon, setUseSpoon] = useState(false);
   const [flipSel, setFlipSel] = useState<number[]>([]);
   useEffect(() => {
     setSelected([]);
-    setUseSpoon(false);
   }, [state.round, state.subPhase]);
   useEffect(() => {
     setFlipSel([]);
@@ -298,7 +282,7 @@ function GameView({
 
   if (state.phase === 'gameOver') {
     return (
-      <div className="ssp-layout">
+      <div className="sgp-layout">
         <div className="sgp"><GameOver state={state} /></div>
         <Sidebar state={state} mySeatName={mySeatName} />
       </div>
@@ -307,7 +291,7 @@ function GameView({
 
   if (state.subPhase === 'roundEnd') {
     return (
-      <div className="ssp-layout">
+      <div className="sgp-layout">
         <div className="sgp">
           <RoundSummary state={state} />
           <div style={{ display: 'flex', justifyContent: 'center', marginTop: 16 }}>
@@ -326,10 +310,12 @@ function GameView({
   const myStep = step && me && step.playerId === me.id ? step : null;
   const selecting = state.subPhase === 'selecting';
   const hasChopsticks = me ? bonusCard(me, 'chopsticks') !== undefined : false;
-  const hasSpoon = me ? bonusCard(me, 'spoon') !== undefined : false;
   const maxPick = hasChopsticks ? 2 : 1;
   const submitted = me?.pendingPick != null;
   const submittedCount = state.players.filter((p) => p.pendingPick !== null).length;
+  // Players sharing a device: once your pick is locked in, your hand stays
+  // hidden — whoever looks at the screen next may not be you.
+  const hideHand = submitted && selecting && sharedDeviceHumans(state.seats) >= 2;
 
   // Which of my cards a decision can click.
   const copyIds = new Set(myStep?.type === 'copy' && me ? copyTargets(me, myStep.cardId).map((c) => c.id) : []);
@@ -356,7 +342,7 @@ function GameView({
       const b = me.hand.find((c) => c.id === ids[1])!;
       if (a.kind === 'nigiri' && b.kind === 'wasabi') ids = [ids[1], ids[0]];
     }
-    dispatch({ type: 'submitPick', playerId: me.id, cardIds: ids, ...(hasSpoon && useSpoon ? { useSpoon: true } : {}) });
+    dispatch({ type: 'submitPick', playerId: me.id, cardIds: ids });
     setSelected([]);
   }
 
@@ -373,7 +359,7 @@ function GameView({
       : `Pick ${maxPick === 2 ? 'up to 2 (chopsticks)' : '1'} card${maxPick === 1 ? '' : 's'}.`;
 
   return (
-    <div className="ssp-layout">
+    <div className="sgp-layout">
       <div className="sgp">
         <div className="board">
           <div className="target-info">
@@ -458,7 +444,8 @@ function GameView({
                 <span style={{ fontSize: 12, opacity: 0.7 }}>{handHint}</span>
               </h3>
               <div className="cards">
-                {me.hand.map((c) => {
+                {hideHand && <p className="help">Your pick is locked in; your hand is hidden while the others pick.</p>}
+                {!hideHand && me.hand.map((c) => {
                   if (giveIds.size > 0) {
                     const give = giveIds.has(c.id);
                     return (
@@ -485,10 +472,25 @@ function GameView({
                 })}
                 {me.hand.length === 0 && <p className="help">Empty hand.</p>}
               </div>
-              {submitted && me.pendingPick && (
+              {/* Touch screens have no hover tooltips: the picked cards' rules show here instead. */}
+              {selected.length > 0 && (
+                <div className="pick-rules">
+                  {selected.map((id) => {
+                    const c = me.hand.find((h) => h.id === id);
+                    if (!c) return null;
+                    return (
+                      <div key={id}>
+                        <strong>{KIND_INFO[c.kind].label}{c.kind === 'fruit' ? ` · ${variantLabel(c)}` : ''}</strong>
+                        {' — '}{KIND_INFO[c.kind].rule}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {submitted && !hideHand && me.pendingPick && (
                 <div className="pending-pick">
                   <span style={{ fontSize: 12, opacity: 0.85 }}>
-                    Your pick (face-down to opponents){me.pendingSpoon ? ' + spoon' : ''}:
+                    Your pick (face-down to opponents):
                   </span>
                   <div className="table-strip">
                     {me.pendingPick.map((c) => (
@@ -503,15 +505,6 @@ function GameView({
                   <button disabled={!canSubmit} onClick={submit}>
                     Submit pick {selected.length > 0 ? `(${selected.length})` : ''}
                   </button>
-                  {hasSpoon && !submitted && (
-                    <button
-                      className={useSpoon ? '' : 'pass'}
-                      onClick={() => setUseSpoon((v) => !v)}
-                      title="Name a card after the reveal: the first player to your left holding it gives it to you."
-                    >
-                      🥄 {useSpoon ? 'Using spoon this turn' : 'Use spoon this turn'}
-                    </button>
-                  )}
                   <button
                     className="pass"
                     disabled={selected.length === 0}
@@ -549,7 +542,7 @@ function ResolutionPanel({
   if (!mine) {
     const what = {
       copy: 'choose what their special order copies',
-      spoon: 'name a card for their spoon',
+      spoon: 'decide whether to use their spoon',
       spoonGive: `choose which card to give ${nameOf(state, step.type === 'spoonGive' ? step.toId : null)}`,
       menu: 'play a card off their menu',
       takeout: 'flip cards with their takeout box',
@@ -581,7 +574,13 @@ function ResolutionPanel({
     case 'spoon':
       return (
         <div className="sgp-resolve mine">
-          <strong>Spoon:</strong> name a card. The first player to your left holding it gives it to you.
+          <strong>Spoon:</strong> name a card — the first player to your left holding it gives it to you
+          and takes the spoon — or keep the spoon for a later turn.
+          <div className="actions">
+            <button className="pass" onClick={() => dispatch({ type: 'keepSpoon', playerId: step.playerId })}>
+              Keep the spoon
+            </button>
+          </div>
           <div className="sgp-spoon-asks">
             {state.config.menu.map((kind) => {
               const variants = variantsOf(kind);
@@ -649,9 +648,11 @@ function PlayerStrip({
         </span>
       </header>
       <div className="table-strip">
-        {[...Array(player.hand.length)].map((_, i) => (
-          <FaceDownCard key={`fd-${i}`} size="small" />
-        ))}
+        <span className="backs">
+          {[...Array(player.hand.length)].map((_, i) => (
+            <FaceDownCard key={`fd-${i}`} size="small" />
+          ))}
+        </span>
         {player.table.map((c) => (
           <CardView key={c.id} card={c} size="small" />
         ))}
@@ -751,6 +752,7 @@ function GameOver({ state }: { state: SushiGoState }) {
         </table>
         <p style={{ fontSize: 12, opacity: 0.8 }}>Ties go to the player with the most dessert cards.</p>
       </div>
+      <MatchStats state={state} />
     </div>
   );
 }

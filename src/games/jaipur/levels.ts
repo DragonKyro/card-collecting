@@ -8,7 +8,9 @@
 // Small on purpose: module.ts and the lobby import this; the network runtime
 // lives in aiLevels.ts, loaded by module.prepare.
 
-import type { JaipurAiLevel, JaipurConfig } from './types';
+import type { Seat } from '@/core/types';
+import { aiLevelsInPlay, seatAiLevel } from '@/core/seats';
+import type { JaipurAiLevel } from './types';
 
 const FILES = import.meta.glob('./policies/*.json', { query: '?url', import: 'default', eager: true }) as Record<string, string>;
 
@@ -35,7 +37,13 @@ export function isAiLevel(id: unknown): id is JaipurAiLevel {
   return AI_LEVELS.some((l) => l.id === id);
 }
 
-/** The config's level, or the default when it names one this build doesn't ship. */
-export function aiLevelOf(config: JaipurConfig): JaipurAiLevel {
-  return isAiLevel(config.aiLevel) ? config.aiLevel : DEFAULT_AI_LEVEL;
+/** The level an AI seat plays at (`seat.aiLevel`, picked per seat in the
+ *  lobby), or the default when it names none this build ships. */
+export function aiLevelOfSeat(seat: Pick<Seat, 'aiLevel'> | undefined): JaipurAiLevel {
+  return seatAiLevel(AI_LEVELS, DEFAULT_AI_LEVEL, seat);
+}
+
+/** Every level the AI seats play at, each once. */
+export function aiLevelsOf(seats: readonly Seat[]): JaipurAiLevel[] {
+  return aiLevelsInPlay(AI_LEVELS, DEFAULT_AI_LEVEL, seats);
 }

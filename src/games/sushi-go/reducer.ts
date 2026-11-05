@@ -2,16 +2,17 @@
 //
 // Turn flow (per round):
 //   1. subPhase = 'selecting'. Each player submits a pick: 1 card, or 2 with
-//      chopsticks on their table, optionally also calling a spoon from their
-//      table. Once all players have submitted, the reveal happens in the same
-//      reducer call.
+//      chopsticks on their table. Once all players have submitted, the reveal
+//      happens in the same reducer call.
 //   2. Reveal: every pick moves to its table (in the submitted order, so a
 //      wasabi picked together with a nigiri goes under it); used chopsticks go
 //      back into the hand. Cards that need a decision queue up as resolution
-//      steps — special orders first, then spoons / menus / takeout boxes by
-//      the number in their corner (lowest first). subPhase = 'resolving' while
-//      a step waits on its chooser, who is parked on activePlayerId. A card a
-//      step puts on a table can queue further steps.
+//      steps, and so does every spoon that was on a table before the turn
+//      (its owner names a card or keeps it) — special orders first, then
+//      spoons / menus / takeout boxes by the number in their corner (lowest
+//      first). subPhase = 'resolving' while a step waits on its chooser, who
+//      is parked on activePlayerId. A card a step puts on a table can queue
+//      further steps.
 //   3. End of turn: if more than one miso soup was played, they are all
 //      discarded; players on 10+ uramaki icons score their place and discard
 //      them. Then hands pass left — or, if they're empty, the round is scored,
@@ -20,6 +21,7 @@
 //      tallies desserts and transitions to phase = 'gameOver'.
 
 import type { PlayerId } from '@/core/types';
+import { nextSimultaneousSeat } from '@/core/seats';
 import { shuffle } from '@/core/rng';
 import type {
   SushiGoState, SushiGoAction, SushiGoCard, SushiGoCardKind, SushiGoPlayer,
@@ -97,25 +99,18 @@ export function dealHands(state: SushiGoState): void {
       p.hand.push(state.deck.pop()!);
     }
     p.pendingPick = null;
-    p.pendingSpoon = false;
   }
 }
 
-/** Find the next AI player without a pendingPick this tick, or null. */
-function nextAIPicker(state: SushiGoState): PlayerId | null {
-  for (const p of state.players) {
-    if (p.pendingPick !== null) continue;
-    const seat = state.seats.find((s) => s.id === p.id);
-    if (seat?.isAI) return p.id;
-  }
-  return null;
-}
-
-/** Park activePlayerId on whichever AI seat hasn't picked yet this tick, so the
- *  GameHost AI driver can dispatch a submitPick for them. Null = no AI waiting,
- *  which (for simultaneous-pick games) means humans + the AI driver are quiet. */
+/** Park activePlayerId on the next seat still to pick this tick: AI seats
+ *  first (the GameHost AI driver picks for them while the humans think), or
+ *  the humans first when several share this device, so hot-seat hands the
+ *  device to each of them before the AIs play (nextSimultaneousSeat). */
 function setActiveAIIfAny(state: SushiGoState): void {
-  state.activePlayerId = nextAIPicker(state);
+  state.activePlayerId = nextSimultaneousSeat(
+    state.seats,
+    state.players.filter((p) => p.pendingPick === null).map((p) => p.id),
+  );
 }
 
 /** Begin a new round: build the deck (non-desserts, the desserts left in last
@@ -145,8 +140,8 @@ function startRound(state: SushiGoState, roundNumber: number): void {
 }
 
 /** Validate that the cards in `cardIds` are all in the player's hand and that
- *  the pick is legal (2 cards need chopsticks, a spoon call needs a spoon). */
-function validatePick(player: SushiGoPlayer, cardIds: number[], useSpoon: boolean): void {
+ *  the pick is legal (2 cards need chopsticks). */
+function validatePick(player: SushiGoPlayer, cardIds: number[]): void {
   if (cardIds.length === 0) throw new Error('submitPick: must pick at least 1 card');
   if (cardIds.length > 2) throw new Error('submitPick: max 2 cards');
   const seen = new Set<number>();
@@ -159,9 +154,6 @@ function validatePick(player: SushiGoPlayer, cardIds: number[], useSpoon: boolea
   }
   if (cardIds.length === 2 && !bonusCard(player, 'chopsticks')) {
     throw new Error('submitPick: 2-card pick requires chopsticks on table');
-  }
-  if (useSpoon && !bonusCard(player, 'spoon')) {
-    throw new Error('submitPick: no spoon on table');
   }
 }
 
@@ -282,9 +274,11 @@ function revealAndAdvance(state: SushiGoState): void {
   for (const p of state.players) {
     const picked = p.pendingPick!;
     pushLog(state, { kind: 'pickRevealed', playerId: p.id, cards: picked.map(logged) });
-    // Bonus cards come from the table as it was before this turn.
+    // Bonus cards come from the table as it was before this turn: a spoon
+    // played now can't be used until a later turn. One spoon per player per
+    // turn — the lowest-numbered.
     const chopsticks = picked.length === 2 ? bonusCard(p, 'chopsticks') : undefined;
-    const spoon = p.pendingSpoon ? bonusCard(p, 'spoon') : undefined;
+    const spoon = bonusCard(p, 'spoon');
     const pickedIds = new Set(picked.map((c) => c.id));
     p.hand = p.hand.filter((c) => !pickedIds.has(c.id));
     // Order matters (wasabi must come before nigiri); we use the order the
@@ -295,9 +289,14 @@ function revealAndAdvance(state: SushiGoState): void {
       queueStep(state.resolution, { type: 'spoon', playerId: p.id, cardId: spoon.id, order: orderNumber(spoon) });
     }
     p.pendingPick = null;
-    p.pendingSpoon = false;
   }
   advance(state);
+}
+
+/** Whether a spoon could fetch anything now: some other hand still holds a
+ *  card (on a round's last turn every hand is empty). */
+function spoonCanAsk(state: SushiGoState, p: SushiGoPlayer): boolean {
+  return state.players.some((q) => q !== p && q.hand.length > 0);
 }
 
 /** Get a step ready for its chooser. Returns false when there is nothing to
@@ -329,6 +328,10 @@ function activate(state: SushiGoState, step: SushiGoStep): boolean {
       discardFromTable(state, p, step.cardId);
       return false;
     case 'spoon':
+      if (spoonCanAsk(state, p) && p.table.some((c) => c.id === step.cardId && isLive(c, 'spoon'))) return true;
+      // Nothing to ask for: the spoon stays on the table for a later turn.
+      res.steps.shift();
+      return false;
     case 'spoonGive':
       return true;
   }
@@ -381,6 +384,7 @@ function finishTurn(state: SushiGoState): void {
   if (handsEmpty) {
     const summary = commitRoundScore(state);
     state.lastRoundSummary = summary;
+    state.roundHistory.push(summary);
     pushLog(state, { kind: 'roundEnd' });
     harvestDesserts(state);
     state.subPhase = 'roundEnd';
@@ -429,10 +433,8 @@ export function applyAction(state: SushiGoState, action: SushiGoAction): SushiGo
       if (s.subPhase !== 'selecting') throw new Error('submitPick: not in selecting phase');
       const p = playerById(s, action.playerId);
       if (p.pendingPick !== null) throw new Error('submitPick: already submitted');
-      const useSpoon = action.useSpoon === true;
-      validatePick(p, action.cardIds, useSpoon);
+      validatePick(p, action.cardIds);
       p.pendingPick = action.cardIds.map((id) => p.hand.find((c) => c.id === id)!);
-      p.pendingSpoon = useSpoon;
       pushLog(s, { kind: 'pickSubmitted', playerId: p.id });
 
       if (allPlayersSubmitted(s)) {
@@ -501,6 +503,13 @@ export function applyAction(state: SushiGoState, action: SushiGoAction): SushiGo
       return s;
     }
 
+    case 'keepSpoon': {
+      headStep(s, action.playerId, 'spoon');
+      s.resolution!.steps.shift();
+      advance(s);
+      return s;
+    }
+
     case 'giveSpoon': {
       const step = headStep(s, action.playerId, 'spoonGive');
       if (!step.options.includes(action.cardId)) throw new Error('giveSpoon: not one of the asked cards');
@@ -557,12 +566,12 @@ export function setupNewMatch(state: SushiGoState): void {
     p.table = [];
     p.dessertPile = [];
     p.pendingPick = null;
-    p.pendingSpoon = false;
     p.uramakiPoints = 0;
     p.scoreByRound = [];
     p.dessertScore = 0;
   }
   state.deck = [];
+  state.roundHistory = [];
   state.dessertSupply = shuffle(state.rngState, dessertCards(state.config.menu));
   startRound(state, 1);
 }

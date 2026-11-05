@@ -1,290 +1,138 @@
-// Air, Land & Sea — card data + theater definitions.
+// Air, Land & Sea — card data, theaters, Supreme Commander charts.
 //
-// Base game: 18 cards = 3 theaters × 6 strengths (1-6).
-// Spies, Lies, & Supplies: +18 cards = 3 more theaters × 6.
-//
-// Card-text fidelity notes
-// ------------------------
-// Research at planning time confirmed a handful of canonical assignments:
-//   - Air 4 = Aerodrome (Ongoing: deploy 1-3 anywhere)
-//   - Air 5 = Containment (Ongoing: face-down cards are immediately discarded)
-//   - Air 6 = Heavy Bombers (no ability)
-//   - Land 1 = Reinforce
-//   - Land 2 = Ambush
-//   - Land 6 = Heavy Tanks (no ability)
-//   - Sea 6  = Super Battleship (no ability, standard "6 has no ability" rule)
-// The remaining 11 strength-1..5 cards across the three theaters are best-effort
-// assignments from public review text. The full ability dispatch system doesn't
-// care which strength holds which ability — if the rulebook is in hand later,
-// swap the assignment in CARD_TEMPLATES without touching anything else.
-//
-// SLS expansion (3 new theaters, 18 cards): the published rulebook's per-card
-// text was not authoritatively available at planning time. Cards exist in the
-// pool with strength 1-6 and PLACEHOLDER ability ids (`intel1` … `econ6`).
-// Those abilities are NO-OPs in abilities.ts — the cards are otherwise legal
-// to play and contribute their raw strength to scoring. Fill in the real
-// effects once the rulebook is in hand without restructuring anything.
+// Text is the Revised Edition's (Air, Land & Sea) and Spies, Lies & Supplies'
+// card text. Each theater holds strengths 1–6: the 3 is the same flip in every
+// theater (Maneuver in the base game, Manipulate in SLS), the 6 has no ability.
+// A card is named by theater and strength ("Name a card" on Neutralize).
 
 import type { AlsCardTemplate, AlsTheaterDef, AlsTheaterId } from './types';
 
-// ---------- Theater definitions ----------
+// ---------- Theaters ----------
 
 export const THEATER_DEFS: Record<AlsTheaterId, AlsTheaterDef> = {
-  air:   { id: 'air',   name: 'Air',          shortName: 'AIR' },
-  land:  { id: 'land',  name: 'Land',         shortName: 'LAND' },
-  sea:   { id: 'sea',   name: 'Sea',          shortName: 'SEA' },
+  air: { id: 'air', name: 'Air', shortName: 'AIR' },
+  land: { id: 'land', name: 'Land', shortName: 'LAND' },
+  sea: { id: 'sea', name: 'Sea', shortName: 'SEA' },
   intel: { id: 'intel', name: 'Intelligence', shortName: 'INTEL', expansion: 'spiesLiesSupplies' },
-  diplo: { id: 'diplo', name: 'Diplomacy',    shortName: 'DIPLO', expansion: 'spiesLiesSupplies' },
-  econ:  { id: 'econ',  name: 'Economics',    shortName: 'ECON',  expansion: 'spiesLiesSupplies' },
+  diplo: { id: 'diplo', name: 'Diplomacy', shortName: 'DIPLO', expansion: 'spiesLiesSupplies' },
+  econ: { id: 'econ', name: 'Economics', shortName: 'ECON', expansion: 'spiesLiesSupplies' },
 };
 
-/** Stable order used by the lobby picker (base first, then SLS). */
+/** Lobby order: base first, then SLS. */
 export const ALL_THEATER_IDS: AlsTheaterId[] = ['air', 'land', 'sea', 'intel', 'diplo', 'econ'];
-
 export const BASE_THEATER_IDS: AlsTheaterId[] = ['air', 'land', 'sea'];
-export const SLS_THEATER_IDS: AlsTheaterId[]  = ['intel', 'diplo', 'econ'];
+export const SLS_THEATER_IDS: AlsTheaterId[] = ['intel', 'diplo', 'econ'];
 
-// ---------- Card templates ----------
-//
-// IDs are stable across the lifetime of a process — assigned sequentially below
-// so that tests can refer to cards by id. The pool object is the source of truth
-// at runtime (`state.deckPool`).
+// ---------- Cards ----------
 
-// Helper: build a card with the next id and return it. Local closure over `nextId`.
-const CARDS: AlsCardTemplate[] = (() => {
-  let nextId = 0;
-  const out: AlsCardTemplate[] = [];
-  const add = (c: Omit<AlsCardTemplate, 'id'>) => {
-    out.push({ id: nextId++, ...c });
-  };
+const MANEUVER_TEXT = 'Flip an uncovered card in an adjacent theater.';
 
-  // --- Air (base) ---
-  add({
-    name: 'Support', theater: 'air', strength: 1,
-    ability: 'support', trigger: 'ongoing',
-    abilityText: 'Ongoing: each adjacent theater on your side gains +3 strength.',
-  });
-  add({
-    name: 'Air Drop', theater: 'air', strength: 2,
-    ability: 'airDrop', trigger: 'instant',
-    abilityText: 'Instant: on your next turn, you may deploy a Battle card to a theater that doesn\'t match its type.',
-  });
-  add({
-    name: 'Maneuver', theater: 'air', strength: 3,
-    ability: 'maneuver', trigger: 'instant',
-    abilityText: 'Instant: flip 1 Battle card in an adjacent theater.',
-  });
-  add({
-    name: 'Aerodrome', theater: 'air', strength: 4,
-    ability: 'aerodrome', trigger: 'ongoing',
-    abilityText: 'Ongoing: you may deploy strength-1 to strength-3 Battle cards to any theater.',
-  });
-  add({
-    name: 'Containment', theater: 'air', strength: 5,
-    ability: 'containment', trigger: 'ongoing',
-    abilityText: 'Ongoing: any face-down Battle card played by either player is immediately discarded.',
-  });
-  add({
-    name: 'Heavy Bombers', theater: 'air', strength: 6,
-    ability: 'heavyBombers', trigger: null,
-    abilityText: 'No tactical ability.',
-  });
+type Row = Omit<AlsCardTemplate, 'id' | 'theater' | 'strength' | 'expansion'>;
 
-  // --- Land (base) ---
-  add({
-    name: 'Reinforce', theater: 'land', strength: 1,
-    ability: 'reinforce', trigger: 'instant',
-    abilityText: 'Instant: look at the top card of the deck. You may play it face-down to any theater (becomes a wild strength-2 card).',
-  });
-  add({
-    name: 'Ambush', theater: 'land', strength: 2,
-    ability: 'ambush', trigger: 'instant',
-    abilityText: 'Instant: flip 1 uncovered Battle card in any theater.',
-  });
-  add({
-    name: 'Cover Fire', theater: 'land', strength: 3,
-    ability: 'coverFire', trigger: 'ongoing',
-    abilityText: 'Ongoing: each card beneath this card has strength 4.',
-  });
-  add({
-    name: 'Disrupt', theater: 'land', strength: 4,
-    ability: 'disrupt', trigger: 'instant',
-    abilityText: 'Instant: your opponent flips 1 of their uncovered cards. Then you flip 1 of yours.',
-  });
-  add({
-    name: 'Escalation', theater: 'land', strength: 5,
-    ability: 'escalation', trigger: 'ongoing',
-    abilityText: 'Ongoing: your face-down Battle cards have strength 4.',
-  });
-  add({
-    name: 'Heavy Tanks', theater: 'land', strength: 6,
-    ability: 'heavyTanks', trigger: null,
-    abilityText: 'No tactical ability.',
-  });
+/** Six rows per theater, strength 1..6 in order. */
+const ROWS: Record<AlsTheaterId, Row[]> = {
+  air: [
+    { name: 'Support', ability: 'support', trigger: 'ongoing', text: 'You gain +3 strength in each adjacent theater.' },
+    { name: 'Air Drop', ability: 'airDrop', trigger: 'instant', text: 'The next time you play a card, you may play it to a non-matching theater.' },
+    { name: 'Maneuver', ability: 'maneuver', trigger: 'instant', text: MANEUVER_TEXT },
+    { name: 'Aerodrome', ability: 'aerodrome', trigger: 'ongoing', text: 'You may play cards of strength 3 or less to non-matching theaters.' },
+    { name: 'Containment', ability: 'containment', trigger: 'ongoing', text: 'If any player plays a facedown card, destroy that card.' },
+    { name: 'Heavy Bombers', ability: null, trigger: null, text: '' },
+  ],
+  land: [
+    { name: 'Reinforce', ability: 'reinforce', trigger: 'instant', text: 'Draw 1 card and play it facedown to an adjacent theater.' },
+    { name: 'Ambush', ability: 'ambush', trigger: 'instant', text: 'Flip any uncovered card.' },
+    { name: 'Maneuver', ability: 'maneuver', trigger: 'instant', text: MANEUVER_TEXT },
+    { name: 'Cover Fire', ability: 'coverFire', trigger: 'ongoing', text: 'All cards covered by this card are now strength 4.' },
+    { name: 'Disrupt', ability: 'disrupt', trigger: 'instant', text: 'Starting with you, both players choose and flip 1 of their uncovered cards.' },
+    { name: 'Heavy Tanks', ability: null, trigger: null, text: '' },
+  ],
+  sea: [
+    { name: 'Transport', ability: 'transport', trigger: 'instant', text: 'You may move 1 of your cards to a different theater.' },
+    { name: 'Escalation', ability: 'escalation', trigger: 'ongoing', text: 'All of your facedown cards are now strength 4.' },
+    { name: 'Maneuver', ability: 'maneuver', trigger: 'instant', text: MANEUVER_TEXT },
+    { name: 'Redeploy', ability: 'redeploy', trigger: 'instant', text: 'You may return 1 of your facedown cards to your hand. If you do, play a card.' },
+    { name: 'Blockade', ability: 'blockade', trigger: 'ongoing', text: 'If any player plays a card to an adjacent theater occupied by at least 3 other cards, destroy that card.' },
+    { name: 'Super Battleship', ability: null, trigger: null, text: '' },
+  ],
+  intel: [
+    { name: 'Incite', ability: 'incite', trigger: 'instant', text: "Use any uncovered card's instant ability as if it were on this card." },
+    { name: 'Spy Network', ability: 'spyNetwork', trigger: 'ongoing', text: 'For each of your facedown cards in adjacent theaters, gain +3 strength in this theater.' },
+    { name: 'Manipulate', ability: 'manipulate', trigger: 'instant', text: MANEUVER_TEXT },
+    { name: 'Neutralize', ability: 'neutralize', trigger: 'instant', text: "Name a card. If it's in your enemy's hand, they must reveal it and play it facedown next time they play." },
+    { name: 'Surveil', ability: 'surveil', trigger: 'instant', text: 'Your enemy must reveal a card. You may reveal a lower card to flip any uncovered faceup card.' },
+    { name: 'Covert Operations', ability: null, trigger: null, text: '' },
+  ],
+  diplo: [
+    { name: 'Relinquish', ability: 'relinquish', trigger: 'instant', text: 'You may destroy 1 of your other cards to destroy any uncovered card.' },
+    { name: 'Envoy', ability: 'envoy', trigger: 'ongoing', text: 'After you play a card in an adjacent theater, you may move this card so that it covers that card.' },
+    { name: 'Manipulate', ability: 'manipulate', trigger: 'instant', text: MANEUVER_TEXT },
+    { name: 'Leverage', ability: 'leverage', trigger: 'instant', text: 'You may reveal a card to flip an uncovered card lower than or equal to your revealed card.' },
+    { name: 'Give & Take', ability: 'giveAndTake', trigger: 'instant', text: 'Draw 1 card. Either give it to your enemy and draw another, or keep it and your enemy draws 1.' },
+    { name: 'Grand Betrayal', ability: null, trigger: null, text: '' },
+  ],
+  econ: [
+    { name: 'Retrofit', ability: 'retrofit', trigger: 'instant', text: "Choose 1 of your uncovered cards in any theater. Gain supplies in that theater equal to the chosen card's strength. Then, flip the card." },
+    { name: 'Supply Lines', ability: 'supplyLines', trigger: 'ongoing', text: 'On your turn, you may play to a non-matching theater. If you do, your enemy gains 1 supply in that theater.' },
+    { name: 'Manipulate', ability: 'manipulate', trigger: 'instant', text: MANEUVER_TEXT },
+    { name: 'Requisition', ability: 'requisition', trigger: 'instant', text: "You may reveal a card to gain 2 supplies in that card's theater." },
+    { name: 'Arms Race', ability: 'armsRace', trigger: 'instant', text: 'Gain 2 supplies in any theater. Then your enemy chooses a different theater and gains 2 supplies there.' },
+    { name: 'Production Surge', ability: null, trigger: null, text: '' },
+  ],
+};
 
-  // --- Sea (base) ---
-  add({
-    name: 'Transport', theater: 'sea', strength: 1,
-    ability: 'transport', trigger: 'instant',
-    abilityText: 'Instant: move 1 of your Battle cards to a different theater. (Does not trigger when placed.)',
-  });
-  add({
-    name: 'Redeploy', theater: 'sea', strength: 2,
-    ability: 'redeploy', trigger: 'instant',
-    abilityText: 'Instant: return 1 of your face-down Battle cards to your hand. Take another turn.',
-  });
-  add({
-    name: 'Blockade', theater: 'sea', strength: 3,
-    ability: 'blockade', trigger: 'ongoing',
-    abilityText: 'Ongoing: if your opponent plays a Battle card to a theater adjacent to this one which then contains 3+ of their cards, that newly played card is discarded.',
-  });
-  add({
-    name: 'Investigation', theater: 'sea', strength: 4,
-    ability: 'transportSea', trigger: 'instant',
-    abilityText: 'Instant: move 1 of your Battle cards to a different theater. (Sea variant — same effect as Transport.)',
-  });
-  add({
-    name: 'Salvage', theater: 'sea', strength: 5,
-    ability: 'coverFireSea', trigger: 'ongoing',
-    abilityText: 'Ongoing: each card beneath this card has strength 4. (Sea variant — same effect as Cover Fire.)',
-  });
-  add({
-    name: 'Super Battleship', theater: 'sea', strength: 6,
-    ability: 'superBattleship', trigger: null,
-    abilityText: 'No tactical ability.',
-  });
-
-  // --- Spies, Lies, & Supplies — Intelligence ---
-  add({
-    name: 'Intel 1', theater: 'intel', strength: 1, ability: 'intel1', trigger: 'instant',
-    abilityText: 'Spies, Lies, & Supplies — not yet modeled. Card plays normally with strength 1.',
-    expansion: 'spiesLiesSupplies',
-  });
-  add({
-    name: 'Intel 2', theater: 'intel', strength: 2, ability: 'intel2', trigger: 'instant',
-    abilityText: 'Spies, Lies, & Supplies — not yet modeled. Card plays normally with strength 2.',
-    expansion: 'spiesLiesSupplies',
-  });
-  add({
-    name: 'Intel 3', theater: 'intel', strength: 3, ability: 'intel3', trigger: 'instant',
-    abilityText: 'Spies, Lies, & Supplies — not yet modeled. Card plays normally with strength 3.',
-    expansion: 'spiesLiesSupplies',
-  });
-  add({
-    name: 'Intel 4', theater: 'intel', strength: 4, ability: 'intel4', trigger: 'ongoing',
-    abilityText: 'Spies, Lies, & Supplies — not yet modeled. Card plays normally with strength 4.',
-    expansion: 'spiesLiesSupplies',
-  });
-  add({
-    name: 'Intel 5', theater: 'intel', strength: 5, ability: 'intel5', trigger: 'ongoing',
-    abilityText: 'Spies, Lies, & Supplies — not yet modeled. Card plays normally with strength 5.',
-    expansion: 'spiesLiesSupplies',
-  });
-  add({
-    name: 'Intel 6', theater: 'intel', strength: 6, ability: 'intel6', trigger: null,
-    abilityText: 'Spies, Lies, & Supplies — no ability (six-strength card).',
-    expansion: 'spiesLiesSupplies',
-  });
-
-  // --- Diplomacy ---
-  add({
-    name: 'Diplo 1', theater: 'diplo', strength: 1, ability: 'diplo1', trigger: 'instant',
-    abilityText: 'Spies, Lies, & Supplies — not yet modeled. Card plays normally with strength 1.',
-    expansion: 'spiesLiesSupplies',
-  });
-  add({
-    name: 'Diplo 2', theater: 'diplo', strength: 2, ability: 'diplo2', trigger: 'instant',
-    abilityText: 'Spies, Lies, & Supplies — not yet modeled. Card plays normally with strength 2.',
-    expansion: 'spiesLiesSupplies',
-  });
-  add({
-    name: 'Diplo 3', theater: 'diplo', strength: 3, ability: 'diplo3', trigger: 'instant',
-    abilityText: 'Spies, Lies, & Supplies — not yet modeled. Card plays normally with strength 3.',
-    expansion: 'spiesLiesSupplies',
-  });
-  add({
-    name: 'Diplo 4', theater: 'diplo', strength: 4, ability: 'diplo4', trigger: 'ongoing',
-    abilityText: 'Spies, Lies, & Supplies — not yet modeled. Card plays normally with strength 4.',
-    expansion: 'spiesLiesSupplies',
-  });
-  add({
-    name: 'Diplo 5', theater: 'diplo', strength: 5, ability: 'diplo5', trigger: 'ongoing',
-    abilityText: 'Spies, Lies, & Supplies — not yet modeled. Card plays normally with strength 5.',
-    expansion: 'spiesLiesSupplies',
-  });
-  add({
-    name: 'Diplo 6', theater: 'diplo', strength: 6, ability: 'diplo6', trigger: null,
-    abilityText: 'Spies, Lies, & Supplies — no ability (six-strength card).',
-    expansion: 'spiesLiesSupplies',
-  });
-
-  // --- Economics ---
-  add({
-    name: 'Econ 1', theater: 'econ', strength: 1, ability: 'econ1', trigger: 'instant',
-    abilityText: 'Spies, Lies, & Supplies — not yet modeled. Card plays normally with strength 1.',
-    expansion: 'spiesLiesSupplies',
-  });
-  add({
-    name: 'Econ 2', theater: 'econ', strength: 2, ability: 'econ2', trigger: 'instant',
-    abilityText: 'Spies, Lies, & Supplies — not yet modeled. Card plays normally with strength 2.',
-    expansion: 'spiesLiesSupplies',
-  });
-  add({
-    name: 'Econ 3', theater: 'econ', strength: 3, ability: 'econ3', trigger: 'instant',
-    abilityText: 'Spies, Lies, & Supplies — not yet modeled. Card plays normally with strength 3.',
-    expansion: 'spiesLiesSupplies',
-  });
-  add({
-    name: 'Econ 4', theater: 'econ', strength: 4, ability: 'econ4', trigger: 'ongoing',
-    abilityText: 'Spies, Lies, & Supplies — not yet modeled. Card plays normally with strength 4.',
-    expansion: 'spiesLiesSupplies',
-  });
-  add({
-    name: 'Econ 5', theater: 'econ', strength: 5, ability: 'econ5', trigger: 'ongoing',
-    abilityText: 'Spies, Lies, & Supplies — not yet modeled. Card plays normally with strength 5.',
-    expansion: 'spiesLiesSupplies',
-  });
-  add({
-    name: 'Econ 6', theater: 'econ', strength: 6, ability: 'econ6', trigger: null,
-    abilityText: 'Spies, Lies, & Supplies — no ability (six-strength card).',
-    expansion: 'spiesLiesSupplies',
-  });
-
-  return out;
-})();
-
-export const CARD_TEMPLATES: readonly AlsCardTemplate[] = CARDS;
-
-/** Lookup pool indexed by id. */
-export const CARDS_BY_ID: Record<number, AlsCardTemplate> = Object.fromEntries(
-  CARDS.map((c) => [c.id, c]),
+/** Every card, ids 0..35 in `ALL_THEATER_IDS` × strength order. */
+export const CARD_TEMPLATES: readonly AlsCardTemplate[] = ALL_THEATER_IDS.flatMap((theater, t) =>
+  ROWS[theater].map((row, i): AlsCardTemplate => ({
+    id: t * 6 + i,
+    theater,
+    strength: i + 1,
+    ...row,
+    ...(THEATER_DEFS[theater].expansion ? { expansion: THEATER_DEFS[theater].expansion } : {}),
+  })),
 );
 
-/** All card ids whose theater is in `theaters`. */
-export function cardIdsForTheaters(theaters: AlsTheaterId[]): number[] {
-  const set = new Set(theaters);
-  return CARDS.filter((c) => set.has(c.theater)).map((c) => c.id);
+export function cardById(id: number): AlsCardTemplate {
+  const c = CARD_TEMPLATES[id];
+  if (!c) throw new Error(`unknown card ${id}`);
+  return c;
 }
 
-/** Build the card pool object that `state.deckPool` references. The pool
- *  contains ONLY the cards for the chosen theaters — saves memory on the wire
- *  and avoids accidentally pulling an SLS card into a base-only deck. */
-export function buildDeckPool(theaters: AlsTheaterId[]): Record<number, AlsCardTemplate> {
-  const ids = cardIdsForTheaters(theaters);
-  const pool: Record<number, AlsCardTemplate> = {};
-  for (const id of ids) pool[id] = CARDS_BY_ID[id];
-  return pool;
+/** The card ids of the given theaters — a battle's deck. */
+export function cardIdsForTheaters(theaters: readonly AlsTheaterId[]): number[] {
+  const set = new Set(theaters);
+  return CARD_TEMPLATES.filter((c) => set.has(c.theater)).map((c) => c.id);
+}
+
+/** "Air 4", "Diplomacy 2" — how a card is named. */
+export function cardLabel(id: number): string {
+  const c = cardById(id);
+  return `${THEATER_DEFS[c.theater].name} ${c.strength}`;
 }
 
 // ---------- Constants ----------
 
 export const MIN_PLAYERS = 2;
 export const MAX_PLAYERS = 2;
+export const DEFAULT_TARGET_VP = 12;
+export const FULL_BATTLE_VP = 6;
 
-/** Hand size per battle. Base game = 6; Epic (5 theaters) = 9 per rulebook. */
+/** Hand size per battle: 6, or 10 in Epic Mode (5 theaters). */
 export function handSizeFor(theaterCount: number): number {
-  return theaterCount === 5 ? 9 : 6;
+  return theaterCount === 5 ? 10 : 6;
 }
 
-/** Match target VP. 12 per rulebook. */
-export const DEFAULT_TARGET_VP = 12;
+/** Supreme Commander withdraw charts: the withdrawing player's card, by cards
+ *  left in their hand → VP the opponent scores. Rows are `minCards` thresholds,
+ *  highest first. The Epic column is printed on the same cards. */
+export interface WithdrawRow { minCards: number; vp: number }
+export const WITHDRAW_CHARTS: Record<'standard' | 'epic', Record<'first' | 'second', WithdrawRow[]>> = {
+  standard: {
+    first: [{ minCards: 4, vp: 2 }, { minCards: 2, vp: 3 }, { minCards: 1, vp: 4 }, { minCards: 0, vp: 6 }],
+    second: [{ minCards: 5, vp: 2 }, { minCards: 3, vp: 3 }, { minCards: 2, vp: 4 }, { minCards: 0, vp: 6 }],
+  },
+  epic: {
+    first: [{ minCards: 6, vp: 2 }, { minCards: 3, vp: 3 }, { minCards: 1, vp: 4 }, { minCards: 0, vp: 6 }],
+    second: [{ minCards: 7, vp: 2 }, { minCards: 4, vp: 3 }, { minCards: 2, vp: 4 }, { minCards: 0, vp: 6 }],
+  },
+};

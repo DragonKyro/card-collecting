@@ -1,206 +1,129 @@
-// 7 Wonders Babel expansion — orange (Babel) cards.
+// 7 Wonders Babel — the 24 Tower of Babel tiles and the 15 Great Projects.
 //
-// Babel's headline mechanic is the central Tower of Babel board (shared
-// law-tile placements that change rules round-by-round) and the Great Projects
-// of Babylon (cooperative central goals). Neither is modeled in v1 — they
-// require central-state systems I don't have authoritative rule text for.
-//
-// What IS modeled: a contributed card pool. Babel adds ~5 orange cards per age,
-// dealt into the existing age decks. Effects use the existing kinds where
-// possible (vp, shields, science, produce, endVp). One Babel-specific scoring
-// rule (`babelScoreExtra`) covers card effects that don't fit the existing
-// endVp shape (e.g., "VP per science set including leaders", "VP per matching
-// card across both neighbors").
-//
-// Card text from the rulebook is not fully in hand. Cards with uncertain
-// abilities are tagged with placeholder effects + descriptions marked
-// "Not fully modeled in v1". This matches the SLS / Cities pattern.
+// Tiles (numbered as printed; they carry no names). Each changes the rules for
+// every city while it shows on the tower:
+//   1 / 6 / 16 / 13  tax (1/2/3 coins by Age) on building a red / blue card,
+//                    a wonder stage, or through a chain
+//   2 / 15           red cards / wonder stages cost no resources (coins stay)
+//   3                brown cards producing two units or a choice produce nothing
+//   4                the trading posts, Marketplace, Caravansery and Forum are off
+//   5 / 14           1/2/3 coins by Age for building a blue card / through a chain
+//   7                chains may use the neighbours' buildings too
+//   8 / 23           blue / purple cards cost as many coins as they list resources
+//   9 / 10           manufactured goods from neighbours 1 coin cheaper / dearer
+//   11 / 12          raw materials from neighbours 1 coin cheaper / dearer
+//   17 / 18 / 21     a free wood-or-stone / ore-or-clay / glass-loom-or-papyrus a turn
+//   19               victory tokens one step lower (1 → none, 3 → 1, 5 → 3)
+//   20               single-resource brown cards produce any amount
+//   22               a lost battle gives 2 defeat tokens
+//   24               5 coins for building a guild
+// Great Projects: 5 per Age, one revealed each Age. Build a card of its colour
+// and pay its participation cost to take a participation token. If every
+// token is taken by the end of the Age, each participant gets the reward per
+// token; otherwise everyone without one suffers the penalty (or takes a
+// penalty token, −1/−2/−3, if they can't).
 
-import type {
-  SwAge, SwCard, SwCardColor, SwCardEffect, SwCost, SwResource,
-} from '../../types';
+import type { SwBabelTile, SwGreatProject } from '../../types';
 
-interface BabelTemplate {
-  name: string;
-  age: SwAge;
-  color: SwCardColor;
-  appearances: Array<{ minPlayers: number; maxPlayers?: number }>;
-  cost?: SwCost;
-  chainFrom?: string[];
-  chainTo?: string[];
-  effects: SwCardEffect[];
-  description: string;
-  modeled: boolean;
+export const BABEL_TILES: readonly SwBabelTile[] = [
+  { id: 1, name: 'Tile 1', text: 'Building a red card costs 1/2/3 coins more (Age I/II/III), paid to the bank.' },
+  { id: 2, name: 'Tile 2', text: 'Red cards cost no resources (coins are still paid).' },
+  { id: 3, name: 'Tile 3', text: 'Brown cards with two resources or a choice produce nothing (they can still be built).' },
+  { id: 4, name: 'Tile 4', text: 'The trading posts, Marketplace, Caravansery and Forum have no effect (they can still be built).' },
+  { id: 5, name: 'Tile 5', text: 'Building a blue card earns 1/2/3 coins (Age I/II/III).' },
+  { id: 6, name: 'Tile 6', text: 'Building a blue card costs 1/2/3 coins more (Age I/II/III), paid to the bank.' },
+  { id: 7, name: 'Tile 7', text: 'Chains may use the buildings of both neighbouring cities.' },
+  { id: 8, name: 'Tile 8', text: 'Blue cards cost as many coins as they list resources, instead of the resources (chains stay free).' },
+  { id: 9, name: 'Tile 9', text: 'Manufactured goods bought from neighbours cost 1 coin less.' },
+  { id: 10, name: 'Tile 10', text: 'Manufactured goods bought from neighbours cost 1 coin more.' },
+  { id: 11, name: 'Tile 11', text: 'Raw materials bought from neighbours cost 1 coin less.' },
+  { id: 12, name: 'Tile 12', text: 'Raw materials bought from neighbours cost 1 coin more.' },
+  { id: 13, name: 'Tile 13', text: 'Building through a chain costs 1/2/3 coins (Age I/II/III), paid to the bank.' },
+  { id: 14, name: 'Tile 14', text: 'Building through a chain earns 1/2/3 coins (Age I/II/III).' },
+  { id: 15, name: 'Tile 15', text: 'Wonder stages cost no resources (coins are still paid).' },
+  { id: 16, name: 'Tile 16', text: 'Building a wonder stage costs 1/2/3 coins more (Age I/II/III), paid to the bank.' },
+  { id: 17, name: 'Tile 17', text: 'Every city produces a wood or a stone each turn.' },
+  { id: 18, name: 'Tile 18', text: 'Every city produces an ore or a clay each turn.' },
+  { id: 19, name: 'Tile 19', text: 'Victory tokens are one step lower: 1 → nothing, 3 → 1, 5 → 3.' },
+  { id: 20, name: 'Tile 20', text: 'Brown cards producing a single resource produce any amount of it.' },
+  { id: 21, name: 'Tile 21', text: 'Every city produces a glass, a loom or a papyrus each turn.' },
+  { id: 22, name: 'Tile 22', text: 'A lost battle gives 2 defeat tokens instead of 1.' },
+  { id: 23, name: 'Tile 23', text: 'Guilds cost as many coins as they list resources, instead of the resources (chains stay free).' },
+  { id: 24, name: 'Tile 24', text: 'Building a guild earns 5 coins.' },
+];
+
+export function babelTileById(id: number): SwBabelTile {
+  const t = BABEL_TILES.find((x) => x.id === id);
+  if (!t) throw new Error(`Unknown Babel tile ${id}`);
+  return t;
 }
 
-const free: SwCost = {};
-const cost = (...resources: SwResource[]): SwCost => ({ resources });
-const costCoins = (n: number): SwCost => ({ coins: n });
-const vp = (n: number): SwCardEffect => ({ kind: 'vp', vp: n });
-const shields = (n: number): SwCardEffect => ({ kind: 'shields', shields: n });
-const coins = (n: number): SwCardEffect => ({ kind: 'coins', amount: n });
-const produce = (...prods: SwResource[][]): SwCardEffect =>
-  ({ kind: 'produce', production: prods });
-const science = (sym: 'compass' | 'gear' | 'tablet'): SwCardEffect =>
-  ({ kind: 'science', symbol: sym });
-
-// ----- Age I Babel (5 cards) -----
-const AGE_I_BABEL: BabelTemplate[] = [
-  { name: 'Ziggurat', age: 1, color: 'orange',
-    appearances: [{ minPlayers: 3 }, { minPlayers: 5 }],
-    cost: cost('stone'),
-    effects: [vp(3)],
-    description: '+3 VP.', modeled: true },
-
-  { name: 'Mason Workshop', age: 1, color: 'orange',
-    appearances: [{ minPlayers: 3 }, { minPlayers: 6 }],
-    cost: free,
-    effects: [produce(['stone', 'wood', 'clay', 'ore'])],
-    description: 'Produces 1 of (stone / wood / clay / ore).', modeled: true },
-
-  { name: 'Cuneiform Tablet', age: 1, color: 'orange',
-    appearances: [{ minPlayers: 4 }, { minPlayers: 7 }],
-    cost: cost('papyrus'),
-    effects: [science('tablet')],
-    description: '+1 tablet science symbol.', modeled: true },
-
-  { name: 'Babel Garrison', age: 1, color: 'orange',
-    appearances: [{ minPlayers: 3 }, { minPlayers: 5 }],
-    cost: cost('clay', 'ore'),
-    effects: [shields(2)],
-    description: '+2 shields.', modeled: true },
-
-  { name: 'Hanging Gardens (small)', age: 1, color: 'orange',
-    appearances: [{ minPlayers: 4 }],
-    cost: costCoins(2),
-    effects: [coins(4), vp(1)],
-    description: 'Gain 4 coins. +1 VP.', modeled: true },
-];
-
-// ----- Age II Babel (5 cards) -----
-const AGE_II_BABEL: BabelTemplate[] = [
-  { name: 'Hanging Gardens', age: 2, color: 'orange',
-    appearances: [{ minPlayers: 3 }, { minPlayers: 6 }],
-    cost: cost('wood', 'clay', 'loom'),
-    effects: [vp(5)],
-    description: '+5 VP.', modeled: true },
-
-  { name: 'Ishtar Gate', age: 2, color: 'orange',
-    appearances: [{ minPlayers: 3 }, { minPlayers: 5 }],
-    cost: cost('clay', 'clay', 'glass'),
-    effects: [shields(3)],
-    description: '+3 shields.', modeled: true },
-
-  { name: 'Royal Workshop', age: 2, color: 'orange',
-    appearances: [{ minPlayers: 4 }, { minPlayers: 7 }],
-    cost: cost('wood', 'wood'),
-    effects: [produce(['glass', 'papyrus', 'loom'])],
-    description: 'Produces 1 of (glass / papyrus / loom).', modeled: true },
-
-  { name: 'Babel Library', age: 2, color: 'orange',
-    appearances: [{ minPlayers: 3 }, { minPlayers: 6 }],
-    cost: cost('stone', 'stone', 'papyrus'),
-    effects: [science('compass')],
-    description: '+1 compass science symbol.', modeled: true },
-
-  { name: 'Tower Workers', age: 2, color: 'orange',
-    appearances: [{ minPlayers: 5 }],
-    cost: cost('clay', 'wood'),
-    effects: [],
-    description: 'Babel central-board ability not modeled in v1.',
-    modeled: false },
-];
-
-// ----- Age III Babel (5 cards) -----
-const AGE_III_BABEL: BabelTemplate[] = [
-  // Babel-themed "wild science" effect: +V VP per {compass,gear,tablet} set
-  // INCLUDING leader symbols. Reuses base science scoring's leaderTableau
-  // walking — this card just adds a parallel set bonus.
-  { name: 'Tower of Babel', age: 3, color: 'orange',
-    appearances: [{ minPlayers: 3 }, { minPlayers: 6 }],
-    cost: cost('clay', 'clay', 'stone', 'glass'),
-    effects: [{
-      kind: 'babelScoreExtra',
-      rule: { type: 'vpPerScienceSet', vpPerSet: 4 },
-    }],
-    description: '+4 VP per complete science set (compass+gear+tablet) you own.',
-    modeled: true },
-
-  { name: 'Babylon Palace', age: 3, color: 'orange',
-    appearances: [{ minPlayers: 3 }, { minPlayers: 7 }],
-    cost: cost('wood', 'ore', 'glass', 'papyrus'),
-    effects: [vp(7)],
-    description: '+7 VP.', modeled: true },
-
-  // "VP per blue card across both neighbors" — Babel-style spy/scout card.
-  { name: 'Court of Babylon', age: 3, color: 'orange',
-    appearances: [{ minPlayers: 4 }, { minPlayers: 6 }],
-    cost: cost('clay', 'clay', 'clay'),
-    effects: [{
-      kind: 'babelScoreExtra',
-      rule: { type: 'vpPerNeighborCards', color: 'blue', vpPer: 1 },
-    }],
-    description: '+1 VP per blue card across both neighbors.',
-    modeled: true },
-
-  // "VP per (red OR green) card in own tableau" — Babel-style fortified academy.
-  { name: 'Ziggurat of Etemenanki', age: 3, color: 'orange',
-    appearances: [{ minPlayers: 3 }, { minPlayers: 5 }],
-    cost: cost('stone', 'stone', 'ore'),
-    effects: [{
-      kind: 'babelScoreExtra',
-      rule: { type: 'vpPerOwnColors', colors: ['red', 'green'], vpPer: 1 },
-    }],
-    description: '+1 VP per red or green card in your tableau.',
-    modeled: true },
-
-  { name: 'Great Project Worksite', age: 3, color: 'orange',
-    appearances: [{ minPlayers: 5 }],
-    cost: cost('wood', 'wood', 'clay'),
-    effects: [vp(3)],
-    description: '+3 VP. (Great Projects central board not modeled in v1.)',
-    modeled: false },
-];
-
-const ALL_BABEL_TEMPLATES: BabelTemplate[] = [
-  ...AGE_I_BABEL, ...AGE_II_BABEL, ...AGE_III_BABEL,
-];
-
-let _nextId = 30000;
-export function resetBabelCardIdCounter(start: number): void {
-  _nextId = start;
+/** VP for the tiles a city put on the tower: 1 → 2, 2 → 5, 3 → 10. */
+export function towerVp(built: number): number {
+  return built >= 3 ? 10 : built === 2 ? 5 : built === 1 ? 2 : 0;
 }
 
-function instantiate(t: BabelTemplate, app: { minPlayers: number; maxPlayers?: number }): SwCard {
-  return {
-    id: _nextId++,
-    name: t.name,
-    age: t.age,
-    color: t.color,
-    minPlayers: app.minPlayers,
-    maxPlayers: app.maxPlayers ?? 99,
-    cost: t.cost ?? {},
-    chainFrom: t.chainFrom,
-    chainTo: t.chainTo,
-    effects: t.effects,
-  };
+export const GREAT_PROJECTS: readonly SwGreatProject[] = [
+  // ----- Age I -----
+  { id: 'belvedere', name: 'Belvedere', age: 1, color: 'blue', cost: { coins: 1, resources: ['clay'] },
+    reward: { kind: 'freeStage' }, penalty: { kind: 'discardColor', color: 'red' } },
+  { id: 'cranes', name: 'Cranes', age: 1, color: 'green', cost: { coins: 1 },
+    reward: { kind: 'freeBuild' }, penalty: { kind: 'discardColor', color: 'brown' } },
+  { id: 'double-walls', name: 'Double Walls', age: 1, color: 'red', cost: { coins: 1 },
+    reward: { kind: 'victoryToken', vp: 1 }, penalty: { kind: 'blockResource' } },
+  { id: 'factory', name: 'Factory', age: 1, color: 'brown', cost: { coins: 2 },
+    reward: { kind: 'anyColor' }, penalty: { kind: 'discardColor', color: 'gray' } },
+  { id: 'rampart-road', name: 'Rampart Road', age: 1, color: 'yellow', cost: { coins: 1, resources: ['stone'] },
+    reward: { kind: 'coins', amount: 4 }, penalty: { kind: 'allCoins' } },
+  // ----- Age II -----
+  { id: 'obelisk', name: 'Obelisk', age: 2, color: 'blue', cost: { coins: 1, resources: ['papyrus'] },
+    reward: { kind: 'shield', shields: 1 }, penalty: { kind: 'discardColor', color: 'brown' } },
+  { id: 'river-port', name: 'River Port', age: 2, color: 'yellow', cost: { coins: 1, resources: ['loom'] },
+    reward: { kind: 'coins', amount: 6 }, penalty: { kind: 'allCoins' } },
+  { id: 'sewer-network', name: 'Sewer Network', age: 2, color: 'green', cost: { coins: 2 },
+    reward: { kind: 'freeBuild' }, penalty: { kind: 'discardColor', color: 'red' } },
+  { id: 'smelter', name: 'Smelter', age: 2, color: 'brown', cost: { coins: 2 },
+    reward: { kind: 'stages', vp: 1 }, penalty: { kind: 'discardColor', color: 'gray' } },
+  { id: 'war-mirror', name: 'War Mirror', age: 2, color: 'red', cost: { coins: 2, resources: ['glass'] },
+    reward: { kind: 'victoryToken', vp: 3 }, penalty: { kind: 'discardColor', color: 'blue' } },
+  // ----- Age III -----
+  { id: 'archives', name: 'Archives', age: 3, color: 'green', cost: { coins: 4 },
+    reward: { kind: 'scienceSets', vp: 3 }, penalty: { kind: 'discardColor', color: 'blue' } },
+  { id: 'giant-trebuchet', name: 'Giant Trebuchet', age: 3, color: 'red', cost: { coins: 5, resources: ['wood'] },
+    reward: { kind: 'victoryToken', vp: 5 }, penalty: { kind: 'allCoins' } },
+  { id: 'grand-bazaar', name: 'Grand Bazaar', age: 3, color: 'yellow', cost: { coins: 4, resources: ['ore'] },
+    reward: { kind: 'coins', amount: 12 }, penalty: { kind: 'discardColor', color: 'red' } },
+  { id: 'menagerie', name: 'Menagerie', age: 3, color: 'purple', cost: { coins: 4 },
+    reward: { kind: 'guilds', vp: 1 }, penalty: { kind: 'discardColor', color: 'green' } },
+  { id: 'triumphal-arches', name: 'Triumphal Arches', age: 3, color: 'blue', cost: { coins: 5 },
+    reward: { kind: 'shield', shields: 2 }, penalty: { kind: 'victoryTokens', count: 2 } },
+];
+
+export function greatProjectById(id: string): SwGreatProject {
+  const p = GREAT_PROJECTS.find((x) => x.id === id);
+  if (!p) throw new Error(`Unknown Great Project ${id}`);
+  return p;
 }
 
-/** Build the Babel deck contribution for a given age. */
-export function buildBabelDeck(age: SwAge, playerCount: number): SwCard[] {
-  const pool = age === 1 ? AGE_I_BABEL : age === 2 ? AGE_II_BABEL : AGE_III_BABEL;
-  const out: SwCard[] = [];
-  for (const t of pool) {
-    for (const app of t.appearances) {
-      if (playerCount >= app.minPlayers && playerCount <= (app.maxPlayers ?? 99)) {
-        out.push(instantiate(t, app));
-      }
-    }
+export function rewardText(r: SwGreatProject['reward']): string {
+  switch (r.kind) {
+    case 'coins': return `${r.amount} coins`;
+    case 'shield': return r.shields === 1 ? 'a shield token' : `a ${r.shields}-shield token`;
+    case 'victoryToken': return `a ${r.vp}-VP victory token`;
+    case 'freeBuild': return 'a token to build a card for free';
+    case 'freeStage': return 'a token to build a wonder stage for free';
+    case 'anyColor': return 'a token to join a later project with a card of any colour';
+    case 'scienceSets': return `+${r.vp} VP per set of the three science symbols`;
+    case 'guilds': return `${r.vp} VP per guild in your city and both neighbours’`;
+    case 'stages': return `${r.vp} VP per wonder stage you built`;
   }
-  return out;
 }
 
-export const BABEL_CARD_TEMPLATES = ALL_BABEL_TEMPLATES;
-export const BABEL_AGE_I_NAMES = AGE_I_BABEL.map((t) => t.name);
-export const BABEL_AGE_II_NAMES = AGE_II_BABEL.map((t) => t.name);
-export const BABEL_AGE_III_NAMES = AGE_III_BABEL.map((t) => t.name);
+export function penaltyText(p: SwGreatProject['penalty']): string {
+  switch (p.kind) {
+    case 'discardColor': return `discard a ${p.color} card of your city`;
+    case 'allCoins': return 'lose all your coins';
+    case 'victoryTokens': return `discard ${p.count} victory tokens`;
+    case 'blockResource': return 'lose your board’s starting resource for the rest of the game';
+  }
+}

@@ -67,7 +67,7 @@ export interface SspExpansionConfig {
   extraPepper: boolean;
 }
 
-/** Difficulty of the AI seats — each is a trained policy (see aiLevels.ts). */
+/** An AI seat's difficulty (`seat.aiLevel`) — each is a trained policy (see aiLevels.ts). */
 export type SspAiLevel = 'easy' | 'normal' | 'hard';
 
 export interface SspConfig {
@@ -75,8 +75,6 @@ export interface SspConfig {
   targetScore: number;
   /** Optional expansions; omitted = base game only. */
   expansions?: Partial<SspExpansionConfig>;
-  /** Difficulty of every AI seat in the match; omitted = 'normal'. */
-  aiLevel?: SspAiLevel;
 }
 
 export type SspSubPhase =

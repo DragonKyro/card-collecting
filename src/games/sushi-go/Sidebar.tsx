@@ -23,11 +23,11 @@ export const useSushiGoChat = create<ChatStore>((set) => ({
 export function Sidebar({ state, mySeatName }: { state: SushiGoState; mySeatName: string }) {
   void Cheatsheet; // retained for future use
   return (
-    <div className="ssp-sidebar">
-      <div className="ssp-sidebar-tabs">
+    <div className="sgp-sidebar">
+      <div className="sgp-sidebar-tabs">
         <button className="active" disabled>History &amp; Chat</button>
       </div>
-      <div className="ssp-sidebar-body">
+      <div className="sgp-sidebar-body">
         <Feed state={state} mySeatName={mySeatName} />
       </div>
     </div>
@@ -75,7 +75,7 @@ function Cheatsheet({ state }: { state: SushiGoState }) {
               const info = KIND_INFO[k];
               const f = freq[k];
               return (
-                <div key={k} className="ssp-cheat-row">
+                <div key={k} className="sgp-cheat-row">
                   <div className="name">
                     {info.label}
                     <br />
@@ -94,11 +94,11 @@ function Cheatsheet({ state }: { state: SushiGoState }) {
         );
       })}
       <h4>Round flow</h4>
-      <div className="ssp-cheat-row">
+      <div className="sgp-cheat-row">
         <div className="name">Pick</div>
-        <div className="desc">All players choose 1 card from their hand simultaneously. Chopsticks/spoon let you pick 2.</div>
+        <div className="desc">All players choose 1 card from their hand simultaneously (2 with chopsticks). Spoons are used after the reveal.</div>
       </div>
-      <div className="ssp-cheat-row">
+      <div className="sgp-cheat-row">
         <div className="name">Pass</div>
         <div className="desc">After picks reveal (and special cards resolve), everyone passes their hand to the left.</div>
       </div>
@@ -142,20 +142,20 @@ function Feed({ state, mySeatName }: { state: SushiGoState; mySeatName: string }
     setText('');
   }
   return (
-    <div className="ssp-feed">
-      <div className="ssp-feed-thread" ref={threadRef}>
+    <div className="sgp-feed">
+      <div className="sgp-feed-thread" ref={threadRef}>
         {items.length === 0 && (
           <p style={{ color: 'var(--fg-muted)' }}>No moves yet — chat or play to fill this feed.</p>
         )}
         {items.map((it) => (
           it.kind === 'log'
             ? <LogLine key={it.key} entry={it.entry} state={state} />
-            : <div key={it.key} className="ssp-chat-msg">
+            : <div key={it.key} className="sgp-chat-msg">
                 <span className="who">{it.msg.who}:</span> {it.msg.text}
               </div>
         ))}
       </div>
-      <div className="ssp-chat-input">
+      <div className="sgp-chat-input">
         <input
           value={text}
           placeholder="Type a message…"
@@ -178,7 +178,7 @@ function LogLine({ entry, state }: { entry: SushiGoLogEntry; state: SushiGoState
     c.variant && KIND_INFO[c.kind].category !== 'special'
       ? `${KIND_INFO[c.kind].label} (${variantLabel({ id: -1, ...c })})`
       : KIND_INFO[c.kind].label;
-  let cls = 'ssp-log-entry';
+  let cls = 'sgp-log-entry';
   let body: React.ReactNode = null;
   switch (entry.kind) {
     case 'pickSubmitted':

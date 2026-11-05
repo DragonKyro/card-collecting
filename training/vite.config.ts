@@ -26,6 +26,7 @@ export default defineConfig({
         'ssp-eval': here('./ssp/eval.ts'),
         'ssp-env': here('./ssp/env-server.ts'),
         'ssp-analyze': here('./ssp/analyze.ts'),
+        'ssp-teach-data': here('./ssp/teach-data.ts'),
       },
       output: {
         format: 'es',

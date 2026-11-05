@@ -71,8 +71,7 @@ function reshuffle(slots: Slot[], rng: RngState): number {
 
 /** A copy of `state` with everything `viewerId` can't know rewritten: hands it
  *  hasn't held, the deck, the dessert supply, other players' menu draws (all
- *  dealt out again), which card(s) each opponent put face-down and whether
- *  they called a spoon, and the RNG. */
+ *  dealt out again), which card(s) each opponent put face-down, and the RNG. */
 export function scrambleHidden(
   state: SushiGoState,
   viewerId: PlayerId,
@@ -110,7 +109,6 @@ export function scrambleHidden(
     const p = s.players[(vi + off) % n];
     if (!p.pendingPick) continue;
     p.pendingPick = shuffle(rng, p.hand).slice(0, p.pendingPick.length);
-    p.pendingSpoon = rngNext(rng) < 0.5;
     changes++;
   }
   s.rngState = createRng(rngInt(rng, 1_000_000_000));
