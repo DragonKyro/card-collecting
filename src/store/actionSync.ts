@@ -28,13 +28,15 @@ export interface ActionSyncDeps<S> {
   restore: (snapshot: S) => void;
   /** Claim log slot `seq` (true), or find it taken (false). Rejects when the server refuses. */
   write: (seq: number, entry: LoggedAction) => Promise<boolean>;
-  /** One of this device's moves didn't make it into the game. */
-  dropped: (action: unknown, why: 'overtaken' | 'refused') => void;
+  /** One of this device's moves didn't make it into the game. `quiet`: it was
+   *  marked so when made (an AI move — nobody to tell; the AI decides again). */
+  dropped: (action: unknown, why: 'overtaken' | 'refused', quiet: boolean) => void;
 }
 
 interface Pending<S> {
   entry: LoggedAction;
   before: S;
+  quiet: boolean;
 }
 
 const RETRY_MS = 1000;
@@ -84,10 +86,11 @@ export class ActionSync<S> {
     this.inbox.clear();
   }
 
-  /** A move this device just applied; `before` is the state it was applied to. */
-  local(action: unknown, before: S): void {
+  /** A move this device just applied; `before` is the state it was applied to.
+   *  `quiet` moves (the AI's) are dropped without telling anyone. */
+  local(action: unknown, before: S, quiet = false): void {
     if (this.closed || !this.started) return;
-    this.pending.push({ entry: { action, nonce: newNonce() }, before });
+    this.pending.push({ entry: { action, nonce: newNonce() }, before, quiet });
     this.pump();
   }
 
@@ -130,9 +133,9 @@ export class ActionSync<S> {
     for (const move of moves) {
       const before = this.deps.snapshot();
       if (this.deps.reapply(move.entry)) {
-        this.pending.push({ entry: { ...move.entry, nonce: newNonce() }, before });
+        this.pending.push({ entry: { ...move.entry, nonce: newNonce() }, before, quiet: move.quiet });
       } else {
-        this.deps.dropped(move.entry.action, 'overtaken');
+        this.deps.dropped(move.entry.action, 'overtaken', move.quiet);
       }
     }
   }
@@ -161,7 +164,7 @@ export class ActionSync<S> {
         this.pending = [];
         this.inFlight = null;
         this.deps.restore(head.before);
-        this.deps.dropped(head.entry.action, 'refused');
+        this.deps.dropped(head.entry.action, 'refused', head.quiet);
         this.replay(rest);
         this.pump();
       },

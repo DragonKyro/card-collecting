@@ -2,6 +2,9 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { SEAT_COLORS, SEAT_COLOR_LABELS } from '@/core/seatColors';
+import type { AnyGameModule } from '@/core/module';
+import type { Seat } from '@/core/types';
+import { seatAiLevel } from '@/core/seats';
 
 /** Clickable seat-color picker. Shows the current swatch; clicking opens a
  *  small popover grid of the palette. Colors already used by OTHER seats are
@@ -147,5 +150,43 @@ export function RulesModal({ title, Rules, onClose }: { title: string; Rules: Re
         </div>
       </div>
     </div>
+  );
+}
+
+/** The levels an AI seat can be set to in this game, or null when its AI has one strength. */
+export function seatLevels(module: AnyGameModule): ReadonlyArray<{ id: string; label: string }> | null {
+  return module.aiLevels && module.aiLevels.length > 1 ? module.aiLevels : null;
+}
+
+/** The level an AI seat plays at in this game (its own, else the module's default). */
+export function seatLevelId(module: AnyGameModule, seat: Seat): string | undefined {
+  const levels = module.aiLevels;
+  if (!levels?.length) return undefined;
+  return seatAiLevel(levels, module.defaultAiLevel ?? levels[levels.length - 1]!.id, seat);
+}
+
+/** Per-seat AI difficulty picker; nothing for human seats or one-strength AIs. */
+export function AiLevelSelect({ module, seat, disabled, onChange }: {
+  module: AnyGameModule;
+  seat: Seat;
+  disabled?: boolean;
+  onChange: (level: string) => void;
+}) {
+  const levels = seatLevels(module);
+  if (!seat.isAI || !levels) return null;
+  const value = seatLevelId(module, seat);
+  if (disabled) {
+    return <span className="online-tag">{levels.find((l) => l.id === value)?.label ?? value}</span>;
+  }
+  return (
+    <select
+      className="seat-level"
+      aria-label={`${seat.name} difficulty`}
+      title="AI difficulty"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+    >
+      {levels.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
+    </select>
   );
 }

@@ -4,6 +4,7 @@
 //
 //   tally  — 2–4 players take turns adding numbers; `target` moves end it.
 //            Anyone may `claim` once (a move two devices can race for).
+//            AI levels easy / hard (default hard).
 //   duel   — the same rules for exactly 2 players.
 //   blitz  — offline only (onlineSupported: false).
 
@@ -74,7 +75,10 @@ function makeModule(id: string, name: string, minPlayers: number, maxPlayers: nu
 }
 
 export const GAMES: AnyGameModule[] = [
-  makeModule('tally', 'Tally', 2, 4),
+  makeModule('tally', 'Tally', 2, 4, {
+    aiLevels: [{ id: 'easy', label: 'Easy' }, { id: 'hard', label: 'Hard' }],
+    defaultAiLevel: 'hard',
+  }),
   makeModule('duel', 'Duel', 2, 2),
   makeModule('blitz', 'Blitz', 1, 4, { onlineSupported: false }),
 ];

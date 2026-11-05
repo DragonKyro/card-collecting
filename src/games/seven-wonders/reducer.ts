@@ -31,6 +31,7 @@
 // switches on expansion id — it iterates getActiveExpansions(state.config).
 
 import type { PlayerId } from '@/core/types';
+import { nextSimultaneousSeat } from '@/core/seats';
 import { shuffle } from '@/core/rng';
 import type {
   SwState, SwAction, SwPlayer, SwPendingPick, SwAge,
@@ -88,19 +89,11 @@ function allPlayersSubmitted(state: SwState): boolean {
   return !state.players.some(owesPick);
 }
 
-/** Who `activePlayerId` should point at while picks are open. The GameHost AI
- *  driver acts for AI seats; a human seat parked here is the one hot-seat
- *  shows (and hands the device to). With one human, the AIs pick first so they
- *  are done while the human thinks; with several humans sharing a device, the
- *  humans go first and the AIs last, so no hand is on screen while an AI
- *  plays. Null once nobody owes a pick. */
+/** Who `activePlayerId` should point at while picks are open: AIs first, or
+ *  the humans first when several share this device (see nextSimultaneousSeat).
+ *  Null once nobody owes a pick. */
 function nextPickerBase(state: SwState): PlayerId | null {
-  const isAI = (id: PlayerId) => state.seats.find((s) => s.id === id)?.isAI === true;
-  const waiting = state.players.filter(owesPick);
-  const ai = waiting.find((p) => isAI(p.id));
-  const human = waiting.find((p) => !isAI(p.id));
-  const humansFirst = state.seats.filter((s) => !s.isAI).length >= 2;
-  return (humansFirst ? human ?? ai : ai ?? human)?.id ?? null;
+  return nextSimultaneousSeat(state.seats, state.players.filter(owesPick).map((p) => p.id));
 }
 
 /** Public helper: set activePlayerId to whichever seat should act next.

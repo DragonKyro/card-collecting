@@ -559,3 +559,26 @@
   .sgp .round-summary td, .sgp .round-summary th { padding: 6px 4px; }
   .sgp-sidebar { max-height: min(80vh, 380px); }
 }
+
+/* ---------- game-over match stats (StatsPanel.tsx; charts in src/ui/MatchCharts.tsx) ---------- */
+
+.sgp .match-stats { max-width: none; margin: 16px 0 0; }
+.sgp .match-stats .sgp-picks td,
+.sgp .match-stats .sgp-picks th { text-align: left; }
+.sgp .match-stats .sgp-picks td:first-child { width: 44px; font-variant-numeric: tabular-nums; }
+.sgp .match-stats .sgp-picks-total td { font-weight: 700; border-bottom: none; }
+.sgp-pick-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
+.sgp-chip {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #1c1a2e;
+  white-space: nowrap;
+  /* The card's background colour, softened so the dark ink stays readable. */
+  background: color-mix(in srgb, var(--chip) 70%, #ffffff);
+  box-shadow: inset 3px 0 0 var(--chip);
+}
+.sgp-chip-variant { font-weight: 400; }
+.sgp-pick-event { font-size: 11px; color: var(--mc-muted); }

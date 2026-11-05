@@ -38,6 +38,7 @@ export function GameHost({ onExit, onReturnToLobby }: Props) {
   const onlineUuids = useNetworkStore((s) => s.onlineUuids);
   const serverConnected = useNetworkStore((s) => s.serverConnected);
   const notice = useNetworkStore((s) => s.notice);
+  const aiDriver = useNetworkStore((s) => s.aiDriver);
   const [bundle, setBundle] = useState<GameUiBundle<GameStateShape, unknown, unknown> | null>(null);
   const [rulesOpen, setRulesOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -72,8 +73,9 @@ export function GameHost({ onExit, onReturnToLobby }: Props) {
   }, [notice]);
 
   // AI driver: if the active player is an AI seat, run its chooseAIAction.
-  // In online matches only the host drives AI — otherwise multiple devices
-  // would each dispatch the same AI action. A host that rejoined mid-match
+  // Online, one device drives the AI (networkStore.aiDriver: the host while
+  // it's connected, else a seated stand-in) — otherwise every device would
+  // dispatch the same AI action. A device that takes the AI on mid-match
   // waits for the module's `prepare` (aiReady) first.
   //
   // Tick delay is tuned to the audience:
@@ -83,7 +85,7 @@ export function GameHost({ onExit, onReturnToLobby }: Props) {
   //     AI's move + animation, fast enough not to feel laggy.
   useEffect(() => {
     if (!module || !state || !module.chooseAIAction || !aiReady) return;
-    if (role === 'guest' || role === 'spectator') return;
+    if (role !== 'solo' && !aiDriver) return;
     if (tickingRef.current) return;
     const active = state.activePlayerId;
     const seat = active ? state.seats.find((s) => s.id === active) : null;
@@ -101,14 +103,14 @@ export function GameHost({ onExit, onReturnToLobby }: Props) {
       const a = cur.module.chooseAIAction(cur.state, active!);
       if (a) {
         try {
-          cur.dispatch(a);
+          cur.dispatch(a, { ai: true });
         } catch (e) {
           console.error('AI dispatch failed', e);
         }
       }
     }, delay);
     return () => { clearTimeout(timer); tickingRef.current = false; };
-  }, [module, state, role, aiReady]);
+  }, [module, state, role, aiReady, aiDriver]);
 
   if (!module || !state) {
     return (
@@ -136,14 +138,18 @@ export function GameHost({ onExit, onReturnToLobby }: Props) {
   const hotSeatLocal = role === 'solo' && activeSeat && !activeSeat.isAI
     ? activeSeat.id
     : null;
-  const effectiveLocalPlayerId = hotSeatLocal ?? localPlayerId;
+  // While an AI (or nobody) is to act, the device is still in the hands of
+  // the last human who took it ("I'm ready"), so the view stays theirs rather
+  // than falling back to seat 0 — whose hand they mustn't see.
+  const humanSeatCount = state.seats.filter((s) => !s.isAI).length;
+  const deviceHolder = role === 'solo' && humanSeatCount >= 2 ? lastClearedSeat.current : null;
+  const effectiveLocalPlayerId = hotSeatLocal ?? deviceHolder ?? localPlayerId;
 
   // Hot-seat pass screen: show whenever the active human seat differs from
   // the last seat the player explicitly acknowledged via "Ready". We only
   // gate when there are 2+ human seats (otherwise there's no one to pass to
   // — single-human-vs-AI matches don't need a hand-off), and only for games
   // with something to hide.
-  const humanSeatCount = state.seats.filter((s) => !s.isAI).length;
   const needsPassGate =
     role === 'solo'
     && module.hiddenInfo !== false
@@ -226,6 +232,11 @@ export function GameHost({ onExit, onReturnToLobby }: Props) {
             <span className="net-pill" title={role === 'spectator' ? 'Watching: you have no seat in this match' : undefined}>
               <span className={`net-dot net-dot-${role}`} />
               <span className="net-pill-role">{role === 'spectator' ? 'watching' : role} · room</span> <code>{roomCode}</code>
+            </span>
+          )}
+          {aiDriver && role !== 'host' && !isGameOver && (
+            <span className="net-pill" title="The host is away: this device plays the AI seats until they're back">
+              running the AI
             </span>
           )}
           {away.length > 0 && !isGameOver && (

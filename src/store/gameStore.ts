@@ -13,7 +13,8 @@ import { create } from 'zustand';
 import type { AnyGameModule, GameStateShape } from '@/core/module';
 import type { PlayerId } from '@/core/types';
 
-type BroadcastHandler = (action: unknown, before: GameStateShape) => void;
+/** `fromAI`: the AI driver made this move (online, a dropped AI move needs no notice). */
+type BroadcastHandler = (action: unknown, before: GameStateShape, fromAI: boolean) => void;
 /** Online: true when this device may not move at all (a spectator). */
 type DispatchGuard = () => boolean;
 
@@ -31,7 +32,8 @@ interface GameStore {
   aiReady: boolean;
 
   loadGame(module: AnyGameModule, initialState: GameStateShape, localPlayerId: PlayerId | null, matchConfig?: unknown): void;
-  dispatch(action: unknown): void;
+  /** Apply a move (and log it, online). `{ ai: true }` marks the AI driver's moves. */
+  dispatch(action: unknown, opts?: { ai?: boolean }): void;
   /** Apply a move without broadcasting it. False (and nothing changes) when the reducer rejects it. */
   applyLocal(action: unknown): boolean;
   /** Put back an earlier state (online rollback). */
@@ -57,13 +59,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
   loadGame: (module, state, localPlayerId, matchConfig) =>
     set({ module, state, localPlayerId, matchConfig, aiReady: true }),
 
-  dispatch: (action) => {
+  dispatch: (action, opts) => {
     const { module, state, _broadcast, _blocked } = get();
     if (!module || !state) throw new Error('dispatch called before loadGame');
     if (_blocked?.()) return;
     const next = module.applyAction(state, action) as GameStateShape;
     set({ state: next });
-    _broadcast?.(action, state);
+    _broadcast?.(action, state, opts?.ai === true);
   },
 
   applyLocal: (action) => {

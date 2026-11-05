@@ -4,8 +4,8 @@
 // until a LEARNER seat has a decision, then reports that seat's encoded
 // observation and legal mask. The learner answers with one action slot per
 // env. Picks are simultaneous: seats are asked one after another, each seeing
-// only that the other has picked. A multi-part answer (pick + chopsticks +
-// spoon, takeout flips) is several decisions; the parts before the last
+// only that the other has picked. A multi-part answer (pick + chopsticks,
+// spoon use + ask, takeout flips) is several decisions; the parts before the last
 // change no game state, so the env asks the same seat again with its draft.
 // Finished matches auto-reset with a fresh random menu: `done[i]` marks that
 // env i's episode ended during the last advance, and the obs returned is

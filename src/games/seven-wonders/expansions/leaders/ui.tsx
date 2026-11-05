@@ -5,6 +5,7 @@
 // HandPanel when the player has Bilkis).
 
 import { useState } from 'react';
+import { sharedDeviceHumans } from '@/core/seats';
 import type { PlayerId, Seat } from '@/core/types';
 import type {
   SwAction, SwCard, SwResource, SwState,
@@ -34,6 +35,8 @@ function LeaderDraftPanel({ state, localPlayerId, dispatch }: SwOverlayProps) {
   const hand = (state.leaderDraftHands ?? {})[localPlayerId ?? ''] ?? [];
   const submitted = me?.leaderDraftPick != null;
   const submittedCount = state.players.filter((p) => p.leaderDraftPick !== null).length;
+  // Players sharing a device: a locked-in draft hand stays hidden.
+  const hideHand = submitted && sharedDeviceHumans(state.seats) >= 2;
   return (
     <div className="sw-hand-area">
       <h3>
@@ -45,7 +48,9 @@ function LeaderDraftPanel({ state, localPlayerId, dispatch }: SwOverlayProps) {
       <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.75)' }}>
         Pick one leader. Remaining cards pass {state.leaderDraftPassDir === 'cw' ? 'clockwise' : 'counter-clockwise'}.
       </p>
-      {me ? (
+      {me && hideHand ? (
+        <p style={{ fontSize: 12 }}>Your pick is locked in; your draft hand is hidden while the others pick.</p>
+      ) : me ? (
         <div className="sw-hand">
           {hand.map((c) => (
             <LeaderCard key={c.id} card={c}

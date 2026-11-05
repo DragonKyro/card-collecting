@@ -125,8 +125,8 @@ function rigged(hands: SushiGoCard[][], tables: SushiGoCard[][] = [], menu = SPE
   return s;
 }
 
-function pick(s: SushiGoState, pid: string, cards: SushiGoCard[], useSpoon = false): SushiGoState {
-  return applyAction(s, { type: 'submitPick', playerId: pid, cardIds: cards.map((x) => x.id), ...(useSpoon ? { useSpoon } : {}) });
+function pick(s: SushiGoState, pid: string, cards: SushiGoCard[]): SushiGoState {
+  return applyAction(s, { type: 'submitPick', playerId: pid, cardIds: cards.map((x) => x.id) });
 }
 
 /** Everyone not named picks the first card of their hand. */
@@ -243,7 +243,7 @@ describe('sushi-go special cards', () => {
       [[mine, c('tempura'), c('tempura')], [c('tempura'), eel1, c('tempura')], [c('tempura'), eel2, c('tempura')]],
       [[spoon]],
     );
-    s = othersPickFirst(pick(s, 'p0', [mine], true));
+    s = othersPickFirst(pick(s, 'p0', [mine]));
     expect(s.resolution!.steps[0]).toMatchObject({ type: 'spoon', playerId: 'p0' });
     s = applyAction(s, { type: 'askSpoon', playerId: 'p0', kind: 'eel' });
     expect(player(s, 'p0').table.map((x) => x.id)).toEqual([mine.id, eel1.id]);
@@ -259,7 +259,7 @@ describe('sushi-go special cards', () => {
     const setup = () => othersPickFirst(pick(rigged(
       [[mine, c('tempura'), c('tempura')], [c('tempura'), egg, squid], [c('tempura'), c('tempura'), c('tempura')]],
       [[spoon]],
-    ), 'p0', [mine], true));
+    ), 'p0', [mine]));
 
     let s = applyAction(setup(), { type: 'askSpoon', playerId: 'p0', kind: 'nigiri' });
     expect(s.resolution!.steps[0]).toMatchObject({ type: 'spoonGive', playerId: 'p1', options: [egg.id, squid.id] });
@@ -270,6 +270,47 @@ describe('sushi-go special cards', () => {
     // Asking for the exact variant skips the choice.
     const s2 = applyAction(setup(), { type: 'askSpoon', playerId: 'p0', kind: 'nigiri', variant: 'squid' });
     expect(player(s2, 'p0').table.map((x) => x.id)).toEqual([mine.id, squid.id]);
+  });
+
+  it('a spoon is offered at the reveal, after the picks, and can be kept', () => {
+    const spoon = c('spoon', '4');
+    const mine = c('tempura');
+    let s = rigged(
+      [[mine, c('tempura'), c('tempura')], [c('eel'), c('eel'), c('eel')], [c('eel'), c('eel'), c('eel')]],
+      [[spoon]],
+    );
+    s = othersPickFirst(s);
+    // Every pick is already on the tables when the spoon's owner decides.
+    expect(s.subPhase).toBe('resolving');
+    expect(s.activePlayerId).toBe('p0');
+    expect(s.players.every((p) => p.table.some((x) => x.kind !== 'spoon'))).toBe(true);
+    expect(() => applyAction(s, { type: 'keepSpoon', playerId: 'p1' })).toThrow();
+    s = applyAction(s, { type: 'keepSpoon', playerId: 'p0' });
+    expect(s.subPhase).toBe('selecting');
+    expect(player(s, 'p0').table.map((x) => x.id)).toEqual([spoon.id, mine.id]);
+    // Kept: offered again next turn.
+    s = othersPickFirst(s);
+    expect(s.resolution!.steps[0]).toMatchObject({ type: 'spoon', playerId: 'p0', cardId: spoon.id });
+  });
+
+  it('a spoon played this turn waits for a later turn, and none is offered once the hands are empty', () => {
+    const spoon = c('spoon', '6');
+    let s = rigged([[spoon, c('tempura')], [c('eel'), c('eel')], [c('eel'), c('eel')]]);
+    s = othersPickFirst(s);
+    expect(s.subPhase).toBe('selecting');
+    // Last card: the spoon is on the table, but no hand has anything left to give.
+    s = othersPickFirst(s);
+    expect(s.subPhase).toBe('roundEnd');
+  });
+
+  it('spoons resolve by corner number, between special orders and menus', () => {
+    const [s4, s6] = [c('spoon', '4'), c('spoon', '6')];
+    let s = rigged(
+      [[c('eel'), c('eel'), c('eel')], [c('specialOrder'), c('eel'), c('eel')], [c('eel'), c('eel'), c('eel')]],
+      [[s6], [c('tempura')], [s4]],
+    );
+    s = othersPickFirst(s);
+    expect(s.resolution!.steps.map((x) => `${x.type}:${x.playerId}`)).toEqual(['copy:p1', 'spoon:p2', 'spoon:p0']);
   });
 
   it('chopsticks play 2 cards and go back into the hand that is passed on', () => {

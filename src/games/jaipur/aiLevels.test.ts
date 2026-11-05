@@ -1,9 +1,9 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { JaipurAction, JaipurAiLevel, JaipurState } from './types';
+import type { JaipurAction, JaipurState } from './types';
 import { applyAction, createJaipurState } from './reducer';
-import { AI_LEVELS, DEFAULT_AI_LEVEL, POLICY_URLS, aiLevelOf } from './levels';
+import { AI_LEVELS, DEFAULT_AI_LEVEL, POLICY_URLS, aiLevelOfSeat, aiLevelsOf } from './levels';
 import { seatsFor } from './testSupport';
 import type { JaipurPolicyFile } from './nn/policy';
 
@@ -32,7 +32,21 @@ describe('Jaipur AI levels', () => {
     expect(AI_LEVELS.map((l) => l.id)).toEqual((['easy', 'normal', 'hard'] as const).filter((l) => levels.has(l)));
     expect(DEFAULT_AI_LEVEL).toBe(AI_LEVELS.at(-1)!.id);
     // An unknown level — including the removed 'heuristic' — falls back to the default.
-    expect(aiLevelOf({ sealsToWin: 2, aiLevel: 'heuristic' as JaipurAiLevel })).toBe(DEFAULT_AI_LEVEL);
+    expect(aiLevelOfSeat({ aiLevel: 'heuristic' })).toBe(DEFAULT_AI_LEVEL);
+    expect(aiLevelOfSeat({})).toBe(DEFAULT_AI_LEVEL);
+  });
+
+  it('each AI seat has its own level; the module lists them and rejects unknown ones', async () => {
+    const { jaipurModule: mod } = await import('./module');
+    expect(mod.aiLevels).toEqual(AI_LEVELS);
+    expect(mod.defaultAiLevel).toBe(DEFAULT_AI_LEVEL);
+    const easiest = AI_LEVELS[0]!.id;
+    const seats = seatsFor().map((s, i) => (i === 0 ? { ...s, aiLevel: easiest } : s));
+    expect(aiLevelsOf(seats)).toEqual([...new Set([easiest, DEFAULT_AI_LEVEL])]);
+    expect(aiLevelsOf(seats.map((s) => ({ ...s, isAI: false })))).toEqual([]);
+    expect(mod.validateConfig(mod.defaultConfig(seats), seats)).toEqual([]);
+    const bad = seats.map((s) => ({ ...s, aiLevel: 'insane' }));
+    expect(mod.validateConfig(mod.defaultConfig(bad), bad)).toContain('Unknown AI difficulty.');
   });
 
   it('clicks through the round summary in all-AI matches and waits for humans', async () => {
@@ -53,7 +67,8 @@ describe('Jaipur AI levels', () => {
       expect(() => installAiPolicy(level, file), f).not.toThrow();
       expect(file.meta?.benchmark, `${f} was frozen with evaluate.py freeze`).toBeTruthy();
       for (const seed of [1, 2]) {
-        const s = playOut(createJaipurState({ sealsToWin: 2, aiLevel: level }, seed, seatsFor()), chooseLeveledAction);
+        const seats = seatsFor().map((seat) => ({ ...seat, aiLevel: level }));
+        const s = playOut(createJaipurState({ sealsToWin: 2 }, seed, seats), chooseLeveledAction);
         expect(s.phase, f).toBe('gameOver');
       }
     }

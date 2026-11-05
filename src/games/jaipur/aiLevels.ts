@@ -7,7 +7,7 @@
 
 import type { PlayerId } from '@/core/types';
 import type { JaipurAction, JaipurAiLevel, JaipurState } from './types';
-import { POLICY_URLS, aiLevelOf } from './levels';
+import { POLICY_URLS, aiLevelOfSeat } from './levels';
 import type { SlotPolicy } from './nn/agent';
 import { actWithPolicy } from './nn/agent';
 import { greedyPolicy, loadJaipurPolicy, type JaipurPolicyFile } from './nn/policy';
@@ -46,7 +46,8 @@ export function chooseLeveledAction(state: JaipurState, playerId: PlayerId): Jai
     return state.seats.every((s) => s.isAI) ? { type: 'nextRound' } : null;
   }
   if (state.activePlayerId !== playerId) return null;
-  const level = aiLevelOf(state.config);
+  // Each AI seat plays at its own level.
+  const level = aiLevelOfSeat(state.seats.find((s) => s.id === playerId));
   const policy = policies.get(level);
   if (!policy) {
     // prepare() should have loaded it; start now so a later call can answer.

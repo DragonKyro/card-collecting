@@ -426,3 +426,26 @@
   .jp-overlay { padding: 16px 8px; }
   .jp-overlay-card { padding: 14px 12px; }
 }
+
+/* ---------- game-over match stats (StatsPanel.tsx; charts in src/ui/MatchCharts.tsx) ---------- */
+
+/* The final overlay grows with its content (the stats run past the board). */
+.jp-overlay.jp-final { bottom: auto; min-height: 100%; }
+.jp-overlay-card .match-stats {
+  --mc-surface: #241215;
+  --mc-ink: #f8ecd8;
+  --mc-muted: rgba(248, 236, 216, 0.66);
+  --mc-rule: rgba(231, 184, 74, 0.3);
+  --mc-grid: rgba(248, 236, 216, 0.09);
+  --mc-axis: rgba(248, 236, 216, 0.32);
+  --mc-hover: rgba(255, 255, 255, 0.07);
+  --mc-tooltip-bg: #3a1d22;
+  --mc-tooltip-border: rgba(231, 184, 74, 0.45);
+  --mc-control-bg: #3a1d22;
+  max-width: none;
+  margin: 16px 0 10px;
+  padding: 12px 14px;
+  border: 1px solid rgba(231, 184, 74, 0.2);
+}
+.jp-overlay-card .match-stats h2 { color: #f3cf63; font-family: Georgia, 'Times New Roman', serif; }
+.jp-overlay-card .match-stats .swatch { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2); }

@@ -7,8 +7,7 @@ import type { SushiGoState, SushiGoAction, SushiGoConfig, SushiGoPlayer } from '
 import { applyAction, setupNewMatch } from './reducer';
 import { DEFAULT_MENU, validateMenu } from './cards';
 import { SushiGoThumbnail } from './Thumbnail';
-
-const AI_LEVEL_IDS = ['easy', 'normal', 'hard'];
+import { AI_LEVELS, DEFAULT_AI_LEVEL, aiLevelsOf, isAiLevel } from './levels';
 
 // The trained AI (encoder + network runtime) is loaded on demand by prepare(),
 // keeping it out of the game-picker bundle.
@@ -22,16 +21,19 @@ export const sushiGoModule: GameModule<SushiGoState, SushiGoAction, SushiGoConfi
   minPlayers: 2,
   maxPlayers: 8,
   replayInLobby: true,
+  // Each AI seat picks its own (seat.aiLevel).
+  aiLevels: AI_LEVELS,
+  defaultAiLevel: DEFAULT_AI_LEVEL,
 
   defaultConfig(_seats: Seat[]): SushiGoConfig {
-    return { menu: DEFAULT_MENU.slice(), rounds: 3, aiLevel: 'normal' };
+    return { menu: DEFAULT_MENU.slice(), rounds: 3 };
   },
 
   validateConfig(config, seats) {
     const errors: string[] = [];
     errors.push(...validateMenu(config.menu, seats?.length));
     if (config.rounds < 1 || config.rounds > 5) errors.push('Rounds must be 1–5.');
-    if (config.aiLevel !== undefined && !AI_LEVEL_IDS.includes(config.aiLevel)) errors.push('Unknown AI difficulty.');
+    if (seats?.some((s) => s.isAI && s.aiLevel !== undefined && !isAiLevel(s.aiLevel))) errors.push('Unknown AI difficulty.');
     return errors;
   },
 
@@ -52,6 +54,7 @@ export const sushiGoModule: GameModule<SushiGoState, SushiGoAction, SushiGoConfi
       uramakiNextPlace: 0,
       resolution: null,
       lastRoundSummary: null,
+      roundHistory: [],
       log: [],
       logSeq: 0,
     };
@@ -66,10 +69,11 @@ export const sushiGoModule: GameModule<SushiGoState, SushiGoAction, SushiGoConfi
     return aiLevels ? aiLevels.chooseLeveledAction(state, playerId) : null;
   },
 
-  async prepare(config, seats) {
+  async prepare(_config, seats) {
     if (!seats.some((s) => s.isAI)) return;
     aiLevels ??= await import('./aiLevels');
-    await aiLevels.prepareAiLevel(aiLevels.aiLevelOf(config));
+    const { prepareAiLevel } = aiLevels;
+    await Promise.all(aiLevelsOf(seats).map((level) => prepareAiLevel(level)));
   },
 
   Thumbnail: SushiGoThumbnail,
@@ -88,7 +92,6 @@ export function attachSeatsAndStart(state: SushiGoState, seats: Seat[]): SushiGo
     table: [],
     dessertPile: [],
     pendingPick: null,
-    pendingSpoon: false,
     uramakiPoints: 0,
     scoreByRound: [],
     dessertScore: 0,

@@ -790,3 +790,185 @@ button.tiny {
 @media (max-width: 420px) {
   .game-host-wide { display: none; }
 }
+
+/* ---------- post-game match stats (src/ui/MatchCharts.tsx) ----------
+ * A light panel by default (dark ink on cream); a game with a dark game-over
+ * screen overrides the --mc-* properties on its own `.match-stats`. */
+
+.match-stats {
+  --mc-surface: #fbf6ea;
+  --mc-ink: #1c1a2e;
+  --mc-muted: rgba(28, 26, 46, 0.68);
+  --mc-rule: #d6c5a0;
+  --mc-grid: rgba(28, 26, 46, 0.1);
+  --mc-axis: rgba(28, 26, 46, 0.32);
+  --mc-hover: rgba(28, 26, 46, 0.06);
+  --mc-tooltip-bg: #ffffff;
+  --mc-tooltip-border: rgba(0, 0, 0, 0.15);
+  --mc-control-bg: #f4e9d5;
+  background: var(--mc-surface);
+  color: var(--mc-ink);
+  padding: 16px 20px;
+  border-radius: 12px;
+  max-width: 760px;
+  margin: 18px auto 0;
+  text-align: left;
+}
+.match-stats-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.match-stats-head h2 { margin: 0; font-size: 18px; color: var(--mc-ink); font-family: var(--font); }
+.match-stats-view { display: inline-flex; border: 1px solid var(--mc-rule); border-radius: 6px; overflow: hidden; }
+.match-stats-view button {
+  background: transparent;
+  color: var(--mc-ink);
+  border-radius: 0;
+  padding: 4px 10px;
+  font-size: 12px;
+  opacity: 0.65;
+}
+.match-stats-view button.active { background: var(--mc-control-bg); opacity: 1; }
+.match-stats-tabs {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--mc-rule);
+  margin-bottom: 12px;
+}
+.match-stats-tabs button {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--mc-ink);
+  opacity: 0.6;
+  border-bottom: 3px solid transparent;
+  margin-bottom: -1px;
+  white-space: nowrap;
+}
+.match-stats-tabs button:hover { opacity: 0.85; filter: none; }
+.match-stats-tabs button.active { opacity: 1; border-bottom-color: var(--mc-ink); }
+.match-stats-panel { min-height: 300px; }
+
+.mc-chart { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 8px; }
+.mc-plot { position: relative; flex: 1 1 0; min-width: 0; overflow: hidden; }
+.mc-plot svg { display: block; touch-action: pan-y; }
+.mc-plot-pie { max-width: 300px; }
+.mc-tick { font-size: 11px; fill: var(--mc-muted); font-variant-numeric: tabular-nums; }
+.mc-label { font-size: 11px; fill: var(--mc-ink); }
+.mc-grid { stroke: var(--mc-grid); stroke-width: 1; }
+.mc-axis { stroke: var(--mc-axis); stroke-width: 1; }
+.mc-hover { fill: var(--mc-hover); }
+.mc-marker { stroke: var(--mc-surface); stroke-width: 2; }
+.mc-slice { stroke: var(--mc-surface); stroke-width: 2; }
+
+.mc-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 130px;
+  max-width: 190px;
+  padding-top: 4px;
+  font-size: 12px;
+  color: var(--mc-ink);
+}
+.mc-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  color: inherit;
+  border: none;
+  border-radius: 4px;
+  padding: 3px 4px;
+  font-size: 12px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+.mc-legend-row:hover { background: var(--mc-hover); filter: none; }
+.mc-legend-row.off { opacity: 0.4; text-decoration: line-through; }
+.mc-legend-row .lbl { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mc-legend-row .num { opacity: 0.7; font-variant-numeric: tabular-nums; }
+.match-stats .swatch {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18);
+}
+.match-stats .swatch.baseline { opacity: 0.45; }
+.match-stats .swatch-gap { display: inline-block; width: 11px; flex-shrink: 0; }
+
+.mc-tooltip {
+  position: absolute;
+  z-index: 2;
+  pointer-events: none;
+  min-width: 150px;
+  max-width: 280px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--mc-tooltip-border);
+  background: var(--mc-tooltip-bg);
+  color: var(--mc-ink);
+  font-size: 11px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
+}
+.mc-tooltip-title { font-weight: 700; margin-bottom: 4px; }
+.mc-tooltip-row { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; padding: 1px 0; }
+.mc-tooltip-row .lbl { flex: 1; }
+.mc-tooltip-row .num { font-weight: 700; font-variant-numeric: tabular-nums; }
+.mc-tooltip-note { flex-basis: 100%; padding-left: 17px; color: var(--mc-muted); }
+
+.mc-controls { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin-bottom: 8px; }
+.mc-select { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--mc-ink); }
+.mc-select select {
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--mc-rule);
+  background: var(--mc-control-bg);
+  color: var(--mc-ink);
+}
+.mc-note { margin: 4px 0 0; font-size: 12px; color: var(--mc-muted); }
+
+.mc-table-wrap { overflow-x: auto; }
+.match-stats table.mc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  color: var(--mc-ink);
+  background: transparent;
+}
+.match-stats .mc-table th,
+.match-stats .mc-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--mc-rule);
+  text-align: left;
+  vertical-align: top;
+}
+.match-stats .mc-table th { font-size: 12px; color: var(--mc-muted); font-weight: 600; }
+.match-stats .mc-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.match-stats .mc-table td .swatch { margin-right: 6px; vertical-align: -1px; }
+.mc-cell-note { color: var(--mc-muted); font-size: 11px; }
+
+@media (max-width: 600px) {
+  .match-stats { padding: 12px; margin-top: 12px; }
+  .match-stats-tabs button { padding: 8px 9px; }
+  .match-stats-panel { min-height: 0; }
+  /* Legend under the plot as wrapping chips, so the plot keeps the width. */
+  .mc-chart { flex-direction: column; align-items: stretch; }
+  /* In a column a zero flex-basis would be a zero height. */
+  .mc-plot { flex: 0 0 auto; width: 100%; }
+  .mc-legend { flex-direction: row; flex-wrap: wrap; gap: 2px 10px; min-width: 0; max-width: none; padding: 0; }
+}
+
+/* Per-seat AI difficulty (lobbies). */
+.seat-level { font-size: 12px; padding: 3px 6px; max-width: 96px; }

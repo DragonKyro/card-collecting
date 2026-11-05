@@ -17,10 +17,9 @@
 //             hand-over is played face-up and the spoon handed across. So that
 //             hand is known exactly once the round has had k passes — at 2
 //             players, the opponent's whole hand from the second turn on.
-//   hidden    every other hand, which card(s) anyone put face-down this turn
-//             and whether they're calling a spoon, the deck, the dessert
-//             supply, other players' menu draws and spoon hand-over choices,
-//             the RNG.
+//   hidden    every other hand, which card(s) anyone put face-down this turn,
+//             the deck, the dessert supply, other players' menu draws and
+//             spoon hand-over choices, the RNG.
 //
 // Simplification: the viewer knows a little more than this in two rare
 // spots — the three cards its own menu put back in the deck, and that a
@@ -50,35 +49,38 @@ export interface SushiGoObservedPlayer {
   /** Uramaki places already scored this round. */
   uramakiPoints: number;
   scoreByRound: number[];
-  /** Put a card face-down this turn (which one, and any spoon call, stay hidden). */
+  /** Put a card face-down this turn (which one stays hidden). */
   submitted: boolean;
 }
 
 /** A multi-part answer in progress, carried between policy calls (never game
- *  state): a pick is first card → chopsticks' second card (if any) → spoon
- *  call (if any); a takeout box flips one card at a time until done. */
+ *  state): a pick is first card → chopsticks' second card (if any); a spoon
+ *  is use it or keep it → the card to name; a takeout box flips one card at a
+ *  time until done. */
 export interface SushiGoDraft {
   /** Cards chosen so far: the pick's, or the takeout box's flips. */
   cards: number[];
-  /** Pick: the chopsticks part is settled (second card chosen or declined). */
-  secondDone?: boolean;
+  /** Spoon: decided to use it; the card to name comes next. */
+  spoonUsed?: boolean;
 }
 
 export interface ObserveOptions {
   draft?: SushiGoDraft | null;
 }
 
-export type PickStage = 'first' | 'second' | 'spoon';
+export type PickStage = 'first' | 'second';
+export type SpoonStage = 'use' | 'ask';
 
 /** What the viewer has to decide right now. */
 export type SushiGoDecision =
-  /** Pick from the hand: 1 card, 2 with chopsticks, optionally calling a spoon
-   *  — asked as `stage` steps, `chosen` holding the cards picked so far. */
+  /** Pick from the hand: 1 card, or 2 with chopsticks — asked as `stage`
+   *  steps, `chosen` holding the cards picked so far. `canSpoon`: a spoon on
+   *  the table will be offered at this turn's reveal. */
   | { type: 'pick'; stage: PickStage; chosen: SushiGoCard[]; canChopsticks: boolean; canSpoon: boolean }
   /** Own special order: which of these to copy. */
   | { type: 'copy'; cardId: number; targets: SushiGoCard[] }
-  /** Own spoon: name a card. */
-  | { type: 'spoon'; cardId: number }
+  /** Own spoon, after the reveal: use it or keep it (`use`), then name a card (`ask`). */
+  | { type: 'spoon'; stage: SpoonStage; cardId: number }
   /** Someone's spoon asked for a kind the viewer holds in several variants: which to give. */
   | { type: 'spoonGive'; askerOffset: number; options: SushiGoCard[] }
   /** Own menu: play one of these. */
@@ -172,12 +174,11 @@ function decisionFor(
   const picked = (pool: SushiGoCard[]) => (draft?.cards ?? []).map((id) => copyCard(pool.find((c) => c.id === id)!));
   if (state.subPhase === 'selecting') {
     if (viewer.pendingPick !== null || viewer.hand.length === 0) return null;
-    // A spoon called on the last card finds every hand empty, so it isn't offered.
+    // After the last card's reveal every hand is empty, so a spoon isn't offered then.
     const canChopsticks = viewer.hand.length >= 2 && bonusCard(viewer, 'chopsticks') !== undefined;
     const canSpoon = viewer.hand.length >= 2 && bonusCard(viewer, 'spoon') !== undefined;
     const chosen = picked(viewer.hand);
-    const stage: PickStage = chosen.length === 0 ? 'first'
-      : chosen.length === 1 && canChopsticks && !draft?.secondDone ? 'second' : 'spoon';
+    const stage: PickStage = chosen.length === 0 ? 'first' : 'second';
     return { type: 'pick', stage, chosen, canChopsticks, canSpoon };
   }
   if (!step || step.playerId !== viewer.id) return null;
@@ -185,7 +186,7 @@ function decisionFor(
     case 'copy':
       return { type: 'copy', cardId: step.cardId, targets: copyTargets(viewer, step.cardId).map(copyCard) };
     case 'spoon':
-      return { type: 'spoon', cardId: step.cardId };
+      return { type: 'spoon', stage: draft?.spoonUsed ? 'ask' : 'use', cardId: step.cardId };
     case 'spoonGive':
       return {
         type: 'spoonGive',

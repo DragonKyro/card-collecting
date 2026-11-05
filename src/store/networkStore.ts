@@ -16,6 +16,13 @@
 // slot order via ActionSync, so a device that joins or reloads mid-match
 // rebuilds it exactly. "Play again" is a new match; returning to the lobby
 // sets `match` back to null.
+//
+// AI seats run on one device: the host's while it's connected, else the
+// first connected seated human's (in seat order) — so a match goes on when
+// the host drops, and the host takes the AI back on returning. Every device
+// works this out from presence, so they agree; in the moment it changes hands
+// two devices may both move an AI, and the log keeps the first (the other's
+// is dropped quietly).
 
 import { create } from 'zustand';
 import type { AnyGameModule, GameStateShape } from '@/core/module';
@@ -109,6 +116,8 @@ interface NetworkStore {
   chat: ChatMessage[];
   /** A one-off message about this device's moves (one taken back). */
   notice: string | null;
+  /** This device runs the AI seats of the match being played (see the header). */
+  aiDriver: boolean;
 
   setDisplayName(name: string): void;
   /** Open a room for `gameId`. `setup` carries a local lobby's config and AI seats over. */
@@ -125,8 +134,9 @@ interface NetworkStore {
   hostAddAISeat(): void;
   /** Host: remove a seat (not the host's own). */
   hostRemoveSeat(seatId: string): void;
-  /** Rename / recolor a seat: your own, or (host) an AI seat. A color another seat wears swaps. */
-  editSeat(seatId: string, patch: { name?: string; color?: string }): void;
+  /** Rename / recolor a seat: your own, or (host) an AI seat, whose difficulty
+   *  (`aiLevel`) the host also sets. A color another seat wears swaps. */
+  editSeat(seatId: string, patch: { name?: string; color?: string; aiLevel?: string }): void;
   /** Sit at the table (between matches, while there's room). */
   takeSeat(): void;
   /** Host: start a match from the lobby. Resolves with why it couldn't, or null. */
@@ -167,8 +177,11 @@ let stopWatch: (() => void) | null = null;
 let sync: ActionSync<GameStateShape> | null = null;
 /** The watched match's start record has been applied (gameStore holds it). */
 let matchLoaded = false;
-/** The match this device (as host) prepared the AI for before starting it. */
+/** The match this device has run the module's `prepare` for (as host, before starting it). */
 let preparedMatch: number | null = null;
+let preparingMatch: number | null = null;
+/** The watched match's start record, once applied. */
+let currentStart: StartRecord | null = null;
 let lastPresence: Map<string, string> | null = null;
 let divergeWarned = false;
 
@@ -208,9 +221,19 @@ function openingSeats(me: string, name: string, module: AnyGameModule, local?: S
     if (!s.isAI || seats.length >= module.maxPlayers) continue;
     const n = seats.filter((x) => x.isAI).length + 1;
     const color = seats.some((x) => x.color === s.color) ? freeSeatColor(seats) : s.color;
-    seats.push({ id: `ai-${n}`, name: s.name || `AI ${n}`, color, isAI: true, isLocal: false });
+    seats.push({ id: `ai-${n}`, name: s.name || `AI ${n}`, color, isAI: true, isLocal: false, ...withLevel(module, s.aiLevel) });
   }
   return seats;
+}
+
+/** `{ aiLevel }` when `module` offers that level, else nothing (the seat plays the default). */
+function withLevel(module: AnyGameModule, aiLevel: string | undefined): { aiLevel?: string } {
+  return aiLevel && module.aiLevels?.some((l) => l.id === aiLevel) ? { aiLevel } : {};
+}
+
+/** A lobby's seats for another game: AI levels it doesn't offer are dropped. */
+function seatsForGame(module: AnyGameModule, seats: Seat[]): Seat[] {
+  return seats.map(({ aiLevel, ...rest }) => ({ ...rest, ...withLevel(module, aiLevel) }));
 }
 
 function nextAiSeat(seats: Seat[]): Seat {
@@ -223,7 +246,7 @@ function nextAiSeat(seats: Seat[]): Seat {
 export const useNetworkStore = create<NetworkStore>((set, get) => {
   // Every move this device makes in an online match goes to the log;
   // a spectator makes none.
-  useGameStore.getState().registerBroadcastHandler((action, before) => sync?.local(action, before));
+  useGameStore.getState().registerBroadcastHandler((action, before, fromAI) => sync?.local(action, before, fromAI));
   useGameStore.getState().registerDispatchGuard(() => get().connection === 'in-game' && get().role === 'spectator');
 
   const myUuid = getOrCreateUuid();
@@ -241,8 +264,11 @@ export const useNetworkStore = create<NetworkStore>((set, get) => {
     watchedMatch = null;
     matchLoaded = false;
     preparedMatch = null;
+    preparingMatch = null;
+    currentStart = null;
     lastPresence = null;
     divergeWarned = false;
+    if (get().aiDriver) set({ aiDriver: false });
     return session;
   }
 
@@ -268,14 +294,73 @@ export const useNetworkStore = create<NetworkStore>((set, get) => {
       snapshot: () => useGameStore.getState().state!,
       restore: (s) => useGameStore.getState().restoreState(s),
       write: (seq, entry) => (conn ? conn.appendAction(match, seq, entry) : Promise.resolve(false)),
-      dropped: (_action, why) =>
+      dropped: (_action, why, quiet) => {
+        // An AI move that lost its slot (two devices briefly both running the
+        // AI): nobody to tell, and the AI decides again from the new state.
+        if (quiet) return;
         set({
           notice:
             why === 'overtaken'
               ? "Another player's move went through first, so yours was taken back."
               : 'The server refused that move, so it was taken back.',
-        }),
+        });
+      },
     });
+  }
+
+  /** Who runs the AI seats now: the host while connected, else the first connected seated human. */
+  function aiDriverUuid(): string | null {
+    const rec = currentStart;
+    if (!rec || !rec.seats.some((x) => x.isAI)) return null;
+    const online = get().onlineUuids;
+    const order = [rec.hostUuid, ...rec.seats.filter((x) => !x.isAI && x.id !== rec.hostUuid).map((x) => x.id)];
+    return order.find((uuid) => online.has(uuid)) ?? null;
+  }
+
+  /** Recompute whether this device runs the AI seats (match start, presence changes). */
+  function updateAiDriver(my: number): void {
+    if (my !== session) return;
+    const s = get();
+    const rec = currentStart;
+    const me = s.myUuid;
+    // A device that isn't the host waits to hear who's connected before
+    // taking the AI on (right after joining it only knows about itself).
+    const driving = !!rec && (rec.hostUuid === me || lastPresence !== null) && aiDriverUuid() === me;
+    if (driving !== s.aiDriver) {
+      set({ aiDriver: driving });
+      if (rec && rec.hostUuid !== me) {
+        const host = rec.seats.find((x) => x.id === rec.hostUuid)?.name ?? 'The host';
+        addSystem(driving ? `${host} is away, so this device is running the AI seats until they're back.` : 'Handed the AI seats back.');
+      }
+    }
+    if (driving) ensureAiPrepared(my);
+  }
+
+  /** Run the module's `prepare` once per match on the device that runs the AI; the AI driver waits on it. */
+  function ensureAiPrepared(my: number): void {
+    const rec = currentStart;
+    const match = watchedMatch;
+    if (!rec || match === null || preparedMatch === match || preparingMatch === match) return;
+    const module = getGameById(rec.gameId);
+    if (!module?.prepare) {
+      preparedMatch = match;
+      return;
+    }
+    preparingMatch = match;
+    useGameStore.getState().setAiReady(false);
+    module.prepare(JSON.parse(rec.configJson), rec.seats).then(
+      () => {
+        if (my !== session || watchedMatch !== match) return;
+        preparedMatch = match;
+        preparingMatch = null;
+        useGameStore.getState().setAiReady(true);
+      },
+      (e: unknown) => {
+        if (my !== session || watchedMatch !== match) return;
+        preparingMatch = null;
+        addSystem(`Couldn't load the AI (${(e as Error).message}); its seats are paused. Reload to try again.`);
+      },
+    );
   }
 
   /** Watch the lobby's current match (or none), dropping the previous one. */
@@ -291,7 +376,9 @@ export const useNetworkStore = create<NetworkStore>((set, get) => {
     const wasLoaded = matchLoaded;
     watchedMatch = match;
     matchLoaded = false;
+    currentStart = null;
     divergeWarned = false;
+    if (get().aiDriver) set({ aiDriver: false });
     if (match === null) {
       // Back to the lobby. (A new match replaces the old one's state when its
       // start record lands, so the game-over screen stays up until then.)
@@ -321,7 +408,7 @@ export const useNetworkStore = create<NetworkStore>((set, get) => {
     followMatch(my);
   }
 
-  function onStart(rec: StartRecord, match: number, my: number): void {
+  function onStart(rec: StartRecord, _match: number, my: number): void {
     if (matchLoaded) return; // written once; ignore repeats
     const module = getGameById(rec.gameId);
     if (!module) {
@@ -351,21 +438,12 @@ export const useNetworkStore = create<NetworkStore>((set, get) => {
     const wasPlaying = s.connection === 'lobby' || s.connection === 'in-game';
     const game = useGameStore.getState();
     game.loadGame(module, state, seated ? me : null, { config, seats: rec.seats });
-    // The AI runs on the host's device. Starting a match there already
-    // prepared it; a host that reloaded mid-match prepares it again first.
-    if (role === 'host' && module.prepare && rec.seats.some((x) => x.isAI) && preparedMatch !== match) {
-      game.setAiReady(false);
-      module.prepare(config, rec.seats).then(
-        () => {
-          if (my === session && matchLoaded) useGameStore.getState().setAiReady(true);
-        },
-        (e: unknown) => {
-          if (my === session) addSystem(`Couldn't load the AI (${(e as Error).message}); its seats are paused. Reload to try again.`);
-        },
-      );
-    }
+    currentStart = rec;
     set({ connection: 'in-game', role, hostUuid: rec.hostUuid, errorMessage: null, joinFailure: null });
     addSystem(wasPlaying ? `${module.name} started` : seated ? 'Rejoined the match' : 'Watching the match');
+    // Whoever runs the AI seats prepares them first (the host that started
+    // the match already has; a host that reloaded, or a stand-in, does now).
+    updateAiDriver(my);
     // Replay the log from the start: every device ends up with the same state.
     sync?.begin();
   }
@@ -397,6 +475,7 @@ export const useNetworkStore = create<NetworkStore>((set, get) => {
       onlineUuids: online,
       chat: lines.length ? [...get().chat, ...lines.map(sysMessage)] : get().chat,
     });
+    updateAiDriver(session);
   }
 
   function roomEvents(my: number): RoomEvents {
@@ -496,6 +575,7 @@ export const useNetworkStore = create<NetworkStore>((set, get) => {
     onlineUuids: new Set(),
     chat: [],
     notice: null,
+    aiDriver: false,
 
     setDisplayName: (name) => {
       saveDisplayName(name);
@@ -669,7 +749,10 @@ export const useNetworkStore = create<NetworkStore>((set, get) => {
       void editLobby((l) =>
         l.match !== null || l.gameId === gameId
           ? null
-          : { ...l, gameId, configJson: JSON.stringify(module.defaultConfig(l.seats)) },
+          : (() => {
+              const seats = seatsForGame(module, l.seats);
+              return { ...l, gameId, seats, configJson: JSON.stringify(module.defaultConfig(seats)) };
+            })(),
       );
     },
 
@@ -707,11 +790,18 @@ export const useNetworkStore = create<NetworkStore>((set, get) => {
         saveDisplayName(name);
         set({ myDisplayName: name });
       }
+      const levels = s.lobby ? getGameById(s.lobby.gameId)?.aiLevels : undefined;
+      const aiLevel = target.isAI && patch.aiLevel && levels?.some((l) => l.id === patch.aiLevel) ? patch.aiLevel : undefined;
       void editLobby((l) => {
         const seat = l.seats.find((x) => x.id === seatId);
         if (l.match !== null || !seat) return null;
-        const next = { ...seat, ...(name ? { name } : {}), ...(patch.color ? { color: patch.color } : {}) };
-        if (next.name === seat.name && next.color === seat.color) return null;
+        const next = {
+          ...seat,
+          ...(name ? { name } : {}),
+          ...(patch.color ? { color: patch.color } : {}),
+          ...(aiLevel ? { aiLevel } : {}),
+        };
+        if (next.name === seat.name && next.color === seat.color && next.aiLevel === seat.aiLevel) return null;
         return {
           ...l,
           seats: l.seats.map((x) =>

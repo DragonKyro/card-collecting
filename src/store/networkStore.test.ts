@@ -21,6 +21,8 @@ async function device(uuid: string) {
     game: () => useGameStore.getState(),
     state: () => useGameStore.getState().state as TallyState | null,
     dispatch: (a: TallyAction) => useGameStore.getState().dispatch(a),
+    /** A move the AI driver makes (GameHost marks them so). */
+    dispatchAI: (a: TallyAction) => useGameStore.getState().dispatch(a, { ai: true }),
   };
 }
 type Device = Awaited<ReturnType<typeof device>>;
@@ -424,11 +426,99 @@ describe('playing online', () => {
     await flush();
     const reloaded = await joinAs('host-uuid', 'Hana', code);
     expect(reloaded.net().role).toBe('host');
-    expect(await prepareCalls()).toEqual([['tally', 1], ['tally', 1]]);
+    expect(reloaded.net().aiDriver).toBe(true);
+    // Prepared by the host before the start, by the guest standing in while
+    // the host was away, and by the host again on its return.
+    expect(await prepareCalls()).toEqual([['tally', 1], ['tally', 1], ['tally', 1]]);
     expect(reloaded.game().aiReady).toBe(true);
     for (let i = 0; i < 4; i++) await playMove([reloaded, devices[1]!]);
     expectInStep([reloaded, devices[1]!]);
     expect(reloaded.state()!.phase).toBe('gameOver');
+  });
+
+  it('the host dropping out hands the AI seats to a seated guest, who gives them back when the host returns', async () => {
+    const { host, code, devices } = await startMatch([['b-uuid', 'Bo'], ['c-uuid', 'Cy']], 1);
+    const [, bo, cy] = devices as [Device, Device, Device];
+    expect(devices.map((d) => d.net().aiDriver)).toEqual([true, false, false]);
+    await playMove(devices); // the host's turn
+
+    host.net().leaveRoom();
+    await flush();
+    // The first connected seated human, in seat order, takes over.
+    expect(bo.net().aiDriver).toBe(true);
+    expect(cy.net().aiDriver).toBe(false);
+    expect(bo.game().aiReady).toBe(true);
+    expect((await prepareCalls()).length).toBe(2); // the host's before the start, then Bo's
+    expect(bo.net().chat.map((m) => m.text)).toContain("Hana is away, so this device is running the AI seats until they're back.");
+
+    // Bo and Cy play their turns; Bo's device plays the AI's.
+    await playMove([bo, cy]); // Bo
+    await playMove([bo, cy]); // Cy
+    expect(bo.state()!.activePlayerId).toBe('ai-1');
+    bo.dispatchAI({ type: 'add', by: 'ai-1', n: 1 });
+    await flush();
+    expect(cy.state()!.moves.map((m) => m.by)).toEqual(['host-uuid', 'b-uuid', 'c-uuid', 'ai-1']);
+    expectInStep([bo, cy]);
+
+    // Bo drops too: Cy is next in line.
+    bo.net().leaveRoom();
+    await flush();
+    expect(cy.net().aiDriver).toBe(true);
+
+    // The host comes back and takes the AI again.
+    const back = await joinAs('host-uuid', 'Hana', code);
+    expect(back.net().aiDriver).toBe(true);
+    expect(cy.net().aiDriver).toBe(false);
+    expect(cy.net().chat.map((m) => m.text)).toContain('Handed the AI seats back.');
+    expectInStep([back, cy]);
+  });
+
+  it('two devices moving the same AI seat at once (as the AI changes hands): one move stands, nobody is told', async () => {
+    const { host, code, devices } = await startMatch([['guest-uuid', 'Gus']], 1);
+    const guest = devices[1]!;
+    await playMove(devices);
+    await playMove(devices);
+    expect(host.state()!.activePlayerId).toBe('ai-1');
+    fakeServer().holdWrites = true;
+    host.dispatchAI({ type: 'add', by: 'ai-1', n: 1 });
+    guest.dispatchAI({ type: 'add', by: 'ai-1', n: 3 });
+    releaseWrites();
+    await flush();
+    expectInStep(devices);
+    expect(host.state()!.moves).toHaveLength(3);
+    expect(fakeServer().rooms.get(code)!.matches.get(0)!.actions.size).toBe(3);
+    expect(host.net().notice).toBeNull();
+    expect(guest.net().notice).toBeNull();
+  });
+
+  it('nobody runs the AI in a match without AI seats; spectators never do', async () => {
+    const { code, devices } = await startMatch([['guest-uuid', 'Gus']], 0);
+    expect(devices.map((d) => d.net().aiDriver)).toEqual([false, false]);
+    const stranger = await joinAs('stranger-uuid', 'Sam', code);
+    expect(stranger.net().aiDriver).toBe(false);
+  });
+
+  it('AI seats keep the difficulty the host gave them, into the match', async () => {
+    const { host, code } = await hostRoom();
+    const guest = await joinAs('guest-uuid', 'Gus', code);
+    host.net().hostAddAISeat();
+    await flush();
+    host.net().hostAddAISeat();
+    await flush();
+    host.net().editSeat('ai-1', { aiLevel: 'easy' });
+    host.net().editSeat('ai-2', { aiLevel: 'impossible' }); // not one of tally's levels: ignored
+    guest.net().editSeat('ai-2', { aiLevel: 'easy' }); // guests don't edit AI seats
+    await flush();
+    expect(guest.net().lobby!.seats.map((s) => s.aiLevel)).toEqual([undefined, undefined, 'easy', undefined]);
+    expect(await host.net().hostStartMatch()).toBeNull();
+    await flush();
+    expect(guest.state()!.seats.map((s) => s.aiLevel)).toEqual([undefined, undefined, 'easy', undefined]);
+    // A game without levels drops them.
+    host.net().hostReturnToLobby();
+    await flush();
+    host.net().hostSetGame('duel');
+    await flush();
+    expect(host.net().lobby!.seats.some((s) => s.aiLevel)).toBe(false);
   });
 
   it('play again: a new match with a fresh deal on every device', async () => {

@@ -387,7 +387,7 @@
   letter-spacing: 0.4px;
 }
 .mk-row-cards { display: flex; flex-wrap: wrap; gap: 10px; min-height: 152px; align-items: center; }
-.mk-market.open .mk-row-cards, .mk-market.marketplace .mk-row-cards { gap: 8px; }
+.mk-market.open .mk-row-cards, .mk-market.marketplace .mk-row-cards, .mk-market.hybrid .mk-row-cards { gap: 8px; }
 .mk-slot { position: relative; border-radius: 11px; transition: opacity 0.2s, filter 0.2s; animation: mk-deal-in 0.45s ease-out both; }
 .mk-slot.dim { opacity: 0.45; filter: saturate(0.6); }
 .mk-slot.buyable .mk-card { box-shadow: 0 0 0 2px #f2c230, 0 4px 12px rgba(242, 194, 48, 0.35); }
@@ -701,7 +701,8 @@
   /* Swipe through a row; the next card peeks in at the edge. */
   .mk-row-cards,
   .mk-market.open .mk-row-cards,
-  .mk-market.marketplace .mk-row-cards {
+  .mk-market.marketplace .mk-row-cards,
+  .mk-market.hybrid .mk-row-cards {
     flex-wrap: nowrap;
     overflow-x: auto;
     overscroll-behavior-x: contain;

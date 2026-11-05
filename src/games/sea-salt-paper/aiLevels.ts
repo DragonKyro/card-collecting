@@ -32,7 +32,8 @@
 // upgrade + teach and was then trained with Pepper.
 
 import type { PlayerId } from '@/core/types';
-import type { SspAction, SspAiLevel, SspConfig, SspState } from './types';
+import type { SspAction, SspAiLevel, SspState } from './types';
+import { aiLevelOfSeat } from './levels';
 import type { SlotPolicy } from './nn/agent';
 import { actWithPolicy } from './nn/agent';
 import { greedyPolicy, loadSspPolicy, type SspPolicyFile } from './nn/policy';
@@ -40,22 +41,10 @@ import easyUrl from './policies/easy-update100.json?url';
 import normalUrl from './policies/normal-update1000.json?url';
 import hardUrl from './policies/hard-pepper-update17500.json?url';
 
-export const AI_LEVELS: ReadonlyArray<{ id: SspAiLevel; label: string }> = [
-  { id: 'easy', label: 'Easy' },
-  { id: 'normal', label: 'Normal' },
-  { id: 'hard', label: 'Hard' },
-];
-
-export const DEFAULT_AI_LEVEL: SspAiLevel = 'normal';
-
 const POLICY_URLS: Record<SspAiLevel, string> = { easy: easyUrl, normal: normalUrl, hard: hardUrl };
 
 const policies = new Map<SspAiLevel, SlotPolicy>();
 const loading = new Map<SspAiLevel, Promise<void>>();
-
-export function aiLevelOf(config: SspConfig): SspAiLevel {
-  return config.aiLevel ?? DEFAULT_AI_LEVEL;
-}
 
 /** Fetch and load a level's policy (no-op once loaded; concurrent calls share one fetch). */
 export function prepareAiLevel(level: SspAiLevel): Promise<void> {
@@ -86,7 +75,8 @@ export function chooseLeveledAction(state: SspState, playerId: PlayerId): SspAct
     return state.seats.some((s) => !s.isAI) ? null : { type: 'nextRound' };
   }
   if (state.activePlayerId !== playerId) return null;
-  const level = aiLevelOf(state.config);
+  // Each AI seat plays at its own level.
+  const level = aiLevelOfSeat(state.seats.find((s) => s.id === playerId));
   const policy = policies.get(level);
   if (!policy) {
     // prepare() should have loaded it; start now so a later call can answer.

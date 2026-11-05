@@ -52,9 +52,13 @@ const HAND_NORM = 10;
 const POOL_NORM = 60;
 const DESSERT_COPIES = 15;
 
-/** Decision kinds, the three parts of a pick separately. */
-const DECISIONS = ['pick:first', 'pick:second', 'pick:spoon', 'copy', 'spoon', 'spoonGive', 'menu', 'takeout'] as const;
-const decisionKey = (d: SushiGoDecision) => (d.type === 'pick' ? `pick:${d.stage}` : d.type) as (typeof DECISIONS)[number];
+/** Decision kinds, the parts of a pick and of a spoon separately. Index 2 was
+ *  the spoon call made with the pick before the call moved to the reveal; the
+ *  shipped policies were trained at 2 players, where the spoon is never on the
+ *  menu, so they never saw either spoon entry and the layout stays v1. */
+const DECISIONS = ['pick:first', 'pick:second', 'spoon:use', 'copy', 'spoon:ask', 'spoonGive', 'menu', 'takeout'] as const;
+const decisionKey = (d: SushiGoDecision) =>
+  (d.type === 'pick' || d.type === 'spoon' ? `${d.type}:${d.stage}` : d.type) as (typeof DECISIONS)[number];
 const KIND_INDEX = new Map(ALL_KINDS.map((k, i) => [k, i]));
 
 export interface FeatureSegment {
@@ -109,7 +113,7 @@ class Writer {
 /** A seat in the shape the scoring functions take (hands never matter to scoring). */
 function asPlayer(p: SushiGoObservedPlayer): SushiGoPlayer {
   return {
-    id: p.id, hand: [], table: p.table, dessertPile: p.dessertPile, pendingPick: null, pendingSpoon: false,
+    id: p.id, hand: [], table: p.table, dessertPile: p.dessertPile, pendingPick: null,
     uramakiPoints: p.uramakiPoints, scoreByRound: p.scoreByRound, dessertScore: 0,
   };
 }
@@ -348,7 +352,7 @@ function writeFeatures(obs: SushiGoObservation, w: Writer): void {
   }
   w.scalar('dessertsToCome', Math.max(0, Math.min(coming, DESSERT_COPIES - added)) / DESSERT_COPIES);
   w.scalar('canChopsticks', decision?.type === 'pick' && decision.canChopsticks ? 1 : 0);
-  w.scalar('canSpoon', decision?.type === 'pick' && decision.canSpoon ? 1 : 0);
+  w.scalar('canSpoon', (decision?.type === 'pick' && decision.canSpoon) || (decision?.type === 'spoon' && decision.stage === 'use') ? 1 : 0);
 
   // ---- me ----
   w.faces('me.hand', obs.hand);

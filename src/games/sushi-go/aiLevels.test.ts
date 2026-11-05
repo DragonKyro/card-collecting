@@ -61,7 +61,8 @@ describe('Sushi Go AI difficulty levels', () => {
       installAiPolicy(level, policyFile(name));
       for (const players of [2, 3, 5, 8]) {
         const menu = randomMenu(players, () => rngNext(rng));
-        const start = mod.createInitialState({ menu, rounds: 3, aiLevel: level }, 100 + players, seatsFor(players));
+        const seats = seatsFor(players).map((seat) => ({ ...seat, aiLevel: level }));
+        const start = mod.createInitialState({ menu, rounds: 3 }, 100 + players, seats);
         const end = playOut(start, chooseLeveledAction);
         expect(end.phase, `${level} ${players}p ${menu.join(',')}`).toBe('gameOver');
       }
@@ -81,8 +82,8 @@ describe('Sushi Go AI difficulty levels', () => {
   it('the module fetches the chosen level in prepare(), then answers synchronously', async () => {
     const fetchMock = stubFetch();
     const { sushiGoModule: mod } = await import('./module');
-    const seats = seatsFor(2);
-    const config = { ...mod.defaultConfig(seats), aiLevel: 'hard' as const };
+    const seats = seatsFor(2).map((seat) => ({ ...seat, aiLevel: 'hard' }));
+    const config = mod.defaultConfig(seats);
     const s = mod.createInitialState(config, 5, seats);
     expect(mod.chooseAIAction!(s, s.activePlayerId!)).toBeNull(); // nothing loaded yet
     await mod.prepare!(config, seats);
@@ -102,10 +103,31 @@ describe('Sushi Go AI difficulty levels', () => {
     await expect(mod.prepare!(mod.defaultConfig(seatsFor(2)), seatsFor(2))).rejects.toThrow(/404/);
   });
 
-  it('defaults to normal and rejects an unknown difficulty', async () => {
+  it('each AI seat has its own level (default normal); prepare() loads every level in play', async () => {
+    const fetchMock = stubFetch();
     const { sushiGoModule: mod } = await import('./module');
-    expect(mod.defaultConfig(seatsFor(2)).aiLevel).toBe('normal');
-    const config = { ...mod.defaultConfig(seatsFor(2)), aiLevel: 'insane' as unknown as SushiGoAiLevel };
-    expect(mod.validateConfig(config)).toContain('Unknown AI difficulty.');
+    expect(mod.aiLevels!.map((l) => l.id)).toEqual(['easy', 'normal', 'hard']);
+    expect(mod.defaultAiLevel).toBe('normal');
+    const seats = seatsFor(3).map((seat, i) => (i === 0 ? { ...seat, aiLevel: 'easy' } : i === 1 ? { ...seat, aiLevel: 'hard' } : seat));
+    await mod.prepare!(mod.defaultConfig(seats), seats);
+    const fetched = fetchMock.mock.calls.map((c) => String(c[0]));
+    expect(fetched).toHaveLength(3);
+    for (const name of Object.values(LEVEL_FILES)) expect(fetched.some((u) => u.includes(name))).toBe(true);
+
+    // With only Easy loaded, only the Easy seat can answer.
+    vi.resetModules();
+    const fresh = await import('./aiLevels');
+    fresh.installAiPolicy('easy', policyFile(LEVEL_FILES.easy));
+    const s = mod.createInitialState(mod.defaultConfig(seats), 9, seats);
+    expect(fresh.chooseLeveledAction(s, 'p0')).toMatchObject({ type: 'submitPick' });
+    expect(fresh.chooseLeveledAction(s, 'p1')).toBeNull();
+    expect(fresh.chooseLeveledAction(s, 'p2')).toBeNull();
+  });
+
+  it('rejects an unknown difficulty on a seat', async () => {
+    const { sushiGoModule: mod } = await import('./module');
+    const seats = seatsFor(2).map((seat) => ({ ...seat, aiLevel: 'insane' as unknown as SushiGoAiLevel }));
+    expect(mod.validateConfig(mod.defaultConfig(seats), seats)).toContain('Unknown AI difficulty.');
+    expect(mod.validateConfig(mod.defaultConfig(seats), seatsFor(2))).toEqual([]);
   });
 });

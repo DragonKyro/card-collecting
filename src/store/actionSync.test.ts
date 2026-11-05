@@ -34,7 +34,7 @@ function harness() {
       state = s;
     },
     write: (seq, entry) => new Promise<boolean>((resolve, reject) => writes.push({ seq, entry, resolve, reject })),
-    dropped: (a, why) => dropped.push([tagOf(a), why]),
+    dropped: (a, why, quiet) => dropped.push([tagOf(a), quiet ? `${why} (quiet)` : why]),
   });
   sync.begin();
   return {
@@ -43,10 +43,10 @@ function harness() {
     dropped,
     state: () => state,
     /** This device makes a move (applied at once, as gameStore.dispatch does). */
-    act(tag: string) {
+    act(tag: string, quiet = false) {
       const before = state;
       state = [...state, tag];
-      sync.local(move(tag), before);
+      sync.local(move(tag), before, quiet);
     },
     /** The server log delivers entry `seq` from another device. */
     deliver(seq: number, tag: string) {
@@ -133,6 +133,16 @@ describe('ActionSync', () => {
     expect(h.dropped).toEqual([['claim', 'overtaken']]);
     expect(h.writes.at(-1)!.seq).toBe(1);
     expect(h.writes.at(-1)!.entry.action).toEqual(move('after'));
+  });
+
+  it('a quiet move (an AI move) stays quiet through a replay and when dropped', () => {
+    const h = harness();
+    h.act('ai-claim', true);
+    h.act('ai-next', true);
+    h.deliver(0, 'other');
+    h.deliver(1, 'ai-claim');
+    expect(h.dropped).toEqual([['ai-claim', 'overtaken (quiet)']]);
+    expect(h.state()).toEqual(['other', 'ai-claim', 'ai-next']);
   });
 
   it('rolls back a move the server refuses outright, keeping the ones after it', async () => {

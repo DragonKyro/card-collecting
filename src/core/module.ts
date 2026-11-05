@@ -64,6 +64,14 @@ export interface GameModule<
    *  human turns. Defaults to true. */
   readonly hiddenInfo?: boolean;
 
+  /** Strengths an AI seat can play at, easiest first. With two or more, the
+   *  lobby gives every AI seat its own picker and stores the choice in
+   *  `seat.aiLevel`, which the module's AI reads back off `state.seats`
+   *  (and `prepare` off `seats`). Absent = the AI has one strength. */
+  readonly aiLevels?: ReadonlyArray<{ id: string; label: string }>;
+  /** The level of an AI seat that names none. Defaults to the last listed. */
+  readonly defaultAiLevel?: string;
+
   /** Build the lobby config component's initial value. Pure. */
   defaultConfig(seats: Seat[]): C;
 

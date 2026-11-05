@@ -9,7 +9,7 @@ import type { GameStateShape, GameUiBundle } from '@/core/module';
 import { GAMES, getGameById } from '@/games/registry';
 import { lobbyStartProblem, useNetworkStore } from '@/store/networkStore';
 import { roomLink } from '@/net/roomLink';
-import { ChatInput, ColorSwatchPicker, NameInput, RulesModal } from './lobbyParts';
+import { AiLevelSelect, ChatInput, ColorSwatchPicker, NameInput, RulesModal } from './lobbyParts';
 
 const ONLINE_GAMES = GAMES.filter((g) => g.onlineSupported !== false);
 
@@ -140,6 +140,12 @@ export function OnlineLobby() {
                   {mine && <span className="online-tag">you</span>}
                   {s.id === lobby.hostUuid && <span className="online-tag">host</span>}
                   {s.isAI && <span className="online-tag">AI</span>}
+                  <AiLevelSelect
+                    module={module}
+                    seat={s}
+                    disabled={!isHost}
+                    onChange={(aiLevel) => net().editSeat(s.id, { aiLevel })}
+                  />
                   {offline && <span className="online-tag offline">offline</span>}
                 </span>
                 {isHost && s.id !== lobby.hostUuid && (

@@ -416,118 +416,6 @@
   text-decoration: line-through;
 }
 
-/* Match stats — same cream surface as the round summary so the recharts
- * dark-ink labels/grid render readable against a light background. */
-.ssp .ssp-stats {
-  background: var(--paper-cream);
-  color: var(--paper-ink);
-  padding: 18px 22px;
-  border-radius: 12px;
-  max-width: 720px;
-  margin: 18px auto 0;
-}
-.ssp .ssp-stats h2 { margin: 0 0 12px; color: var(--paper-ink); }
-.ssp .ssp-stats h3 {
-  margin: 18px 0 8px;
-  font-size: 14px;
-  color: var(--paper-ink);
-  border-bottom: 1px solid var(--paper-deep);
-  padding-bottom: 4px;
-}
-.ssp .ssp-stats table {
-  width: 100%;
-  border-collapse: collapse;
-  margin: 6px 0 8px;
-  font-size: 13px;
-  color: var(--paper-ink);
-}
-.ssp .ssp-stats th,
-.ssp .ssp-stats td {
-  padding: 5px 8px;
-  border-bottom: 1px solid var(--paper-deep);
-  text-align: left;
-}
-.ssp .ssp-stats td.num,
-.ssp .ssp-stats th.num { text-align: right; }
-/* Make sure recharts tooltips + legend text inherit dark ink. */
-/* Tabbed pagination of post-match charts. One chart per tab; horizontally
-   scrolling tab bar keeps the layout single-row on narrow widths. */
-.ssp .ssp-stats-tabs {
-  display: flex;
-  gap: 4px;
-  overflow-x: auto;
-  border-bottom: 1px solid var(--paper-deep);
-  margin-bottom: 12px;
-  padding-bottom: 0;
-}
-.ssp .ssp-stats-tabs button {
-  background: transparent;
-  border: none;
-  padding: 8px 12px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--paper-ink);
-  opacity: 0.6;
-  cursor: pointer;
-  border-bottom: 3px solid transparent;
-  margin-bottom: -1px;
-  white-space: nowrap;
-}
-.ssp .ssp-stats-tabs button:hover { opacity: 0.85; }
-.ssp .ssp-stats-tabs button.active {
-  opacity: 1;
-  border-bottom-color: var(--paper-ink);
-}
-.ssp .ssp-stats-panel { min-height: 360px; }
-
-/* SVG chart + right-side legend. */
-.ssp .ssp-svg-chart {
-  /* the layout is set inline (display:flex, gap) — this hook is for future
-     theming and to scope the legend rules below. */
-}
-.ssp .ssp-svg-legend {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 12px;
-  color: var(--paper-ink);
-  padding: 4px 4px 4px 8px;
-  min-width: 140px;
-  max-width: 200px;
-}
-.ssp .ssp-svg-legend-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: transparent;
-  border: none;
-  padding: 2px 0;
-  cursor: pointer;
-  text-align: left;
-  color: inherit;
-  font-size: 12px;
-}
-.ssp .ssp-svg-legend-row .swatch {
-  display: inline-block;
-  width: 12px; height: 12px;
-  border-radius: 2px;
-  flex-shrink: 0;
-}
-.ssp .ssp-svg-legend-row .lbl {
-  flex: 1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.ssp .ssp-svg-legend-row .num {
-  opacity: 0.7;
-  font-variant-numeric: tabular-nums;
-}
-
-.ssp .ssp-stats .recharts-default-tooltip { color: var(--paper-ink) !important; }
-.ssp .ssp-stats .recharts-legend-item-text { color: var(--paper-ink) !important; }
-.ssp .ssp-stats .recharts-cartesian-axis-tick-value { fill: var(--paper-ink); }
-
 .ssp .gameover-banner {
   background: var(--yellow);
   color: var(--paper-ink);
@@ -1162,20 +1050,6 @@
 
   .ssp .ssp-winner-banner { padding: 16px 12px; }
   .ssp .ssp-winner-name { font-size: 26px; }
-
-  .ssp .ssp-stats { padding: 12px; margin-top: 12px; }
-  .ssp .ssp-stats-tabs button { padding: 8px 10px; }
-  .ssp .ssp-stats-panel { min-height: 0; }
-  /* Legend under the chart, as wrapping chips, so the plot keeps the width. */
-  .ssp .ssp-svg-chart { flex-direction: column; }
-  .ssp .ssp-svg-legend {
-    flex-direction: row;
-    flex-wrap: wrap;
-    gap: 2px 12px;
-    min-width: 0;
-    max-width: none;
-    padding: 0;
-  }
 
   .ssp-sidebar { max-height: min(80vh, 420px); }
 }

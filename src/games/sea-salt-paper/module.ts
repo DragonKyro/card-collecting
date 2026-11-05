@@ -7,10 +7,9 @@ import { applyAction } from './reducer';
 import { defaultTargetScore } from './cards';
 import { createSspState } from './setup';
 import { SeaSaltPaperThumbnail } from './Thumbnail';
+import { AI_LEVELS, DEFAULT_AI_LEVEL, aiLevelsOf, isAiLevel } from './levels';
 
 export { attachSeatsAndStart } from './setup';
-
-const AI_LEVEL_IDS = ['easy', 'normal', 'hard'];
 
 // The trained AI (encoder + network runtime) is loaded on demand by prepare(),
 // keeping it out of the game-picker bundle.
@@ -23,19 +22,21 @@ export const seaSaltPaperModule: GameModule<SspState, SspAction, SspConfig> = {
   tagline: 'Draw, pair, and decide when to call STOP.',
   minPlayers: 2,
   maxPlayers: 4,
+  // Each AI seat picks its own (seat.aiLevel).
+  aiLevels: AI_LEVELS,
+  defaultAiLevel: DEFAULT_AI_LEVEL,
 
   defaultConfig(seats: Seat[]): SspConfig {
     return {
       targetScore: defaultTargetScore(seats.length || 2),
       expansions: { extraSalt: false, extraPepper: false },
-      aiLevel: 'normal',
     };
   },
 
-  validateConfig(config) {
+  validateConfig(config, seats) {
     const errors: string[] = [];
     if (!(config.targetScore >= 20 && config.targetScore <= 100)) errors.push('Target score must be 20–100.');
-    if (config.aiLevel !== undefined && !AI_LEVEL_IDS.includes(config.aiLevel)) errors.push('Unknown AI difficulty.');
+    if (seats?.some((s) => s.isAI && s.aiLevel !== undefined && !isAiLevel(s.aiLevel))) errors.push('Unknown AI difficulty.');
     return errors;
   },
 
@@ -51,10 +52,11 @@ export const seaSaltPaperModule: GameModule<SspState, SspAction, SspConfig> = {
     return aiLevels ? aiLevels.chooseLeveledAction(state, playerId) : null;
   },
 
-  async prepare(config, seats) {
+  async prepare(_config, seats) {
     if (!seats.some((s) => s.isAI)) return;
     aiLevels ??= await import('./aiLevels');
-    await aiLevels.prepareAiLevel(aiLevels.aiLevelOf(config));
+    const { prepareAiLevel } = aiLevels;
+    await Promise.all(aiLevelsOf(seats).map((level) => prepareAiLevel(level)));
   },
 
   Thumbnail: SeaSaltPaperThumbnail,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { applyAction, buildBlocker, priceOf } from './reducer';
-import { EXPANSIONS, MARKETPLACE_SIZE, estDef, isLandmark, rulesFor } from './cards';
+import { EXPANSIONS, MAJOR_ROW_SIZE, MARKETPLACE_SIZE, MARKET_ROW_SIZE, estDef, isLandmark, rulesFor } from './cards';
 import { machiKoroModule } from './module';
 import type { MkExpansion, MkState } from './types';
 import { act, newMatch, player, rigDice, roll, seats, setPlayer, startTurnFor } from './testSupport';
@@ -41,6 +41,40 @@ describe('MK1 expansion setup', () => {
       expect(all.filter((id) => id === d.id)).toHaveLength(d.color === 'purple' ? 3 : d.copies);
     }
     expect(s.market.low.slots).toEqual([]);
+  });
+
+  it('the 5-5-2 market deals 1–6, 7+ and majors from their own decks, one purple per player', () => {
+    for (const expansions of [[], ['harbor'], both] as MkExpansion[][]) {
+      const s = newMatch('mk1', 3, { expansions, supply: 'hybrid', keepSetup: true });
+      const R = rulesFor(s.config);
+      expect(R.market).toBe('hybrid');
+      for (const [row, size] of [['low', MARKET_ROW_SIZE], ['high', MARKET_ROW_SIZE], ['major', MAJOR_ROW_SIZE]] as const) {
+        const ids = s.market[row].slots.map((x) => x.cardId);
+        expect(ids).toHaveLength(size);
+        expect(new Set(ids).size).toBe(size);
+        for (const id of [...ids, ...s.market[row].deck]) {
+          const d = estDef('mk1', id);
+          expect(row === 'major' ? d.color === 'purple' : d.color !== 'purple' && (d.activation[0] <= 6) === (row === 'low')).toBe(true);
+        }
+      }
+      const all = (['low', 'high', 'major'] as const).flatMap((row) =>
+        [...s.market[row].deck, ...s.market[row].slots.flatMap((x) => Array<string>(x.count).fill(x.cardId))]);
+      for (const d of R.establishments) {
+        expect(all.filter((id) => id === d.id)).toHaveLength(d.color === 'purple' ? 3 : d.copies);
+      }
+      expect(s.market.mixed.slots).toEqual([]);
+    }
+  });
+
+  it('a sold-out 5-5-2 major is replaced from the major deck, in place', () => {
+    const s = newMatch('mk1', 2, { first: 0, supply: 'hybrid' });
+    s.subPhase = 'build';
+    s.market.major.slots = [{ cardId: 'stadium', count: 1 }, { cardId: 'tvStation', count: 1 }];
+    s.market.major.deck = ['tvStation', 'businessCenter'];
+    setPlayer(s, 0, { coins: 30 });
+    const next = act(s, { type: 'build', cardId: 'stadium' });
+    expect(next.market.major.slots).toEqual([{ cardId: 'businessCenter', count: 1 }, { cardId: 'tvStation', count: 2 }]);
+    expect(next.market.major.deck).toEqual([]);
   });
 
   it('a sold-out marketplace pile is refilled in place up to ten', () => {

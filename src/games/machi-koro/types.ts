@@ -25,8 +25,10 @@
 //         (Winery, Renovation Company), demolishing landmarks, a Loan Office
 //         that pays you to build it, a Tech Startup you invest in, and the
 //         International Exhibit Hall.
-//     The supply is either every pile face-up (base rules) or Harbor's
-//     marketplace: one shuffled deck, dealt until ten different piles show.
+//     The supply is every pile face-up (base rules), Harbor's marketplace (one
+//     shuffled deck, dealt until ten different piles show) or the 5-5-2 market
+//     ("hybrid supply": decks of 1–6 establishments, 7+ establishments and
+//     majors, dealt until 5 / 5 / 2 different piles show).
 //
 // Turn (both editions): roll 1 or 2 dice → [MK1 Radio Tower reroll] →
 // [Harbor +2] → resolve every establishment whose number came up, in colour
@@ -48,9 +50,11 @@ export type MkEdition = 'mk2' | 'mk1';
 /** MK1 expansions. */
 export type MkExpansion = 'harbor' | 'millionairesRow';
 
-/** MK1 supply: every pile face-up (base rules), or Harbor's marketplace — one
- *  shuffled deck dealt until ten different piles show. */
-export type MkSupply = 'open' | 'marketplace';
+/** MK1 supply: every pile face-up (base rules), Harbor's marketplace — one
+ *  shuffled deck dealt until ten different piles show — or the 5-5-2 market
+ *  ('hybrid': three decks — establishments activating on 6 or less, on 7 or
+ *  more, majors — dealt until 5 / 5 / 2 different piles show). */
+export type MkSupply = 'open' | 'marketplace' | 'hybrid';
 
 export interface MkConfig {
   edition: MkEdition;
@@ -232,8 +236,9 @@ export interface MkMarketSlot {
 }
 
 /** MK2: 'low' / 'high' / 'landmark'. MK1 open supply: 'low' / 'high'. MK1
- *  marketplace: 'mixed' (every establishment in one deck). */
-export type MkRowId = 'low' | 'high' | 'landmark' | 'mixed';
+ *  marketplace: 'mixed' (every establishment in one deck). MK1 5-5-2:
+ *  'low' / 'high' (no purples) / 'major'. */
+export type MkRowId = 'low' | 'high' | 'landmark' | 'mixed' | 'major';
 
 export interface MkMarketRow {
   /** Face-down deck; next card at index 0. Empty in MK1's open supply. */

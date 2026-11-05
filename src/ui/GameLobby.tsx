@@ -11,7 +11,7 @@ import { SEAT_COLORS } from '@/core/seatColors';
 import { useGameStore } from '@/store/gameStore';
 import { useNetworkStore, warmUpNetwork } from '@/store/networkStore';
 import { getOrCreateUuid } from '@/net/identity';
-import { ColorSwatchPicker, RulesModal } from './lobbyParts';
+import { AiLevelSelect, ColorSwatchPicker, RulesModal } from './lobbyParts';
 
 interface Props {
   module: AnyGameModule;
@@ -135,6 +135,7 @@ export function GameLobby({ module, initial, onBack, onStart }: Props) {
                 />
                 AI
               </label>
+              <AiLevelSelect module={module} seat={s} onChange={(aiLevel) => updateSeat(s.id, { aiLevel })} />
               <button
                 className="secondary"
                 onClick={() => removeSeat(s.id)}

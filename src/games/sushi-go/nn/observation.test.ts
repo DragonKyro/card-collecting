@@ -125,7 +125,7 @@ describe('observe() hides what a real player cannot see', () => {
     const obs = observe(state, state.players[0].id) as unknown as Record<string, unknown>;
     for (const key of ['deck', 'rngState', 'log', 'dessertSupply', 'resolution', 'seats']) expect(obs).not.toHaveProperty(key);
     for (const p of obs.players as Array<Record<string, unknown>>) {
-      for (const key of ['hand', 'pendingPick', 'pendingSpoon']) expect(p).not.toHaveProperty(key);
+      for (const key of ['hand', 'pendingPick']) expect(p).not.toHaveProperty(key);
     }
   });
 

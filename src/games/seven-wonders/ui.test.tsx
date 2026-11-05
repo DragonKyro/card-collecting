@@ -150,12 +150,20 @@ describe('7 wonders game view', () => {
 
   it('hides a locked-in hand when two humans share the table, and says what the others did', () => {
     const m = sevenWondersModule;
-    const two = SEATS.map((x, i) => (i === 2 ? { ...x, isAI: false } : x));
+    const two = SEATS.map((x, i) => (i === 2 ? { ...x, isAI: false, isLocal: true } : x));
     let s = m.createInitialState(m.defaultConfig(two), 7, two);
     s = m.applyAction(s, { type: 'submitPick', playerId: 'me', pick: { kind: 'discard', cardId: s.players[0].hand[0].id } });
     const t = setup(s);
     expect(t.q('.sw-hand .sw-cardface')).toHaveLength(0);
     expect(t.view.container.textContent).toMatch(/hand is hidden/);
+    cleanup();
+
+    // Online (each human on their own device) your locked-in hand stays in view.
+    const online = two.map((x) => ({ ...x, isLocal: false }));
+    let o = m.createInitialState(m.defaultConfig(online), 7, online);
+    o = m.applyAction(o, { type: 'submitPick', playerId: 'me', pick: { kind: 'discard', cardId: o.players[0].hand[0].id } });
+    const v = setup(o);
+    expect(v.q('.sw-hand .sw-cardface').length).toBeGreaterThan(0);
     cleanup();
 
     s = discardAll(s);

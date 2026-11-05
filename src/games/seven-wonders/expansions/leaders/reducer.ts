@@ -12,6 +12,7 @@
 //      pick a card from the discard pile.
 
 import type { PlayerId } from '@/core/types';
+import { nextSimultaneousSeat } from '@/core/seats';
 import { shuffle } from '@/core/rng';
 import type {
   SwAction, SwCard, SwLeaderPlayPick, SwPlayer, SwResource, SwState,
@@ -330,29 +331,18 @@ function handleSolomonPick(state: SwState, playerId: PlayerId, cardId: number): 
 
 // ----- AI / next-picker -----
 
+/** Who the leader subphases wait on next. Draft and play are simultaneous:
+ *  AIs first, or the humans first when several share this device, so hot-seat
+ *  hands the device to every human (nextSimultaneousSeat). Solomon's pick
+ *  waits on its picker, human or AI. */
 export function nextAIPicker(state: SwState): PlayerId | null {
   if (state.subPhase === 'leaderDraft') {
-    for (const p of state.players) {
-      if (p.leaderDraftPick !== null) continue;
-      const seat = state.seats.find((s) => s.id === p.id);
-      if (seat?.isAI) return p.id;
-    }
-    return null;
+    return nextSimultaneousSeat(state.seats, state.players.filter((p) => p.leaderDraftPick === null).map((p) => p.id));
   }
   if (state.subPhase === 'leaderPlay') {
-    for (const p of state.players) {
-      if (p.leaderPlayPick !== null) continue;
-      const seat = state.seats.find((s) => s.id === p.id);
-      if (seat?.isAI) return p.id;
-    }
-    return null;
+    return nextSimultaneousSeat(state.seats, state.players.filter((p) => p.leaderPlayPick === null).map((p) => p.id));
   }
-  if (state.subPhase === 'solomonAwaitPick') {
-    const id = state.solomonPickerId;
-    if (!id) return null;
-    const seat = state.seats.find((s) => s.id === id);
-    return seat?.isAI ? id : null;
-  }
+  if (state.subPhase === 'solomonAwaitPick') return state.solomonPickerId ?? null;
   return null;
 }
 

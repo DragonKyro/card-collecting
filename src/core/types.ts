@@ -8,7 +8,9 @@ export type Seat = {
   name: string;
   color: string;         // hex
   isAI: boolean;
-  isLocal: boolean;      // device-bound human seat (for hot-seat reveal gating)
+  isLocal: boolean;      // a seat on this device's hot-seat table (online seats are never local)
+  /** AI seats: one of the module's `aiLevels` ids (absent = the module's default level). */
+  aiLevel?: string;
 };
 
 export type GamePhase = 'lobby' | 'playing' | 'gameOver';

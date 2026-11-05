@@ -96,7 +96,7 @@ function Cheatsheet({ state }: { state: SushiGoState }) {
       <h4>Round flow</h4>
       <div className="sgp-cheat-row">
         <div className="name">Pick</div>
-        <div className="desc">All players choose 1 card from their hand simultaneously. Chopsticks/spoon let you pick 2.</div>
+        <div className="desc">All players choose 1 card from their hand simultaneously (2 with chopsticks). Spoons are used after the reveal.</div>
       </div>
       <div className="sgp-cheat-row">
         <div className="name">Pass</div>

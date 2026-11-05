@@ -1,6 +1,7 @@
 // 7 Wonders UI — LobbyConfig + GameView.
 
 import { Suspense, useEffect, useMemo, useState } from 'react';
+import { sharedDeviceHumans } from '@/core/seats';
 import type { GameUiBundle } from '@/core/module';
 import type { PlayerId, Seat } from '@/core/types';
 import type {
@@ -615,9 +616,9 @@ function HandPanel({
   const statuses = useMemo(() => new Map(me.hand.map((c) => [c.id, cardStatus(state, me, c)])), [state, me]);
 
   // Players sharing a device: once your pick is locked in, your hand stays
-  // hidden — whoever looks at the screen next may not be you.
-  const humans = state.seats.filter((s) => !s.isAI).length;
-  const hideHand = submitted && humans >= 2;
+  // hidden — whoever looks at the screen next may not be you. (Online, each
+  // device is one player's.)
+  const hideHand = submitted && sharedDeviceHumans(state.seats) >= 2;
 
   if (me.hand.length === 0 && !pending) {
     const babylon = state.players.filter((p) => p.hand.length > 0).map((p) => seatName(state, p.id));

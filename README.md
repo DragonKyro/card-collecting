@@ -64,7 +64,7 @@ Each game lives in its own folder behind the `GameModule<S, A, C>` contract from
 2. **Join** from the game picker with your name and the code. You take a free seat (or watch, if the table is full). Everyone sets their own seat's name and color; the host picks the game and options (guests see them read-only), adds / removes AI seats, and starts.
 3. **Start**: everyone's device builds the same opening and plays through the shared action log.
 4. **Play again** starts a fresh match for the whole room; **Lobby** takes everyone back to change the game, options or seats (Sushi Go always goes back to the lobby so the menu can change).
-5. **AI in online**: only the host's device runs the AI seats (a host that reloads picks them up again). If the host is gone, AI seats wait for them.
+5. **AI in online**: the host's device runs the AI seats. If the host drops, the next connected seated player's device takes them over (it loads the AI first), and hands them back when the host returns, so the match goes on. Starting the next match still needs the host.
 
 ## Commands
 
@@ -97,9 +97,9 @@ npx firebase-tools deploy --only database                            # deploy da
 - [x] Lobby chat and in-game chat (kept in the room, so rejoiners see it)
 - [x] Host-only AI driver, so AI seats play in online matches too
 - [x] A rules book for every game (the in-game Rules button)
-- [ ] Hot-seat with two or more human seats in Sushi Go, and in the 7 Wonders Leaders draft / leader play: only AI seats are handed the turn, so the second human never gets the device and the match stalls (fixed for base 7 Wonders)
-- [ ] Host hand-off: if the online host disconnects, AI seats wait until the host's device rejoins
-- [ ] Per-seat AI difficulty (today one level covers every AI seat; needs a game-agnostic seat field)
+- [x] Hot-seat with two or more humans: every simultaneous pick (Sushi Go, 7 Wonders, the Leaders draft and leader play) hands the device to each human, then the AIs; while an AI plays, the screen stays with whoever holds the device
+- [x] Host hand-off: if the online host drops, a seated player's device runs the AI seats until the host is back
+- [x] Per-seat AI difficulty: every AI seat picks its own level (Sushi Go, Sea Salt & Paper, Jaipur)
 
 ### Sushi Go! Party
 
@@ -109,7 +109,8 @@ npx firebase-tools deploy --only database                            # deploy da
 - [x] Hand-drawn card art
 - [x] Hot-seat and online
 - [x] Trained AI: easy / normal / hard (PPO, trained at 2 players, plays 2–8)
-- [ ] Rulebook timing: chopsticks' second card and the spoon call are chosen with the pick (the rulebook calls them during the reveal); a special order picks its copy after the reveal
+- [x] Post-game match stats: score by round, points per card, cards taken, turn-by-turn pick timeline
+- [x] Timing: chopsticks' second card is chosen with the face-down pick; spoons are used (or kept) and special orders copy at the reveal
 - [ ] Multi-human hot-seat (see Platform)
 
 ### Sea Salt & Paper
@@ -120,10 +121,6 @@ npx firebase-tools deploy --only database                            # deploy da
 - [x] Expansion: Extra Salt (jellyfish, lobster, starfish trio, seahorse, crab basket)
 - [x] Expansion: Extra Pepper (all 12 events, per the official rule sheet)
 - [x] Trained AI: easy / normal / hard (Hard also trained on 3–4 players and with Extra Pepper)
-- [ ] Easy and Normal trained at 3–4 players and with Extra Pepper (only Hard is today)
-- [ ] Check LAST CHANCE scoring against the rulebook (the AI's whole edge is LAST CHANCE bets)
-- [ ] Smaller policy files (fp16 / int8; each is ~1.7 MB)
-- [ ] A stronger policy: training plateaus, so try capacity (`--hidden 512 --layers 3`) or `--anneal-lr`
 
 ### 7 Wonders
 
@@ -184,9 +181,10 @@ npx firebase-tools deploy --only database                            # deploy da
 - [x] Hot-seat and online
 - [x] Expansion: Harbor (original edition): City Hall, Harbor, Airport, 10 establishments, a 5th player, the 10-pile marketplace
 - [x] Expansion: Millionaire's Row (original edition): 14 establishments incl. renovation, demolition, Tech Startup, Exhibit Hall
-- [ ] Deluxe / 5th-anniversary 5-5-2 market (a third supply option)
-- [ ] Check rulings against the printed rulebooks: Tuna Boat rolled once for all boats, Renovation Company paid per copy, Vineyard's wheat symbol, one purple per player in the supply
-- [ ] AI: commit to a two-dice economy (it favours cheap 1–6 cards until they sell out)
+- [x] 5-5-2 market (the "hybrid supply": 1–6 / 7+ / majors, a third supply option)
+- [x] Rulings checked against the wiki's card pages: Renovation Company paid per copy, Vineyard's wheat symbol, one purple per player in the supply; Sushi Bar now costs 4 (the non-Japanese printing)
+- [ ] Rulings still unverified: Tuna Boat rolled once for all boats
+- [ ] AI: commit to a two-dice economy (it favours cheap 1–6 cards; committing to two dice only paid off against one-die bots — see CLAUDE.md)
 
 ### Jaipur
 
@@ -194,7 +192,7 @@ npx firebase-tools deploy --only database                            # deploy da
 - [x] Hand-drawn cards and tokens; card and token flights
 - [x] Hot-seat and online
 - [x] Trained AI: easy / normal / hard (PPO self-play, plays only from what its seat may know)
-- [ ] A stronger policy past the plateau (capacity `--hidden 512 --layers 3` or `--anneal-lr`)
+- [x] Post-game match stats: each round's race (rupees / camels / hand by move), round scores by source, goods, sale sizes, move mix
 - [ ] An `analyze` tool like `sgp:analyze`
 
 ### More games

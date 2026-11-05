@@ -74,7 +74,7 @@ function LobbyConfig({ config, seats, onChange }: { config: MkConfig; seats: Sea
           ))}
           <h4 className="mk-lobby-h">Supply</h4>
           <div className="mk-supply-pick" role="radiogroup" aria-label="Supply">
-            {([['open', 'Every pile out'], ['marketplace', '10-pile marketplace']] as const).map(([id, label]) => (
+            {([['open', 'Every pile out'], ['marketplace', '10-pile marketplace'], ['hybrid', '5-5-2 market']] as const).map(([id, label]) => (
               <label key={id} className="mk-lobby-check">
                 <input type="radio" name="mk-supply" checked={supply === id} onChange={() => onChange({ ...config, supply: id })} />
                 {label}
@@ -549,7 +549,7 @@ function DiceTray({ roll, added, current, nameOf }: {
 
 // ---------- Market ----------
 
-const ROW_LABEL: Record<MkRowId, string> = { low: '1–6', high: '7+', landmark: 'Landmarks', mixed: '10 piles' };
+const ROW_LABEL: Record<MkRowId, string> = { low: '1–6', high: '7+', landmark: 'Landmarks', mixed: '10 piles', major: 'Major' };
 
 function Market({ state, me, building, selected, canBuy, onPick, dice }: {
   state: MkState; me: MkPlayer | null; building: boolean; selected: string | null;
@@ -559,7 +559,8 @@ function Market({ state, me, building, selected, canBuy, onPick, dice }: {
   const R = rulesOf(state);
   const ed = state.config.edition;
   const rows: MkRowId[] = R.market === 'marketplace' ? ['mixed']
-    : R.landmarks === 'market' ? ['low', 'high', 'landmark'] : ['low', 'high'];
+    : R.market === 'hybrid' ? ['low', 'high', 'major']
+      : R.landmarks === 'market' ? ['low', 'high', 'landmark'] : ['low', 'high'];
   return (
     <section className={`mk-market ${R.market}`}>
       <div className="mk-market-head">
