@@ -196,3 +196,6 @@ npx firebase-tools deploy --only database                            # deploy da
 - [ ] Additional games as desired
 
 Game-specific design notes live in each game's `types.ts` and in [CLAUDE.md](CLAUDE.md).
+
+
+
