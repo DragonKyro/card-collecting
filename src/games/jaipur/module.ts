@@ -65,6 +65,16 @@ export const jaipurModule: GameModule<JaipurState, JaipurAction, JaipurConfig> =
     await Promise.all(aiLevelsOf(seats).map((level) => prepareAiLevel(level)));
   },
 
+  // The shell's look around this game (lobby banner, game bar, page).
+  theme: {
+    accent: '#f3cf63',
+    accentInk: '#3a1020',
+    titleFont: 'var(--font-ornate)',
+    // Dusk over the pink city: a warm sky glow, two lantern pools low at the
+    // sides, a faint lattice over deep rose.
+    backdrop: `radial-gradient(900px 520px at 50% -12%, rgba(255, 170, 110, 0.34), transparent 66%), radial-gradient(520px 420px at -4% 104%, rgba(255, 150, 60, 0.14), transparent 70%), radial-gradient(520px 420px at 104% 104%, rgba(255, 150, 60, 0.14), transparent 70%), url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='44' height='44' viewBox='0 0 44 44'><g fill='none' stroke='%23ffc7a8' stroke-opacity='0.06' stroke-width='1.4'><path d='M22 2 L42 22 L22 42 L2 22 Z'/><circle cx='22' cy='22' r='7'/></g></svg>"), linear-gradient(180deg, #4a1430 0%, #33091f 60%, #220614 100%)`,
+  },
+
   Thumbnail: JaipurThumbnail,
 
   ui: async () => {

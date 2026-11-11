@@ -70,7 +70,8 @@ function LeaderDraftPanel({ state, localPlayerId, dispatch }: SwOverlayProps) {
       {me && hideHand ? (
         <p className="sw-empty">Your pick is locked in; your draft hand is hidden while the others pick.</p>
       ) : me ? (
-        <div className="sw-hand">
+        // Draft hands pass right (east), so after the first round they come in from the west.
+        <div className={`sw-hand ${(state.leaderDraftRound ?? 1) > 1 ? 'sw-from-west' : 'sw-from-deck'}`}>
           {hand.map((c) => (
             <LeaderCard
               key={c.id} card={c}

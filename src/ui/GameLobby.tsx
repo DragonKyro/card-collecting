@@ -3,7 +3,7 @@
 // seats over (the online lobby itself is OnlineLobby, routed by App while
 // this device is in a room).
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import type { AnyGameModule, GameStateShape, GameUiBundle } from '@/core/module';
 import type { Seat } from '@/core/types';
 import { randomSeed } from '@/core/rng';
@@ -12,6 +12,8 @@ import { useGameStore } from '@/store/gameStore';
 import { useNetworkStore, warmUpNetwork } from '@/store/networkStore';
 import { getOrCreateUuid } from '@/net/identity';
 import { AiLevelSelect, ColorSwatchPicker, RulesModal } from './lobbyParts';
+import { LobbyBanner } from './LobbyBanner';
+import { playerRange } from './gameTheme';
 
 interface Props {
   module: AnyGameModule;
@@ -22,16 +24,32 @@ interface Props {
   onStart(): void;
 }
 
+/** "You vs 2 AIs", "3 players, pass and play", … (AI seats count only in a
+ *  game that has an AI; one without drops them at the start). */
+function lineupSummary(seats: Seat[], hasAI: boolean): string {
+  if (!hasAI) seats = seats.filter((s) => !s.isAI);
+  const humans = seats.filter((s) => !s.isAI).length;
+  const ais = seats.length - humans;
+  if (humans === 0) return `${ais} AIs play it out — sit back and watch`;
+  if (ais === 0) return humans === 1 ? 'Solo' : `${humans} players, pass and play on this device`;
+  const vs = `${ais} AI${ais === 1 ? '' : 's'}`;
+  return humans === 1 ? `You vs ${vs}` : `${humans} players + ${vs}, pass and play`;
+}
+
 export function GameLobby({ module, initial, onBack, onStart }: Props) {
   const localUuid = useMemo(() => getOrCreateUuid(), []);
   const savedName = useNetworkStore((s) => s.myDisplayName);
+  const hasAI = !!module.chooseAIAction;
 
   // Seat 0 defaults to the human local player; seats added beyond default to
-  // AI. Returning from a match re-seeds from that match's lineup instead.
-  const [seats, setSeats] = useState<Seat[]>(() => initial?.seats ?? [
-    { id: localUuid, name: 'You', color: SEAT_COLORS[0]!, isAI: false, isLocal: true },
-    { id: 'seat-1', name: 'Player 2', color: SEAT_COLORS[1]!, isAI: true, isLocal: true },
-  ]);
+  // AI (to humans in a game with no AI, which seats just "You" when it can be
+  // played alone). Returning from a match re-seeds from that match's lineup.
+  const [seats, setSeats] = useState<Seat[]>(() => {
+    if (initial?.seats) return initial.seats;
+    const you: Seat = { id: localUuid, name: 'You', color: SEAT_COLORS[0]!, isAI: false, isLocal: true };
+    if (!hasAI && module.minPlayers <= 1) return [you];
+    return [you, { id: 'seat-1', name: 'Player 2', color: SEAT_COLORS[1]!, isAI: hasAI, isLocal: true }];
+  });
   const [config, setConfig] = useState<unknown>(() =>
     initial ? initial.config : module.defaultConfig(seats));
   const [bundle, setBundle] = useState<GameUiBundle<GameStateShape, unknown, unknown> | null>(null);
@@ -56,7 +74,7 @@ export function GameLobby({ module, initial, onBack, onStart }: Props) {
       id: `seat-${seats.length}-${Math.floor(performance.now())}`,
       name: `Player ${seats.length + 1}`,
       color: SEAT_COLORS[seats.length % SEAT_COLORS.length]!,
-      isAI: true,
+      isAI: hasAI,
       isLocal: true,
     };
     setSeats([...seats, newSeat]);
@@ -102,21 +120,23 @@ export function GameLobby({ module, initial, onBack, onStart }: Props) {
 
   return (
     <div className="lobby-single">
-      <div className="lobby-topbar">
+      <div className="lobby-topbar cc-chrome">
         <button className="secondary" onClick={onBack}>← Back</button>
         {RulesComponent && (
           <button className="secondary" onClick={() => setShowRules(true)}>📖 Rules</button>
         )}
       </div>
 
-      <section className="lobby-panel">
-        <h3>{module.name}</h3>
+      <LobbyBanner module={module} />
 
-        {/* ----- seats ----- */}
-        <h4 className="lobby-section-h">Seats</h4>
+      {/* ----- seats ----- */}
+      <section className="lobby-panel cc-chrome">
+        <h4 className="lobby-section-h">
+          Seats <span className="lobby-section-count">{seats.length} of {playerRange(module)}</span>
+        </h4>
         <div className="seat-list">
-          {seats.map((s) => (
-            <div key={s.id} className="seat-row">
+          {seats.map((s, i) => (
+            <div key={s.id} className="seat-row" style={{ '--seat': s.color, animationDelay: `${i * 40}ms` } as CSSProperties}>
               <ColorSwatchPicker
                 value={s.color}
                 takenBy={Object.fromEntries(seats.filter((x) => x.id !== s.id).map((x) => [x.color, x.name]))}
@@ -127,19 +147,22 @@ export function GameLobby({ module, initial, onBack, onStart }: Props) {
                 value={s.name}
                 onChange={(e) => updateSeat(s.id, { name: e.target.value })}
               />
-              <label style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                <input
-                  type="checkbox"
-                  checked={s.isAI}
-                  onChange={(e) => updateSeat(s.id, { isAI: e.target.checked })}
-                />
-                AI
-              </label>
+              {hasAI && (
+                <label className="seat-ai" title={s.isAI ? 'Played by the computer' : 'Played by a person'}>
+                  <input
+                    type="checkbox"
+                    checked={s.isAI}
+                    onChange={(e) => updateSeat(s.id, { isAI: e.target.checked })}
+                  />
+                  AI
+                </label>
+              )}
               <AiLevelSelect module={module} seat={s} onChange={(aiLevel) => updateSeat(s.id, { aiLevel })} />
               <button
-                className="secondary"
+                className="secondary seat-remove"
                 onClick={() => removeSeat(s.id)}
                 disabled={seats.length <= module.minPlayers}
+                title="Remove seat"
               >×</button>
             </div>
           ))}
@@ -148,24 +171,27 @@ export function GameLobby({ module, initial, onBack, onStart }: Props) {
           className="secondary"
           onClick={addSeat}
           disabled={seats.length >= module.maxPlayers}
-          style={{ marginTop: 8 }}
+          style={{ marginTop: 10 }}
         >
           + Add seat
         </button>
+      </section>
 
-        {/* ----- game-specific options ----- */}
-        {LobbyConfigComponent && (
-          <>
-            <h4 className="lobby-section-h">Options</h4>
-            <LobbyConfigComponent config={config} seats={seats} onChange={setConfig} />
-          </>
-        )}
+      {/* ----- game-specific options ----- */}
+      {LobbyConfigComponent && (
+        <section className="lobby-panel lobby-options">
+          <h4 className="lobby-section-h">Options</h4>
+          <LobbyConfigComponent config={config} seats={seats} onChange={setConfig} />
+        </section>
+      )}
 
-        {/* ----- launch ----- */}
-        <div style={{ marginTop: 16, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button onClick={startLocal} disabled={!canStart || preparing}>
+      {/* ----- launch ----- */}
+      <section className="lobby-panel lobby-launch-panel cc-chrome">
+        <div className="lobby-launch">
+          <button className="lobby-start" onClick={startLocal} disabled={!canStart || preparing}>
             {preparing ? 'Loading AI…' : 'Start (hot-seat)'}
           </button>
+          <span className="lobby-hint lobby-lineup">{lineupSummary(seats, hasAI)}</span>
         </div>
 
         {/* ----- host online ----- */}

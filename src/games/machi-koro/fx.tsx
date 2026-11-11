@@ -12,8 +12,11 @@
 //   - build / exchange / gift / give / Exhibit Hall returned: a ghost of the
 //     card flies from its old spot to its new one (a brand-new town stack or
 //     market pile stays hidden until it lands);
+//     The card it lands on squashes and a puff of dust rises from it; a new
+//     landmark throws sparkles;
 //   - extra turns, wins, the end of the opening rounds, Harbor, Tuna Boat,
-//     demolitions, renovations: a toast.
+//     demolitions, renovations: a toast (a gold banner for a landmark, the
+//     festival banner for a win).
 // Coin animations wait for the dice to finish tumbling when the same batch
 // holds a roll. Web Animations API throughout (so it never fights React over
 // classes or styles); everything is skipped under prefers-reduced-motion,
@@ -28,6 +31,7 @@ import { createPortal } from 'react-dom';
 import type { PlayerId } from '@/core/types';
 import type { MkLogEntry, MkState } from './types';
 import { CardFace, CoinIcon } from './Card';
+import { cardName } from './Sidebar';
 
 export const DICE_MS = 650;
 const COIN_MS = 620;
@@ -35,11 +39,15 @@ const CARD_MS = 720;
 
 interface Rect { x: number; y: number; w: number; h: number }
 
+type ToastTone = 'info' | 'big' | 'win' | 'bad';
+
 type Flight =
   | { id: number; kind: 'coin'; from: Rect; to: Rect; delay: number }
-  | { id: number; kind: 'card'; cardId: string; from: Rect; to: Rect; delay: number; reveal?: HTMLElement }
+  | { id: number; kind: 'card'; cardId: string; from: Rect; to: Rect; delay: number; reveal?: HTMLElement; land?: HTMLElement }
   | { id: number; kind: 'float'; at: Rect; text: string; tone: 'gain' | 'loss' | 'info'; delay: number }
-  | { id: number; kind: 'toast'; text: string; delay: number };
+  | { id: number; kind: 'toast'; text: string; delay: number; tone?: ToastTone; icon?: string }
+  | { id: number; kind: 'puff'; at: Rect; delay: number }
+  | { id: number; kind: 'burst'; at: Rect; delay: number };
 
 type NewFlight = Flight extends infer F ? (F extends Flight ? Omit<F, 'id'> : never) : never;
 
@@ -105,6 +113,7 @@ export function FxProvider({ state, nameOf, children }: {
         el: (k) => anchors.current.get(k) ?? null,
         existedBefore: (k) => snapshot.current.has(k),
         nameOf,
+        cardName: (id) => cardName(state.config.edition, id),
       });
       if (add.length) {
         setFlights((fs) => [...fs, ...add.map((f) => ({ ...f, id: nextId.current++ }) as Flight)]);
@@ -145,6 +154,7 @@ interface Layouts {
   el(key: string): HTMLElement | null;
   existedBefore(key: string): boolean;
   nameOf(id: PlayerId | null): string;
+  cardName(id: string): string;
 }
 
 function sourceKey(e: Extract<MkLogEntry, { kind: 'coins' | 'payBank' }>): string | null {
@@ -177,7 +187,9 @@ function plan(entries: MkLogEntry[], L: Layouts): NewFlight[] {
     if (!from || !to) { pulse(toKey, delay); return; }
     const reveal = !L.existedBefore(toKey) ? L.el(toKey) ?? undefined : undefined;
     if (reveal) reveal.style.visibility = 'hidden';
-    out.push({ kind: 'card', cardId, from, to, delay, reveal });
+    out.push({ kind: 'card', cardId, from, to, delay, reveal, land: L.el(toKey) ?? undefined });
+    // Landing in a town: a puff of dust as it touches down.
+    if (!toKey.startsWith('market:')) out.push({ kind: 'puff', at: to, delay: delay + CARD_MS - 90 });
   };
 
   for (const e of entries) {
@@ -229,7 +241,9 @@ function plan(entries: MkLogEntry[], L: Layouts): NewFlight[] {
           out.push({ kind: 'float', at: payer, text: `+${-e.cost}`, tone: 'gain', delay: t + COIN_MS - 120 });
         }
         if (e.landmark) {
-          out.push({ kind: 'toast', text: `${L.nameOf(e.playerId)} built a landmark!`, delay: t + 200 });
+          out.push({ kind: 'toast', tone: 'big', icon: '★', text: `${L.nameOf(e.playerId)} built the ${L.cardName(e.cardId)}!`, delay: t + 200 });
+          const at = L.now(toKey);
+          if (at) out.push({ kind: 'burst', at, delay: t + CARD_MS - 60 });
           pulse(toKey, t + CARD_MS);
         }
         t += 300;
@@ -261,7 +275,7 @@ function plan(entries: MkLogEntry[], L: Layouts): NewFlight[] {
         break;
       case 'demolish':
         pulse(`lm:${e.playerId}:${e.landmarkId}`, t);
-        out.push({ kind: 'toast', text: `💥 ${L.nameOf(e.playerId)} demolishes a landmark`, delay: t });
+        out.push({ kind: 'toast', tone: 'bad', text: `💥 ${L.nameOf(e.playerId)} demolishes a landmark`, delay: t });
         t += 300;
         break;
       case 'renovate':
@@ -285,9 +299,12 @@ function plan(entries: MkLogEntry[], L: Layouts): NewFlight[] {
       case 'setupDone':
         out.push({ kind: 'toast', text: 'Opening rounds over — time to roll!', delay: t });
         break;
-      case 'win':
-        out.push({ kind: 'toast', text: e.reason === 'launchPad' ? `🚀 ${L.nameOf(e.playerId)} launches and wins!` : `🏆 ${L.nameOf(e.playerId)} wins!`, delay: t + 400 });
+      case 'win': {
+        out.push({ kind: 'toast', tone: 'win', text: e.reason === 'launchPad' ? `🚀 ${L.nameOf(e.playerId)} launches and wins!` : `🏆 ${L.nameOf(e.playerId)} wins!`, delay: t + 400 });
+        const purse = L.now(`coins:${e.playerId}`);
+        if (purse) out.push({ kind: 'burst', at: purse, delay: t + 500 });
         break;
+      }
       default:
         break;
     }
@@ -325,6 +342,38 @@ function FlightView({ f, edition, onDone }: { f: Flight; edition: MkState['confi
         ],
         { duration: CARD_MS, delay: f.delay, easing: 'cubic-bezier(.25,.8,.3,1)', fill: 'both' },
       );
+    } else if (f.kind === 'puff' || f.kind === 'burst') {
+      // One animation per particle; the last one ends the flight.
+      const parts = [...el.children] as HTMLElement[];
+      const anims = parts.map((p, i) => {
+        if (f.kind === 'puff') {
+          const k = i - (parts.length - 1) / 2;
+          return p.animate(
+            [
+              { transform: 'translate(0, 0) scale(0.35)', opacity: 0.95 },
+              { transform: `translate(${k * 15}px, ${-6 - (2 - Math.abs(k)) * 5}px) scale(1.35)`, opacity: 0 },
+            ],
+            { duration: 620, delay: f.delay + i * 25, easing: 'cubic-bezier(.2,.7,.3,1)', fill: 'both' },
+          );
+        }
+        const a = (Math.PI * 2 * i) / parts.length;
+        const r = 40 + (i % 2) * 16;
+        return p.animate(
+          [
+            { transform: 'translate(0, 0) scale(0.3) rotate(0deg)', opacity: 1 },
+            { transform: `translate(${Math.cos(a) * r * 0.7}px, ${Math.sin(a) * r * 0.7}px) scale(1.15) rotate(60deg)`, opacity: 1, offset: 0.55 },
+            { transform: `translate(${Math.cos(a) * r}px, ${Math.sin(a) * r}px) scale(0.2) rotate(120deg)`, opacity: 0 },
+          ],
+          { duration: 820, delay: f.delay, easing: 'cubic-bezier(.15,.8,.3,1)', fill: 'both' },
+        );
+      });
+      const last = anims[anims.length - 1];
+      if (!last) { onDone(f.id); return; }
+      last.onfinish = () => onDone(f.id);
+      return () => {
+        last.onfinish = null;
+        for (const x of anims) x.cancel();
+      };
     } else if (f.kind === 'float') {
       anim = el.animate(
         [
@@ -333,6 +382,18 @@ function FlightView({ f, edition, onDone }: { f: Flight; edition: MkState['confi
           { transform: 'translate(-50%, -38px)', opacity: 0 },
         ],
         { duration: 1100, delay: f.delay, easing: 'ease-out', fill: 'both' },
+      );
+    } else if (f.tone === 'big' || f.tone === 'win') {
+      // Banners spring in, hold, and lift away.
+      anim = el.animate(
+        [
+          { transform: 'translate(-50%, -16px) scale(0.55) rotate(-4deg)', opacity: 0 },
+          { transform: 'translate(-50%, 0) scale(1.08) rotate(1deg)', opacity: 1, offset: 0.1 },
+          { transform: 'translate(-50%, 0) scale(1) rotate(0deg)', opacity: 1, offset: 0.17 },
+          { transform: 'translate(-50%, 0) scale(1) rotate(0deg)', opacity: 1, offset: 0.86 },
+          { transform: 'translate(-50%, -10px) scale(0.96)', opacity: 0 },
+        ],
+        { duration: f.tone === 'win' ? 3200 : 2500, delay: f.delay, easing: 'ease-out', fill: 'both' },
       );
     } else {
       anim = el.animate(
@@ -346,7 +407,22 @@ function FlightView({ f, edition, onDone }: { f: Flight; edition: MkState['confi
       );
     }
     const finish = () => {
-      if (f.kind === 'card' && f.reveal) f.reveal.style.visibility = '';
+      if (f.kind === 'card') {
+        if (f.reveal) f.reveal.style.visibility = '';
+        // The card it lands on squashes down and springs back (the card
+        // inside the anchor, so the anchor's rect stays put).
+        const card = f.land?.firstElementChild;
+        if (card instanceof HTMLElement && canAnimate()) {
+          card.animate(
+            [
+              { transform: 'scale(1.12, 0.86)', transformOrigin: '50% 100%' },
+              { transform: 'scale(0.96, 1.05)', transformOrigin: '50% 100%', offset: 0.45 },
+              { transform: 'none', transformOrigin: '50% 100%' },
+            ],
+            { duration: 380, easing: 'ease-out' },
+          );
+        }
+      }
       onDone(f.id);
     };
     anim.onfinish = finish;
@@ -378,7 +454,25 @@ function FlightView({ f, edition, onDone }: { f: Flight; edition: MkState['confi
         </div>
       );
     case 'toast':
-      return <div ref={ref} className="mk-fx-toast">{f.text}</div>;
+      return (
+        <div ref={ref} className={`mk-fx-toast ${f.tone ?? 'info'}`}>
+          {f.icon && <span className="mk-fx-toast-icon">{f.icon}</span>}
+          {f.text}
+          {f.icon && <span className="mk-fx-toast-icon">{f.icon}</span>}
+        </div>
+      );
+    case 'puff':
+      return (
+        <div ref={ref} className="mk-fx-puff" style={{ left: f.at.x + f.at.w / 2, top: f.at.y + f.at.h - 4 }}>
+          {Array.from({ length: 5 }, (_, i) => <i key={i} />)}
+        </div>
+      );
+    case 'burst':
+      return (
+        <div ref={ref} className="mk-fx-burst" style={{ left: f.at.x + f.at.w / 2, top: f.at.y + f.at.h / 2 }}>
+          {Array.from({ length: 12 }, (_, i) => <i key={i} />)}
+        </div>
+      );
   }
 }
 

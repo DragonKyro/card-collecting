@@ -1,3 +1,21 @@
+/* ==========================================================================
+   Sea Salt & Paper — "origami on the sea".
+
+   The table is the three things in the name: the SEA (the board itself:
+   watercolour teal, light rays, drifting ripples, glints), SALT-white sand
+   (the shoal the deck and the two discard piles sit on) and PAPER (your hand,
+   every card, the round summary). Opponents float out at sea on glassy tide
+   pools.
+
+   FLIP note: cardFlip.tsx flies cards with Web Animations on `transform` and
+   measures `.card` and `.card-slot` rects. Nothing here animates a transform
+   on those or on anything containing them (glows are box-shadows / opacity on
+   pseudo-elements; container entrances use `backwards` fill and leave the
+   overlays that hold flying cards alone). The board itself gets no transform,
+   filter or isolation: on phones the keep-a-card and crab pickers inside it
+   are `position: fixed`.
+   ========================================================================== */
+
 .ssp {
   --paper-tan:    #f4e9d5;
   --paper-deep:   #d6c5a0;
@@ -17,19 +35,233 @@
   --white:        #f9f6ed;
   --orange:       #e8a04a;
   --tan:          #c9a47c;
+  --foam:         #effbf7;
+  --glow:         #4fd1c5;
+  --gold:         #ffc53d;
+  --sand-ink:     #5a4223;
   color: var(--paper-ink);
 }
+
+/* ---------------------------------------------------------------- the sea */
 
 .ssp .board {
   display: grid;
   grid-template-columns: 1fr;
   gap: 16px;
-  background: linear-gradient(180deg, #1e3a48 0%, #2d5d6e 100%);
   padding: 16px;
-  border-radius: 12px;
+  border-radius: 20px;
   color: var(--paper-cream);
   position: relative;
+  background:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='420' height='420'><filter id='w'><feTurbulence type='fractalNoise' baseFrequency='0.007 0.012' numOctaves='3' seed='11' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.72  0 0 0 0 0.96  0 0 0 0 0.98  1 0 0 0 -0.47'/></filter><rect width='100%' height='100%' filter='url(%23w)'/></svg>"),
+    radial-gradient(130% 70% at 82% -14%, rgba(255, 236, 190, 0.28), transparent 58%),
+    radial-gradient(60% 40% at 6% 10%, rgba(120, 225, 220, 0.16), transparent 70%),
+    linear-gradient(180deg, #1f7c8c 0%, #186779 30%, #12536a 62%, #0d3e52 100%);
+  border: 1px solid rgba(214, 248, 242, 0.22);
+  box-shadow:
+    0 30px 60px -28px rgba(0, 0, 0, 0.85),
+    0 0 0 4px rgba(5, 26, 36, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 0 80px rgba(2, 22, 32, 0.45);
 }
+
+/* Every zone paints over the sea decor (which is positioned, so they must be
+   too — position alone, no z-index, so no new stacking context). */
+.ssp .board > .target-info,
+.ssp .board > .ssp-event-banner,
+.ssp .board > .opponents,
+.ssp .board > .center,
+.ssp .board > .hand-area,
+.ssp .board > .help { position: relative; }
+
+.ssp-sea {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  overflow: hidden;
+  pointer-events: none;
+}
+/* Light rays fanning down from the sun beyond the top-right corner. */
+.ssp-sea-rays {
+  position: absolute;
+  inset: 0;
+  background: repeating-conic-gradient(from 196deg at 88% -8%, rgba(255, 246, 214, 0.1) 0deg 3deg, transparent 3deg 11deg);
+  -webkit-mask-image: radial-gradient(110% 85% at 88% -8%, #000 8%, transparent 72%);
+  mask-image: radial-gradient(110% 85% at 88% -8%, #000 8%, transparent 72%);
+  animation: ssp-rays 9s ease-in-out infinite;
+}
+@keyframes ssp-rays { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+/* Two crossing sets of faint light bands, drifting: the water's shimmer. */
+.ssp-sea-ripples {
+  position: absolute;
+  inset: -20% -30%;
+  background:
+    repeating-linear-gradient(102deg, transparent 0 34px, rgba(225, 255, 250, 0.05) 34px 37px, transparent 37px 88px),
+    repeating-linear-gradient(76deg, transparent 0 46px, rgba(225, 255, 250, 0.04) 46px 49px, transparent 49px 112px);
+  animation: ssp-ripple 24s ease-in-out infinite alternate;
+}
+@keyframes ssp-ripple {
+  from { transform: translate3d(-3%, 0, 0); }
+  to   { transform: translate3d(3%, 1.5%, 0); }
+}
+.ssp-sea-glint {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  background:
+    radial-gradient(circle, rgba(255, 251, 230, 0.95) 0 1.2px, rgba(255, 251, 230, 0.3) 2.4px, transparent 5px),
+    linear-gradient(180deg, transparent, rgba(255, 251, 230, 0.9) 50%, transparent) center / 1px 100% no-repeat,
+    linear-gradient(90deg, transparent, rgba(255, 251, 230, 0.9) 50%, transparent) center / 100% 1px no-repeat;
+  opacity: 0;
+  animation: ssp-glint 4.4s ease-in-out infinite;
+}
+@keyframes ssp-glint {
+  0%, 100% { opacity: 0; transform: scale(0.3); }
+  50%      { opacity: 0.8; transform: scale(1); }
+}
+
+/* ------------------------------------------------------- the top info row */
+
+.ssp .target-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  color: rgba(236, 252, 248, 0.88);
+  margin-bottom: 6px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.ssp .ssp-round-tag {
+  font-family: var(--font-hand);
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1;
+  color: #fff8e6;
+  padding: 2px 14px 4px;
+  background: rgba(3, 28, 38, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+.ssp .ssp-deck-count { font-weight: 600; }
+
+.ssp .match-progress {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+.ssp .match-progress-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(3, 26, 36, 0.5);
+  border: 1px solid rgba(220, 250, 245, 0.16);
+  border-radius: 999px;
+  padding: 3px 11px;
+  font-size: 12px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  transition: border-color var(--dur-med) ease, box-shadow var(--dur-med) ease;
+}
+.ssp .match-progress-pill.active {
+  border-color: rgba(79, 209, 197, 0.85);
+  box-shadow: 0 0 0 1px rgba(79, 209, 197, 0.45), 0 0 14px rgba(79, 209, 197, 0.35);
+}
+.ssp .match-progress-pill .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.5);
+}
+.ssp .match-progress-pill strong { color: #fff; font-size: 14px; }
+.ssp .match-progress-pill .muted { color: rgba(255, 255, 255, 0.55); }
+
+/* A number that just changed pops (re-keyed in the markup). */
+.ssp .ssp-pop {
+  display: inline-block;
+  animation: cc-pop 460ms var(--ease-spring) both;
+}
+
+/* ------------------------------------------- Extra Pepper: the event card */
+
+.ssp-event-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  overflow: hidden;
+  background:
+    linear-gradient(150deg, rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0) 40%),
+    var(--paper-fibre),
+    linear-gradient(180deg, #fbf5e6, #f0e3c4);
+  color: var(--paper-ink, #1c1a2e);
+  border: 1px solid rgba(110, 85, 40, 0.4);
+  border-left: 7px solid #c54a4a;
+  border-radius: 10px;
+  padding: 8px 14px 8px 12px;
+  margin: 2px 0 6px;
+  font-size: 13px;
+  box-shadow: 0 12px 24px -14px rgba(0, 0, 0, 0.8), inset 0 1px 0 #fff;
+  animation: ssp-event-in 760ms var(--ease-spring) backwards;
+}
+.ssp-event-banner.sign-minus { border-left-color: #2f8a5a; }
+.ssp-event-banner strong {
+  font-family: var(--font-hand);
+  font-size: 24px;
+  line-height: 1;
+}
+.ssp-event-banner .ssp-event-tag {
+  background: #c54a4a;
+  color: #fbf6ea;
+  padding: 3px 9px 2px;
+  border-radius: 999px;
+  font-family: var(--font-display);
+  font-size: 11px;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+}
+.ssp-event-banner.sign-minus .ssp-event-tag { background: #2f8a5a; }
+.ssp-event-banner .ssp-event-rule {
+  color: rgba(28, 26, 46, 0.78);
+  font-size: 12px;
+  flex: 1 1 200px;
+}
+/* One sweep of light across the card as it turns over. */
+.ssp-event-banner::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 30%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.75), transparent);
+  pointer-events: none;
+  animation: cc-sheen 1.1s ease-out 650ms both;
+}
+@keyframes ssp-event-in {
+  0%   { opacity: 0; transform: perspective(800px) rotateX(-75deg) translateY(-12px); }
+  60%  { opacity: 1; transform: perspective(800px) rotateX(10deg); }
+  100% { transform: none; }
+}
+
+/* Extra Pepper: held event cards, Coral Reef shells, round-end outcomes. */
+.ssp-held-event {
+  margin-left: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.3;
+  cursor: help;
+  color: #fbf6ea;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+.ssp-held-event.plus { background: #8a3a3a; }
+.ssp-held-event.minus { background: #2f6b4a; }
+
+/* ------------------------------------------- opponents: rafts out at sea */
 
 .ssp .opponents {
   display: grid;
@@ -38,13 +270,36 @@
 }
 
 .ssp .player-strip {
-  background: rgba(0,0,0,0.25);
-  border: 1px solid rgba(255,255,255,0.12);
-  border-radius: 10px;
-  padding: 8px 10px;
+  position: relative;
+  background:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 30'><g fill='%23e9fbf6' fill-opacity='0.07' stroke='%23e9fbf6' stroke-opacity='0.14' stroke-width='1.2' stroke-linejoin='round'><polygon points='20,2 9,20 20,20'/><polygon points='20,2 20,20 31,20'/><polygon points='3,19 37,19 31,28 9,28'/></g></svg>") right 12px bottom 8px / 54px auto no-repeat,
+    linear-gradient(180deg, rgba(6, 36, 48, 0.58), rgba(4, 24, 34, 0.74));
+  border: 1px solid rgba(214, 248, 242, 0.16);
+  border-radius: 14px;
+  padding: 9px 12px 10px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    inset 0 -14px 26px rgba(79, 209, 197, 0.05),
+    0 14px 24px -16px rgba(0, 0, 0, 0.8);
+  transition: border-color var(--dur-med) ease;
 }
-
-.ssp .player-strip.active { box-shadow: 0 0 0 2px var(--yellow); }
+/* The seat's colour as a ribbon along the top edge. */
+.ssp .player-strip::before {
+  content: '';
+  position: absolute;
+  left: 16px;
+  width: 72px;
+  top: -1px;
+  height: 3px;
+  border-radius: 0 0 3px 3px;
+  background: var(--seat, #888);
+  opacity: 0.85;
+}
+.ssp .player-strip.active {
+  --cc-glow: rgba(79, 209, 197, 0.7);
+  border-color: rgba(79, 209, 197, 0.9);
+  animation: cc-pulse-glow 2.2s ease-in-out infinite;
+}
 
 .ssp .player-strip header {
   display: flex;
@@ -52,89 +307,76 @@
   align-items: center;
   font-weight: 600;
   margin-bottom: 6px;
-}
-
-.ssp .scores {
-  font-size: 12px;
-  display: flex;
-  gap: 10px;
-  color: rgba(255,255,255,0.8);
-}
-
-.ssp .center {
-  display: grid;
-  grid-template-columns: auto 1fr 1fr;
-  gap: 14px;
-  align-items: end;
-}
-
-.ssp .deck-stack {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: rgba(255,255,255,0.85);
-  /* Fixed width: the column would otherwise grow with its hint text ("Click
-     to draw 2" comes and goes every turn), shifting the deck and both pile
-     columns sideways — and every card flying from or to them. */
-  width: 104px;
-}
-
-.ssp .pile {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: rgba(255,255,255,0.85);
-}
-
-.ssp .pile button {
-  background: var(--yellow);
-  color: var(--paper-ink);
-}
-
-.ssp .pile.empty .empty-slot {
-  width: 56px;
-  height: 86px;
-  border: 2px dashed rgba(255,255,255,0.25);
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: rgba(255,255,255,0.5);
-  font-size: 11px;
-}
-
-.ssp .hand-area {
-  background: rgba(0,0,0,0.25);
-  border: 1px solid rgba(255,255,255,0.12);
-  border-radius: 10px;
-  padding: 14px;
-}
-
-/* Reserve a stable cards row so the board doesn't grow/shrink when the hand
- * wraps to a second line. Two rows of cards fit at 110px each + gap. */
-.ssp .hand-area .cards {
-  min-height: 110px;
-  align-content: flex-start;
-}
-
-.ssp .hand-area h3 {
-  margin: 0 0 8px;
-  font-size: 14px;
-  font-weight: 600;
-  color: rgba(255,255,255,0.9);
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-}
-
-.ssp .cards {
-  display: flex;
-  flex-wrap: wrap;
   gap: 8px;
+}
+.ssp .ssp-strip-name {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  font-family: var(--font-hand);
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1;
+  color: #f6fffc;
+}
+.ssp .ssp-ai-tag {
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  color: rgba(230, 251, 246, 0.72);
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  padding: 2px 6px;
+}
+/* A seat colour as a little paper pennant. */
+.ssp .ssp-seat-flag {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 13px;
+  height: 14px;
+  clip-path: polygon(0 0, 100% 42%, 0 84%);
+  box-shadow: inset 2px 0 0 rgba(0, 0, 0, 0.35);
+}
+/* "Their move" dots on the active raft. */
+.ssp .ssp-turn-tag {
+  display: inline-flex;
+  gap: 3px;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: rgba(79, 209, 197, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(79, 209, 197, 0.35);
+}
+.ssp .ssp-turn-tag i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #8af3e8;
+  animation: ssp-dot 1.1s ease-in-out infinite;
+}
+.ssp .ssp-turn-tag i:nth-child(2) { animation-delay: 0.15s; }
+.ssp .ssp-turn-tag i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes ssp-dot {
+  0%, 80%, 100% { transform: translateY(0); opacity: 0.45; }
+  40%           { transform: translateY(-3px); opacity: 1; }
+}
+
+/* Called LAST CHANCE: everyone can see who's betting. */
+.ssp .ssp-lc-badge {
+  display: inline-block;
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  text-transform: uppercase;
+  color: #fff;
+  background: #d2453b;
+  padding: 4px 7px 3px;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.55);
+  animation: cc-stamp 600ms var(--ease-out) both;
 }
 
 .ssp .table-strip {
@@ -152,29 +394,238 @@
  * the negative margin to .facedown siblings. */
 .ssp .table-strip .card.facedown + .card.facedown {
   margin-left: -42px;
+  box-shadow: -4px 0 6px -2px rgba(0, 0, 0, 0.5), 0 6px 10px -5px rgba(0, 0, 0, 0.55);
 }
 
-/* Reserve a stable action area so the duo/steal/crab/lobster pickers don't
- * make the board jump every time the subPhase changes. The buttons sit on a
- * single row at the top of the slot. */
-.ssp .actions {
+/* Empty zones say what goes there. */
+.ssp .player-strip .table-strip:empty::before,
+.ssp .hand-area .table-strip:empty::before,
+.ssp .hand-area .cards:empty::before {
+  content: '';
+  flex-shrink: 0;
+  width: 56px;
+  height: 86px;
+  border-radius: 7px;
+  border: 2px dashed rgba(220, 250, 245, 0.24);
+  background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 20'><g opacity='0.3'><path d='M12 18 L2 9 Q4 2 12 1 Q20 2 22 9 Z' fill='%23effbf7' stroke='%23effbf7' stroke-width='1' stroke-linejoin='round'/></g></svg>") center / 26px auto no-repeat;
+}
+.ssp .player-strip .table-strip:empty::after,
+.ssp .hand-area .table-strip:empty::after,
+.ssp .hand-area .cards:empty::after {
+  flex: 1 1 0;
+  min-width: 0;
+  align-self: center;
+  margin-left: 10px;
+  font-family: var(--font-hand);
+  font-size: 20px;
+  line-height: 1.1;
+  color: rgba(230, 251, 246, 0.5);
+}
+.ssp .player-strip .table-strip:empty::after { content: 'Empty-handed… for now'; }
+.ssp .hand-area .cards:empty::after { content: 'Draw two from the deck, or take a pile’s top card'; }
+.ssp .hand-area .table-strip:empty::after { content: 'Duo pairs you play are laid out here'; }
+.ssp .hand-area .table-strip:empty::before,
+.ssp .hand-area .cards:empty::before {
+  border-color: rgba(110, 85, 40, 0.3);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 20'><g opacity='0.28'><path d='M12 18 L2 9 Q4 2 12 1 Q20 2 22 9 Z' fill='%23d9b98a' stroke='%235a4223' stroke-width='1' stroke-linejoin='round'/><path d='M12 18 L7 3.5 M12 18 V1.5 M12 18 L17 3.5' stroke='%235a4223' stroke-width='1'/></g></svg>");
+}
+.ssp .hand-area .table-strip:empty::after,
+.ssp .hand-area .cards:empty::after { color: rgba(90, 66, 35, 0.55); }
+
+/* ------------------------------------------ the shoal: deck + two piles */
+
+/* (`.board > .center`: the "Waiting for…" line under the board is a
+   `.help.center` too.) */
+.ssp .board > .center {
+  display: grid;
+  grid-template-columns: auto 1fr 1fr;
+  gap: 14px;
+  align-items: stretch;
+  isolation: isolate;
+  padding: 10px 14px 4px;
+}
+/* The sandbar itself, with foam lapping round it and a few beach finds. */
+.ssp .board > .center::before {
+  content: '';
+  position: absolute;
+  inset: 0 -4px;
+  z-index: -1;
+  border-radius: 56px;
+  background:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><polygon points='12,1 14.7,8.3 22.5,8.6 16.4,13.4 18.5,20.9 12,16.6 5.5,20.9 7.6,13.4 1.5,8.6 9.3,8.3' fill='%23f2a35a' stroke='%231c1a2e' stroke-width='1' stroke-linejoin='round'/><circle cx='12' cy='11.5' r='1.1' fill='%23c46a24'/></svg>") 22% 74% / 22px auto no-repeat,
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 20'><path d='M12 18 L2 9 Q4 2 12 1 Q20 2 22 9 Z' fill='%23f8d2a6' stroke='%231c1a2e' stroke-width='1' stroke-linejoin='round'/><path d='M12 18 L7 3.5 M12 18 V1.5 M12 18 L17 3.5' stroke='%23c47e44' stroke-width='1'/></svg>") 57% 22% / 18px auto no-repeat,
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 14'><ellipse cx='8' cy='8' rx='7' ry='4.5' fill='%23b8a17a'/><ellipse cx='20' cy='9' rx='5' ry='3.5' fill='%23a08a64'/><ellipse cx='26' cy='5' rx='3' ry='2.2' fill='%23cdb990'/></svg>") 95% 70% / 30px auto no-repeat,
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='s'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='1' seed='4' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.36  0 0 0 0 0.26  0 0 0 0 0.12  0 0 0 4 -2.55'/></filter><rect width='100%' height='100%' filter='url(%23s)'/></svg>"),
+    radial-gradient(90% 130% at 50% 25%, #f5e9cb 0%, #e8d4a6 58%, #d0b37c 100%);
+  box-shadow:
+    0 0 0 3px rgba(239, 251, 247, 0.6),
+    0 0 0 8px rgba(239, 251, 247, 0.14),
+    0 0 0 12px rgba(239, 251, 247, 0.05),
+    0 18px 30px -16px rgba(0, 0, 0, 0.7),
+    inset 0 -8px 18px rgba(150, 110, 50, 0.3),
+    inset 0 6px 12px rgba(255, 255, 255, 0.4);
+}
+/* The foam ring breathes. */
+.ssp .board > .center::after {
+  content: '';
+  position: absolute;
+  inset: 0 -4px;
+  z-index: -1;
+  border-radius: 56px;
+  box-shadow: 0 0 0 5px rgba(239, 251, 247, 0.32);
+  pointer-events: none;
+  animation: ssp-foam 5.5s ease-in-out infinite;
+}
+@keyframes ssp-foam { 0%, 100% { opacity: 0; } 50% { opacity: 1; } }
+
+.ssp .deck-stack {
   display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-top: 12px;
-  min-height: 56px;
-  align-items: flex-start;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  /* Fixed width: the column would otherwise grow with its hint text ("Click
+     to draw 2" comes and goes every turn), shifting the deck and both pile
+     columns sideways — and every card flying from or to them. */
+  width: 104px;
 }
 
-.ssp .actions button {
-  font-size: 13px;
+.ssp .pile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
 }
 
-.ssp .actions .stop      { background: #2ecc71; color: #0e2618; }
-.ssp .actions .lastchance{ background: #e0584f; color: #fff; }
-.ssp .actions .pass      { background: var(--bg-elevated); color: var(--paper-cream); border: 1px solid rgba(255,255,255,0.2); }
+.ssp .pile button {
+  background: var(--yellow);
+  color: var(--paper-ink);
+}
 
-.ssp .actions button:disabled { background: rgba(255,255,255,0.12); color: rgba(255,255,255,0.4); }
+/* Click-to-draw deck / discard piles. (No transform on hover: these hold
+   the FLIP anchors.) */
+.ssp .deck-stack, .ssp .pile {
+  position: relative;
+  cursor: default;
+  border-radius: 14px;
+  padding: 6px;
+  transition: background-color var(--dur-fast) ease;
+}
+.ssp .deck-stack.clickable, .ssp .pile.clickable {
+  cursor: pointer;
+}
+@media (hover: hover) {
+  .ssp .deck-stack.clickable:hover, .ssp .pile.clickable:hover {
+    background: rgba(255, 255, 255, 0.28);
+  }
+}
+.ssp .pile.target-discard {
+  outline: 2px dashed rgba(201, 138, 20, 0.75);
+  outline-offset: -2px;
+}
+
+/* A card-sized slot: the deck's face-down card, a pile's cards. FLIP anchors
+ * sit on these (not the padded deck / pile columns), so cards flying from
+ * the deck or out of a pile start exactly on the card. A stacked slot holds
+ * the pile's top card over the one beneath it. */
+.ssp .card-slot {
+  --edge: #f1e7cf;
+  width: 56px;
+  height: 86px;
+  flex-shrink: 0;
+  position: relative;
+  border-radius: 7px;
+  /* Room for the stack's edges (data-depth) without shifting the labels. */
+  margin-bottom: 8px;
+}
+.ssp .deck-stack .card-slot { --edge: #2b7f8f; }
+.ssp .card-slot.stacked > .card {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+/* Its shadow on the sand. */
+.ssp .card-slot::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  right: -6px;
+  bottom: -14px;
+  height: 18px;
+  z-index: -1;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(80, 52, 18, 0.42), transparent);
+  pointer-events: none;
+}
+/* The stack's thickness: one card edge per few cards beneath the top. */
+.ssp .card-slot[data-depth='1'] { box-shadow: 0.5px 2px 0 var(--edge), 0.5px 3px 0 var(--paper-ink); }
+.ssp .card-slot[data-depth='2'] { box-shadow: 0.5px 2px 0 var(--edge), 0.5px 3px 0 var(--paper-ink), 1px 5px 0 var(--edge), 1px 6px 0 var(--paper-ink); }
+.ssp .card-slot[data-depth='3'] { box-shadow: 0.5px 2px 0 var(--edge), 0.5px 3px 0 var(--paper-ink), 1px 5px 0 var(--edge), 1px 6px 0 var(--paper-ink), 1.5px 8px 0 var(--edge), 1.5px 9px 0 var(--paper-ink); }
+.ssp .card-slot[data-depth='4'] { box-shadow: 0.5px 2px 0 var(--edge), 0.5px 3px 0 var(--paper-ink), 1px 5px 0 var(--edge), 1px 6px 0 var(--paper-ink), 1.5px 8px 0 var(--edge), 1.5px 9px 0 var(--paper-ink), 2px 10.5px 0 var(--edge), 2px 11.5px 0 var(--paper-ink); }
+.ssp .card-slot[data-depth='5'] { box-shadow: 0.5px 2px 0 var(--edge), 0.5px 3px 0 var(--paper-ink), 1px 5px 0 var(--edge), 1px 6px 0 var(--paper-ink), 1.5px 8px 0 var(--edge), 1.5px 9px 0 var(--paper-ink), 2px 10.5px 0 var(--edge), 2px 11.5px 0 var(--paper-ink), 2.5px 13px 0 var(--edge), 2.5px 14px 0 var(--paper-ink); }
+
+/* A stack you can take from glows (a ring on a pseudo-element: never a
+   transform on the anchor). Gold where the other drawn card can go. */
+.ssp .deck-stack.clickable .card-slot::after,
+.ssp .pile.clickable .card-slot::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  z-index: 3;
+  border-radius: 10px;
+  pointer-events: none;
+  box-shadow: 0 0 0 2px rgba(110, 255, 236, 0.9), 0 0 18px 4px rgba(79, 209, 197, 0.65);
+  animation: ssp-take-glow 1.6s ease-in-out infinite;
+}
+.ssp .pile.target-discard .card-slot::after {
+  box-shadow: 0 0 0 2px rgba(255, 214, 102, 0.95), 0 0 18px 4px rgba(255, 190, 50, 0.6);
+}
+@keyframes ssp-take-glow { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
+
+.ssp .pile.empty .empty-slot {
+  width: 56px;
+  height: 86px;
+  border: 2px dashed rgba(90, 66, 35, 0.38);
+  border-radius: 7px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 8px;
+  background:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 20'><g opacity='0.4'><path d='M12 18 L2 9 Q4 2 12 1 Q20 2 22 9 Z' fill='%23f8d2a6' stroke='%235a4223' stroke-width='1' stroke-linejoin='round'/><path d='M12 18 L7 3.5 M12 18 V1.5 M12 18 L17 3.5' stroke='%235a4223' stroke-width='1'/></g></svg>") center 34% / 26px auto no-repeat,
+    rgba(255, 255, 255, 0.2);
+  color: rgba(90, 66, 35, 0.7);
+  font-family: var(--font-hand);
+  font-size: 17px;
+  font-weight: 700;
+}
+/* The "empty" placeholder square shouldn't animate when a pile is exhausted. */
+.ssp .empty-slot { animation: none; }
+
+.ssp .center .label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--sand-ink);
+  text-align: center;
+  margin-top: 2px;
+}
+/* Reserved-height "action hint" slot under deck/pile widgets. Always present
+ * so adding/removing a hint never reflows the row — eyes were getting
+ * scrolled around the board on every subPhase tick. */
+.ssp .center .label.hint {
+  font-family: var(--font-hand);
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1;
+  color: #0a6f69;
+  min-height: 1em;
+  margin-top: -2px;
+  white-space: nowrap;
+}
+.ssp .pile.target-discard .label.hint { color: #a86a00; }
+
+/* ------------------------------------------------------------- the cards */
 
 /* Card. One unified size everywhere — deck, piles, hands (local and opponent),
  * tables, pending-draw, reveal screen. The `.small` modifier still exists in
@@ -182,7 +633,7 @@
 .ssp .card {
   width: 56px;
   height: 86px;
-  border-radius: 6px;
+  border-radius: 7px;
   background: var(--paper-cream);
   border: 2px solid var(--paper-ink);
   position: relative;
@@ -190,8 +641,8 @@
   flex-direction: column;
   cursor: default;
   user-select: none;
-  transition: transform 100ms ease, box-shadow 100ms ease;
-  box-shadow: 0 2px 0 var(--paper-edge);
+  transition: transform 100ms ease, box-shadow 120ms ease;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.2), 0 6px 10px -5px rgba(0, 0, 0, 0.6);
   overflow: hidden;
   /* Moves between zones are flown by the FLIP harness in cardFlip.tsx (Web
      Animations, which pin opacity so a flying card skips this fade). A card
@@ -204,8 +655,21 @@
   to   { opacity: 1; }
 }
 
-/* The "empty" placeholder square shouldn't animate when a pile is exhausted. */
-.ssp .empty-slot { animation: none; }
+/* Printed on card stock and folded once: a soft light from the top-left, an
+   origami crease across the lower corner, paper fibre. */
+.ssp .card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background:
+    linear-gradient(140deg, rgba(255, 255, 255, 0.38) 0%, rgba(255, 255, 255, 0) 34%),
+    linear-gradient(118deg, transparent 62%, rgba(255, 255, 255, 0.2) 62.5%, rgba(0, 0, 0, 0.09) 63.5%, transparent 76%),
+    var(--paper-fibre);
+  background-size: auto, auto, 160px;
+}
+
 /* Color-bar is no longer needed for identification — the entire card body
    carries the family color. We keep the class shipped (existing markup) but
    make it visually invisible (height 0). */
@@ -219,35 +683,43 @@
   height: 86px;
 }
 
-/* A card-sized slot: the deck's face-down card, a pile's cards. FLIP anchors
- * sit on these (not the padded deck / pile columns), so cards flying from
- * the deck or out of a pile start exactly on the card. A stacked slot holds
- * the pile's top card over the one beneath it. */
-.ssp .card-slot {
-  width: 56px;
-  height: 86px;
-  flex-shrink: 0;
+.ssp .card.selectable { cursor: pointer; }
+
+/* Mermaids catch the light (only face-up ones: a back has no family class). */
+.ssp .card.fam-mermaid {
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.6), 0 0 12px 1px rgba(150, 235, 255, 0.6), 0 6px 10px -5px rgba(0, 0, 0, 0.6);
 }
-.ssp .card-slot.stacked {
-  position: relative;
-}
-.ssp .card-slot.stacked > .card {
+.ssp .card.fam-mermaid::before {
+  content: '';
   position: absolute;
-  left: 0;
   top: 0;
+  bottom: 0;
+  left: 0;
+  width: 45%;
+  z-index: 1;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.7), rgba(170, 240, 255, 0.45), transparent);
+  transform: translateX(-130%) skewX(-18deg);
+  animation: ssp-mermaid-sheen 5.2s ease-in-out infinite;
+}
+@keyframes ssp-mermaid-sheen {
+  0%, 64%   { transform: translateX(-130%) skewX(-18deg); }
+  86%, 100% { transform: translateX(330%) skewX(-18deg); }
 }
 
-.ssp .card.selectable { cursor: pointer; }
 /* Hover lifts only where there's a real hover — on a touch screen the lift
    sticks after a tap and reads as "selected". */
 @media (hover: hover) {
-  .ssp .card.selectable:hover { transform: translateY(-3px); box-shadow: 0 5px 0 var(--paper-edge); }
+  .ssp .card.selectable:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 0 0 2px rgba(79, 209, 197, 0.75), 0 12px 16px -6px rgba(0, 0, 0, 0.55);
+  }
 }
 
 .ssp .card.selected,
 .ssp .card.selected.selectable:hover {
-  box-shadow: 0 0 0 3px var(--yellow), 0 5px 0 var(--paper-edge);
-  transform: translateY(-3px);
+  box-shadow: 0 0 0 2px #fff, 0 0 0 5px var(--gold), 0 12px 18px -6px rgba(0, 0, 0, 0.6);
+  transform: translateY(-5px);
 }
 
 .ssp .card .ribbon {
@@ -258,16 +730,17 @@
   display: flex;
   justify-content: center;
   font-size: 8px;
-  font-weight: 700;
-  letter-spacing: 0.4px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
   z-index: 2;
 }
 
 .ssp .card .ribbon .pts {
-  background: rgba(0, 0, 0, 0.65);
+  background: rgba(20, 18, 34, 0.82);
   color: #fff;
-  padding: 0 3px;
+  padding: 0 4px;
   border-radius: 3px;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.3);
 }
 
 .ssp .card .ribbon .fam {
@@ -278,28 +751,29 @@
   color: var(--paper-ink);
 }
 
-/* Art sits on a translucent white plate so the SVG reads cleanly against any
-   background color. */
+/* Art sits on a pale plate so the SVG reads cleanly against any colour. */
 .ssp .card .art {
   flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
   margin: 16px 4px 2px;
-  background: rgba(255, 255, 255, 0.78);
+  background: radial-gradient(120% 90% at 50% 30%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.72));
   border-radius: 5px;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.16);
   min-height: 0;
 }
 
 .ssp .card .footer {
   height: 14px;
   font-size: 7px;
+  font-weight: 800;
   text-align: center;
   letter-spacing: 1px;
-  color: rgba(0, 0, 0, 0.85);
+  color: rgba(20, 18, 34, 0.88);
   text-transform: uppercase;
-  background: rgba(255, 255, 255, 0.85);
-  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.86);
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
   line-height: 14px;
   flex-shrink: 0;
   white-space: nowrap;
@@ -317,8 +791,7 @@
   letter-spacing: 0;
 }
 
-/* Whole-card background colors per the official chart. Where the color is
-   dark, lighten the font/inner-bar contrast accordingly. */
+/* Whole-card background colors per the official chart. */
 .ssp .card.color-yellow   { background: var(--yellow); }
 .ssp .card.color-green    { background: var(--green); }
 .ssp .card.color-pink     { background: var(--pink); }
@@ -331,427 +804,26 @@
 .ssp .card.color-orange   { background: var(--orange); }
 .ssp .card.color-tan      { background: var(--tan); }
 
-/* Dark-background cards: lighten the points pip border for visibility. */
+/* Dark-background cards: lighten the points pip for visibility. */
 .ssp .card.color-darkblue .ribbon .pts,
 .ssp .card.color-black .ribbon .pts {
   background: rgba(255, 255, 255, 0.92);
   color: var(--paper-ink);
 }
 
+/* The back: deep-sea paper, a wave pattern, a paper-boat seal. */
 .ssp .card.facedown {
-  background: repeating-linear-gradient(
-    45deg, var(--sea), var(--sea) 10px,
-    var(--sea-light) 10px, var(--sea-light) 20px
-  );
+  background:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 52 82'><rect x='3.5' y='3.5' width='45' height='75' rx='4' fill='none' stroke='%23f4e9d5' stroke-opacity='0.55'/><rect x='6' y='6' width='40' height='70' rx='3' fill='none' stroke='%23f4e9d5' stroke-opacity='0.2'/><circle cx='26' cy='39' r='13.5' fill='%230b3a49' fill-opacity='0.7' stroke='%23f4e9d5' stroke-opacity='0.45'/><g stroke='%231c1a2e' stroke-width='0.9' stroke-linejoin='round'><polygon points='26,28.5 19.8,40 26,40' fill='%23fbf3dc'/><polygon points='26,28.5 26,40 32.2,40' fill='%23e2d0a2'/><polygon points='16.5,39.5 35.5,39.5 32.2,45 19.8,45' fill='%23ef8a63'/></g><path d='M17.5 48.5 q2.1 -1.6 4.2 0 t4.2 0 t4.2 0 t4.2 0' fill='none' stroke='%23bff0ea' stroke-opacity='0.8' stroke-width='1' stroke-linecap='round'/></svg>") center / 100% 100% no-repeat,
+    radial-gradient(circle at 50% 100%, transparent 3px, rgba(190, 245, 238, 0.13) 3.5px 4.5px, transparent 5px) 0 0 / 10px 6px,
+    radial-gradient(120% 90% at 50% 38%, #2a8f9e 0%, #176073 60%, #0f4556 100%);
   border-color: var(--paper-ink);
+}
+.ssp .card.facedown::after {
+  background: linear-gradient(140deg, rgba(255, 255, 255, 0.24) 0%, rgba(255, 255, 255, 0) 40%);
 }
 
 .ssp .card.facedown .art, .ssp .card.facedown .ribbon, .ssp .card.facedown .footer { display: none; }
-
-.ssp .help {
-  font-size: 12px;
-  color: rgba(255,255,255,0.8);
-  margin: 0;
-  text-align: center;
-}
-
-.ssp .help.center { margin: 8px 0; }
-
-.ssp .round-summary {
-  background: var(--paper-cream);
-  color: var(--paper-ink);
-  padding: 18px;
-  border-radius: 12px;
-  max-width: 720px;
-  margin: 0 auto;
-}
-
-.ssp .round-summary h2 { margin-top: 0; }
-
-.ssp .round-summary-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
-}
-.ssp .round-summary-header h2 { margin-bottom: 0; }
-
-.ssp .round-summary-reveal {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 14px;
-  border-top: 1px solid var(--paper-deep);
-  padding-top: 10px;
-}
-.ssp .round-summary-player .table-strip {
-  background: rgba(0, 0, 0, 0.04);
-  padding: 6px;
-  border-radius: 6px;
-  min-height: 90px;
-}
-
-.ssp .round-summary table {
-  width: 100%;
-  border-collapse: collapse;
-  margin: 12px 0;
-}
-
-.ssp .round-summary td, .ssp .round-summary th {
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--paper-deep);
-  text-align: left;
-}
-
-.ssp .round-summary td.num, .ssp .round-summary th.num { text-align: right; }
-
-.ssp .round-summary tr.forfeit td { color: var(--danger); }
-/* Single-cell forfeit indicator — used for the Bonus column on STOP rounds
- * (where the special bonus is shown for reference but doesn't count) and
- * for the Cards column when a LAST CHANCE bet is lost. The number stays
- * visible so the player can see what they "would have" scored, but it's
- * struck through to indicate it's not in the total. */
-.ssp .round-summary td.forfeit-cell {
-  color: var(--danger);
-  text-decoration: line-through;
-}
-
-.ssp .gameover-banner {
-  background: var(--yellow);
-  color: var(--paper-ink);
-  padding: 14px;
-  border-radius: 10px;
-  text-align: center;
-  font-size: 18px;
-  font-weight: 700;
-  margin-bottom: 12px;
-}
-
-/* Big celebratory winner card shown at the top of the GameOver screen. The
- * background gradient is tinted with the winner's seat color (set inline) and
- * the trophy + name are sized to be unmissable. */
-.ssp .ssp-winner-banner {
-  background: linear-gradient(135deg, var(--yellow) 0%, #fff2c2 100%);
-  color: var(--paper-ink);
-  padding: 22px 18px;
-  border-radius: 14px;
-  text-align: center;
-  margin-bottom: 14px;
-  box-shadow: 0 4px 0 var(--paper-edge), 0 0 0 3px rgba(0, 0, 0, 0.08);
-  animation: ssp-winner-pulse 1.8s ease-out;
-}
-.ssp .ssp-winner-trophy {
-  font-size: 48px;
-  line-height: 1;
-  margin-bottom: 6px;
-}
-.ssp .ssp-winner-eyebrow {
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 2px;
-  opacity: 0.7;
-  margin-bottom: 2px;
-}
-.ssp .ssp-winner-name {
-  font-size: 32px;
-  font-weight: 800;
-  letter-spacing: 0.5px;
-  margin: 2px 0 6px;
-  text-shadow: 0 1px 0 rgba(255,255,255,0.5);
-}
-.ssp .ssp-winner-sub {
-  font-size: 14px;
-  font-style: italic;
-  opacity: 0.85;
-}
-@keyframes ssp-winner-pulse {
-  0%   { transform: scale(0.9); opacity: 0; }
-  60%  { transform: scale(1.04); opacity: 1; }
-  100% { transform: scale(1); }
-}
-
-/* Highlight the winning row in the final-scores table. */
-.ssp .round-summary tr.ssp-winner-row {
-  background: rgba(244, 210, 104, 0.35);
-  font-weight: 700;
-}
-.ssp .round-summary tr.ssp-winner-row td {
-  border-bottom-color: var(--paper-edge);
-}
-.ssp .ssp-winner-pip {
-  background: var(--yellow);
-  color: var(--paper-ink);
-  font-size: 10px;
-  font-weight: 700;
-  padding: 2px 6px;
-  border-radius: 999px;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-}
-
-/* LAST CHANCE announcement banner. Full-board overlay that fades in for a
- * couple of seconds when somebody calls LAST CHANCE, so the player can't
- * miss it. */
-.ssp-lastchance-banner {
-  position: absolute;
-  inset: 0;
-  z-index: 200;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  pointer-events: none;
-  background: radial-gradient(ellipse at center, rgba(255, 90, 80, 0.55) 0%, rgba(0,0,0,0) 70%);
-  animation: ssp-lc-fade 2500ms ease-out forwards;
-}
-
-.ssp-lastchance-card {
-  text-align: center;
-  padding: 22px 38px;
-  background: rgba(0, 0, 0, 0.85);
-  border: 3px solid #ff7070;
-  border-radius: 18px;
-  box-shadow: 0 0 40px rgba(255,90,80,0.7), inset 0 0 24px rgba(255,90,80,0.3);
-  transform: scale(0.7) rotate(-3deg);
-  animation: ssp-lc-pop 900ms cubic-bezier(0.2, 1.4, 0.3, 1) forwards,
-             ssp-lc-shake 350ms 250ms ease-in-out;
-}
-
-.ssp-lastchance-eyebrow {
-  font-size: 22px;
-  font-weight: 800;
-  letter-spacing: 4px;
-  color: #ffd56b;
-  text-shadow: 0 0 12px rgba(255, 213, 107, 0.9);
-  margin-bottom: 4px;
-  animation: ssp-lc-pulse 600ms infinite alternate;
-}
-.ssp-lastchance-name {
-  font-size: 38px;
-  font-weight: 900;
-  letter-spacing: 1px;
-  margin: 6px 0 4px;
-  text-shadow: 0 0 14px rgba(255,255,255,0.6);
-}
-.ssp-lastchance-sub {
-  font-size: 14px;
-  color: rgba(255,255,255,0.85);
-  font-style: italic;
-}
-
-@keyframes ssp-lc-fade {
-  0%   { opacity: 0; }
-  10%  { opacity: 1; }
-  85%  { opacity: 1; }
-  100% { opacity: 0; }
-}
-@keyframes ssp-lc-pop {
-  0%   { transform: scale(0.3) rotate(-12deg); opacity: 0; }
-  60%  { transform: scale(1.15) rotate(2deg);  opacity: 1; }
-  100% { transform: scale(1) rotate(-1deg);    opacity: 1; }
-}
-@keyframes ssp-lc-shake {
-  0%, 100% { transform: scale(1) rotate(-1deg); }
-  25%      { transform: scale(1.02) rotate(2deg); }
-  50%      { transform: scale(1.02) rotate(-2deg); }
-  75%      { transform: scale(1.02) rotate(1deg); }
-}
-@keyframes ssp-lc-pulse {
-  from { text-shadow: 0 0 12px rgba(255, 213, 107, 0.9); }
-  to   { text-shadow: 0 0 22px rgba(255, 213, 107, 1), 0 0 6px #fff; }
-}
-
-/* Crab two-step popup: after the player clicks a discard pile, this overlay
- * appears at the bottom-center of the board (same place as the pending-draw
- * popup) showing the full contents of the chosen pile. Keeps the deck + the
- * other pile visible up top instead of slapping a giant inline panel into
- * the hand area. */
-.ssp .crab-overlay {
-  position: absolute;
-  left: 50%;
-  bottom: 12px;
-  transform: translateX(-50%);
-  z-index: 30;
-  background: rgba(0,0,0,0.9);
-  border: 2px dashed var(--yellow);
-  padding: 12px 16px;
-  border-radius: 12px;
-  box-shadow: 0 -4px 20px rgba(0,0,0,0.6);
-  min-width: 260px;
-  max-width: 88%;
-  max-height: 50vh;
-  overflow-y: auto;
-}
-.ssp .crab-overlay .cards {
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.ssp .pending-draw {
-  display: flex;
-  gap: 12px;
-  background: rgba(0,0,0,0.9);
-  border: 2px dashed var(--yellow);
-  padding: 10px 14px;
-  border-radius: 12px;
-  align-items: center;
-  justify-content: center;
-  /* Float at the bottom-center of the board so the deck + discard piles up
-   * top stay fully visible — the player needs to see the pile tops while
-   * deciding which of the two drawn cards to discard there. */
-  position: absolute;
-  left: 50%;
-  bottom: 12px;
-  transform: translateX(-50%);
-  z-index: 30;
-  box-shadow: 0 -4px 20px rgba(0,0,0,0.6);
-  min-width: 260px;
-}
-
-.ssp .target-info {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 13px;
-  color: rgba(255,255,255,0.85);
-  margin-bottom: 6px;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.ssp .match-progress {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-left: auto;
-}
-.ssp .match-progress-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  background: rgba(0, 0, 0, 0.3);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 999px;
-  padding: 3px 10px;
-  font-size: 12px;
-}
-.ssp .match-progress-pill .dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
-.ssp .match-progress-pill strong { color: #fff; }
-.ssp .match-progress-pill .muted { color: rgba(255, 255, 255, 0.55); }
-
-/* Per-color count strip on the local player's hand header. */
-.ssp-color-strip {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-left: 8px;
-  font-size: 11px;
-  font-weight: 500;
-}
-.ssp-color-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  background: rgba(0, 0, 0, 0.3);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 999px;
-  padding: 1px 7px 1px 4px;
-  color: rgba(255, 255, 255, 0.95);
-}
-.ssp-color-swatch {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  border: 1px solid rgba(0, 0, 0, 0.4);
-}
-
-.ssp-event-banner {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  background: linear-gradient(90deg, #5a2628, #2a1a3a);
-  border: 1px solid #c54a4a;
-  border-radius: 8px;
-  padding: 8px 12px;
-  margin: 4px 0 10px;
-  font-size: 13px;
-  color: #fbf6ea;
-}
-
-.ssp-event-banner .ssp-event-tag {
-  background: #c54a4a;
-  color: #fbf6ea;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 10px;
-  letter-spacing: 1px;
-  text-transform: uppercase;
-  font-weight: 700;
-}
-
-.ssp-event-banner .ssp-event-rule {
-  color: rgba(255,255,255,0.7);
-  font-size: 12px;
-  flex: 1 1 200px;
-}
-
-/* Extra Pepper: held event cards, Coral Reef shells, round-end outcomes. */
-.ssp-held-event {
-  margin-left: 6px;
-  padding: 1px 7px;
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 600;
-  cursor: help;
-  color: #fbf6ea;
-}
-.ssp-held-event.plus { background: #8a3a3a; }
-.ssp-held-event.minus { background: #2f6b4a; }
-
-.ssp .ssp-prompt {
-  color: rgba(255,255,255,0.85);
-  font-size: 13px;
-  align-self: center;
-}
-
-.ssp .ssp-coral {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-}
-.ssp .ssp-coral .card { opacity: 0.6; }
-.ssp .ssp-coral-tag {
-  font-size: 10px;
-  color: rgba(255,255,255,0.8);
-}
-
-.ssp .round-summary .ssp-event-outcome {
-  margin: 4px 0 8px;
-  padding-left: 18px;
-  font-size: 13px;
-}
-.ssp .round-summary .ssp-event-choice {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: stretch;
-  margin: 6px 0 10px;
-}
-.ssp .round-summary .ssp-event-choice p { flex: 1 1 100%; margin: 0; font-weight: 600; }
-.ssp .round-summary .ssp-event-choice button {
-  flex: 1 1 200px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  text-align: left;
-}
-.ssp .round-summary .ssp-event-choice .ssp-event-rule { font-size: 11px; opacity: 0.8; font-weight: 400; }
 
 /* Card tooltip on hover */
 .ssp .card .card-tooltip {
@@ -790,6 +862,709 @@
 .ssp .card .card-tooltip .rule { color: rgba(251,246,234,0.85); }
 .ssp .card .card-tooltip .ability { margin-top: 4px; color: #f4d268; }
 
+.ssp .ssp-coral {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.ssp .ssp-coral .card { opacity: 0.6; }
+.ssp .ssp-coral-tag {
+  font-size: 10px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+/* ------------------------------------------- your hand: a sheet of paper */
+
+.ssp .hand-area {
+  isolation: isolate;
+  background:
+    linear-gradient(150deg, rgba(255, 255, 255, 0.55) 0%, rgba(255, 255, 255, 0) 32%),
+    var(--paper-fibre),
+    linear-gradient(180deg, #fbf4e3 0%, #f1e4c6 100%);
+  color: var(--paper-ink);
+  border: 1px solid rgba(110, 85, 40, 0.38);
+  border-radius: 14px;
+  padding: 14px 16px;
+  box-shadow:
+    0 18px 34px -16px rgba(0, 0, 0, 0.85),
+    0 3px 0 rgba(150, 120, 70, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+/* A dog-eared corner. */
+.ssp .hand-area::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  width: 30px;
+  height: 30px;
+  z-index: 2;
+  border-top-right-radius: 14px;
+  border-bottom-left-radius: 7px;
+  background: linear-gradient(225deg, #0f4659 0 50%, #e4d3ad 50% 100%);
+  box-shadow: -3px 3px 5px -2px rgba(80, 55, 20, 0.4);
+  pointer-events: none;
+}
+/* Your turn: the sheet glows. (On a pseudo-element so the glow never touches
+   the cards' boxes.) */
+.ssp .hand-area.my-turn::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  --cc-glow: rgba(79, 209, 197, 0.8);
+  animation: cc-pulse-glow 2.4s ease-in-out infinite;
+}
+
+.ssp .hand-area h3 {
+  margin: 0 0 8px;
+  padding-right: 24px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--paper-ink);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.ssp .hand-area .ssp-hand-title {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.ssp .hand-area .ssp-hand-name {
+  font-family: var(--font-hand);
+  font-size: 28px;
+  line-height: 0.9;
+  color: #12536a;
+}
+.ssp .hand-area .ssp-pts {
+  font-size: 13px;
+  font-weight: 800;
+  color: #f2fffb;
+  background: linear-gradient(180deg, #1f7c8c, #12536a);
+  border-radius: 999px;
+  padding: 3px 10px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 3px 6px -3px rgba(0, 0, 0, 0.5);
+}
+.ssp .hand-area h3.ssp-table-title {
+  font-family: var(--font-hand);
+  font-size: 22px;
+  font-weight: 700;
+  color: #6b5330;
+}
+
+/* Reserve a stable cards row so the board doesn't grow/shrink when the hand
+ * wraps to a second line. */
+.ssp .hand-area .cards {
+  min-height: 110px;
+  align-content: flex-start;
+}
+
+.ssp .cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* The cards you've laid down sit in a shallow tray pressed into the paper. */
+.ssp .hand-area .table-strip {
+  background: rgba(120, 95, 50, 0.08);
+  border-radius: 10px;
+  padding: 5px;
+  box-shadow: inset 0 1px 3px rgba(90, 65, 30, 0.22), inset 0 -1px 0 rgba(255, 255, 255, 0.6);
+}
+
+.ssp .hand-area .help,
+.ssp .hand-area .ssp-prompt,
+.ssp .hand-area .ssp-coral-tag { color: #3d3020; }
+
+.ssp .hand-area .ssp-color-pill {
+  background: rgba(255, 255, 255, 0.65);
+  border-color: rgba(28, 26, 46, 0.16);
+  color: var(--paper-ink);
+}
+
+/* Reserve a stable action area so the duo/steal/crab/lobster pickers don't
+ * make the board jump every time the subPhase changes. The buttons sit on a
+ * single row at the top of the slot. */
+.ssp .actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  min-height: 56px;
+  align-items: flex-start;
+}
+
+.ssp .actions button {
+  font-size: 13px;
+  font-weight: 800;
+  border-radius: 10px;
+  box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.18), 0 6px 12px -8px rgba(0, 0, 0, 0.7);
+}
+
+.ssp .actions .stop {
+  background: linear-gradient(180deg, #4fdc92, #23a862);
+  color: #052414;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 15px;
+  letter-spacing: 0.06em;
+}
+.ssp .actions .lastchance {
+  background: linear-gradient(180deg, #f47a6f, #cf4238);
+  color: #fff;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 15px;
+  letter-spacing: 0.05em;
+}
+.ssp .actions .pass {
+  background: linear-gradient(180deg, #24495a, #173444);
+  color: var(--paper-cream);
+  border: 1px solid rgba(0, 0, 0, 0.25);
+}
+
+.ssp .actions button:disabled { background: rgba(255,255,255,0.12); color: rgba(255,255,255,0.4); box-shadow: none; }
+.ssp .hand-area .actions button:disabled {
+  opacity: 1;
+  background: rgba(28, 26, 46, 0.07);
+  color: rgba(28, 26, 46, 0.36);
+  box-shadow: inset 0 0 0 1px rgba(28, 26, 46, 0.12);
+}
+
+.ssp .help {
+  font-size: 12px;
+  color: rgba(255,255,255,0.8);
+  margin: 0;
+  text-align: center;
+}
+
+.ssp .help.center { margin: 8px 0; }
+
+.ssp .ssp-prompt {
+  color: rgba(255,255,255,0.85);
+  font-size: 13px;
+  font-weight: 600;
+  align-self: center;
+}
+
+/* "Waiting for …": a little boat bobbing beside it. */
+.ssp .ssp-waiting {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-family: var(--font-hand);
+  font-size: 21px;
+  color: rgba(230, 251, 246, 0.82);
+}
+.ssp .ssp-waiting::before {
+  content: '';
+  width: 22px;
+  height: 17px;
+  background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 30'><g stroke='%231c1a2e' stroke-width='1.6' stroke-linejoin='round'><polygon points='20,2 9,20 20,20' fill='%23fbf3dc'/><polygon points='20,2 20,20 31,20' fill='%23e2d0a2'/><polygon points='3,19 37,19 31,28 9,28' fill='%23ef8a63'/></g></svg>") center / contain no-repeat;
+  animation: cc-bob 2.8s ease-in-out infinite;
+}
+
+/* Per-color count strip on the local player's hand header. */
+.ssp-color-strip {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.ssp-color-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  padding: 1px 7px 1px 4px;
+  color: rgba(255, 255, 255, 0.95);
+}
+.ssp-color-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.4);
+}
+
+/* A sticker on a player's zone naming what they just did (re-keyed per
+   move; plays once and fades out). */
+.ssp .ssp-moment {
+  position: absolute;
+  top: -14px;
+  right: 40px;
+  z-index: 5;
+  padding: 3px 11px 4px;
+  border-radius: 8px;
+  font-family: var(--font-hand);
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--paper-ink);
+  background: #fff3c4;
+  border: 1.5px solid var(--paper-ink);
+  box-shadow: 0 8px 14px -8px rgba(0, 0, 0, 0.7);
+  pointer-events: none;
+  animation: ssp-moment 2.8s var(--ease-out) forwards;
+}
+.ssp .player-strip .ssp-moment { right: 14px; }
+.ssp .ssp-moment.tone-duo { background: #c6f3ec; }
+.ssp .ssp-moment.tone-trio { background: #ffd8a8; }
+.ssp .ssp-moment.tone-steal { background: #ffc6bf; }
+.ssp .ssp-moment.tone-shield { background: #ffd6e8; }
+.ssp .ssp-moment.tone-mermaid {
+  background: linear-gradient(120deg, #fbf4ff, #c9f2ff);
+  box-shadow: 0 0 16px 2px rgba(160, 230, 255, 0.75), 0 8px 14px -8px rgba(0, 0, 0, 0.7);
+}
+@keyframes ssp-moment {
+  0%   { opacity: 0; transform: translateY(10px) scale(0.6) rotate(-9deg); }
+  12%  { opacity: 1; transform: translateY(0) scale(1.1) rotate(-3deg); }
+  20%  { transform: scale(1) rotate(-3deg); }
+  82%  { opacity: 1; transform: scale(1) rotate(-3deg); }
+  100% { opacity: 0; transform: translateY(-10px) scale(0.96) rotate(-3deg); }
+}
+
+/* ------------------------------------------------------- floating pickers */
+
+/* Crab two-step popup: after the player clicks a discard pile, this overlay
+ * appears at the bottom-center of the board (same place as the pending-draw
+ * popup) showing the full contents of the chosen pile. Keeps the deck + the
+ * other pile visible up top instead of slapping a giant inline panel into
+ * the hand area. (Fades in on opacity only: the cards in it are mid-flight.) */
+.ssp .crab-overlay {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  z-index: 30;
+  background: linear-gradient(180deg, rgba(10, 46, 60, 0.97), rgba(5, 24, 34, 0.98));
+  border: 1px solid rgba(214, 248, 242, 0.28);
+  padding: 12px 16px;
+  border-radius: 16px;
+  box-shadow: 0 0 0 4px rgba(239, 251, 247, 0.08), 0 24px 44px -12px rgba(0, 0, 0, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  min-width: 260px;
+  max-width: 88%;
+  max-height: 50vh;
+  overflow-y: auto;
+  animation: cc-fade-in 200ms ease backwards;
+}
+.ssp .crab-overlay .cards {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ssp .pending-draw {
+  display: flex;
+  gap: 12px;
+  background: linear-gradient(180deg, rgba(10, 46, 60, 0.97), rgba(5, 24, 34, 0.98));
+  border: 1px solid rgba(214, 248, 242, 0.28);
+  padding: 10px 14px 12px;
+  border-radius: 16px;
+  align-items: center;
+  justify-content: center;
+  /* Float at the bottom-center of the board so the deck + discard piles up
+   * top stay fully visible — the player needs to see the pile tops while
+   * deciding which of the two drawn cards to discard there. */
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  z-index: 30;
+  box-shadow: 0 0 0 4px rgba(239, 251, 247, 0.08), 0 24px 44px -12px rgba(0, 0, 0, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  min-width: 260px;
+  animation: cc-fade-in 200ms ease backwards;
+}
+
+/* The instruction line in both pickers, handwritten. */
+.ssp .keep-hint {
+  font-family: var(--font-hand);
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: #ffe7a3;
+  text-align: center;
+  padding: 0 4px;
+  margin-bottom: 10px;
+}
+
+/* --------------------------------------------- LAST CHANCE: a red stamp */
+
+/* Full-board overlay that thumps in for a couple of seconds when somebody
+ * calls LAST CHANCE, so the player can't miss it. */
+.ssp-lastchance-banner {
+  position: absolute;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  border-radius: inherit;
+  background: radial-gradient(ellipse at center, rgba(210, 60, 50, 0.45) 0%, rgba(4, 20, 28, 0.35) 55%, rgba(0, 0, 0, 0) 80%);
+  animation: ssp-lc-fade 2500ms ease-out forwards;
+}
+
+.ssp-lastchance-card {
+  text-align: center;
+  padding: 16px 34px 14px;
+  background:
+    linear-gradient(150deg, rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0) 40%),
+    var(--paper-fibre),
+    #fbf5e6;
+  color: #c2362c;
+  border: 5px double #c2362c;
+  border-radius: 14px;
+  box-shadow: 0 0 0 6px rgba(251, 245, 230, 0.92), 0 26px 50px -10px rgba(0, 0, 0, 0.8);
+  animation: cc-stamp 700ms var(--ease-out) both;
+}
+
+.ssp-lastchance-eyebrow {
+  font-family: var(--font-display);
+  font-size: 32px;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  color: #c2362c;
+  margin-bottom: 2px;
+}
+.ssp-lastchance-name {
+  font-family: var(--font-hand);
+  font-size: 42px;
+  font-weight: 700;
+  line-height: 1;
+  margin: 6px 0 4px;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
+}
+.ssp-lastchance-sub {
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(28, 26, 46, 0.78);
+  font-style: italic;
+}
+
+@keyframes ssp-lc-fade {
+  0%   { opacity: 0; }
+  10%  { opacity: 1; }
+  85%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* --------------------------------------- round summary: a paper report */
+
+.ssp .round-summary {
+  position: relative;
+  background:
+    linear-gradient(150deg, rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0) 30%),
+    var(--paper-fibre),
+    linear-gradient(180deg, #fbf5e6, #f1e5c8);
+  color: var(--paper-ink);
+  padding: 24px 22px 20px;
+  border-radius: 10px;
+  max-width: 760px;
+  margin: 0 auto;
+  box-shadow:
+    0 30px 60px -26px rgba(0, 0, 0, 0.9),
+    0 0 0 1px rgba(110, 85, 40, 0.35),
+    0 3px 0 rgba(150, 120, 70, 0.45),
+    inset 0 1px 0 #fff;
+  animation: cc-rise-in 520ms var(--ease-out) backwards;
+}
+/* A band of paper-cut waves along the top. */
+.ssp .round-summary::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 11px;
+  border-radius: 10px 10px 0 0;
+  background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 11'><rect width='40' height='5' fill='%231f7c8c'/><path d='M0 5 Q10 11 20 5 T40 5 V0 H0 Z' fill='%231f7c8c'/><path d='M0 5 Q10 11 20 5 T40 5' fill='none' stroke='%234fd1c5' stroke-width='1.4'/></svg>") 0 0 / 40px 11px repeat-x;
+}
+
+.ssp .round-summary h2 {
+  margin: 0;
+  font-family: var(--font-hand);
+  font-size: 38px;
+  font-weight: 700;
+  line-height: 1;
+  color: #12536a;
+}
+
+.ssp .round-summary-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.ssp .round-summary-header h2 { margin-bottom: 0; }
+.ssp .round-summary-header button {
+  font-size: 14px;
+  font-weight: 800;
+  border-radius: 10px;
+  box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.18), 0 8px 16px -10px rgba(0, 0, 0, 0.8);
+}
+
+/* How the round ended: a rubber stamp beside the sentence. */
+.ssp .ssp-round-ending {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin: 10px 0 4px;
+}
+.ssp .ssp-stamp {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 5px 12px 4px;
+  border: 3px solid currentColor;
+  border-radius: 8px;
+  outline: 1.5px solid currentColor;
+  outline-offset: -7px;
+  font-family: var(--font-display);
+  font-size: 22px;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  text-transform: uppercase;
+  color: #c2362c;
+  background: radial-gradient(circle at 30% 40%, rgba(251, 245, 230, 0.55) 0 1px, transparent 1.6px) 0 0 / 7px 6px;
+  opacity: 0.92;
+  animation: cc-stamp 650ms var(--ease-out) 180ms both;
+}
+.ssp .ssp-stamp.tone-stop { color: #1f8a4c; }
+.ssp .ssp-stamp.tone-last.lost { color: #8c4f45; }
+.ssp .ssp-stamp.tone-deck { color: #4a6272; }
+.ssp .ssp-stamp.tone-mermaid { color: #7a3fa0; }
+.ssp .ssp-stamp-sub {
+  font-family: var(--font-hand);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.ssp .round-summary-reveal {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+  border-top: 1px dashed rgba(110, 85, 40, 0.4);
+  padding-top: 10px;
+}
+.ssp .round-summary-player h3 {
+  font-family: var(--font-hand);
+  font-size: 22px;
+  font-weight: 700;
+}
+.ssp .round-summary-player .table-strip {
+  background: rgba(120, 95, 50, 0.08);
+  padding: 6px;
+  border-radius: 10px;
+  min-height: 90px;
+  box-shadow: inset 0 1px 3px rgba(90, 65, 30, 0.22);
+}
+/* Each hand turns face up in turn (the summary is its own FLIP scene, so
+   nothing flies into these). */
+.ssp .round-summary-player .table-strip .card {
+  animation: cc-flip-in 520ms var(--ease-out) backwards;
+  animation-delay: calc(var(--row, 0) * 160ms + var(--col, 0) * 45ms + 120ms);
+}
+.ssp .round-summary-player:nth-child(2) { --row: 1; }
+.ssp .round-summary-player:nth-child(3) { --row: 2; }
+.ssp .round-summary-player:nth-child(4) { --row: 3; }
+.ssp .round-summary-player .card:nth-child(2) { --col: 1; }
+.ssp .round-summary-player .card:nth-child(3) { --col: 2; }
+.ssp .round-summary-player .card:nth-child(4) { --col: 3; }
+.ssp .round-summary-player .card:nth-child(5) { --col: 4; }
+.ssp .round-summary-player .card:nth-child(6) { --col: 5; }
+.ssp .round-summary-player .card:nth-child(7) { --col: 6; }
+.ssp .round-summary-player .card:nth-child(8) { --col: 7; }
+.ssp .round-summary-player .card:nth-child(9) { --col: 8; }
+.ssp .round-summary-player .card:nth-child(n+10) { --col: 9; }
+
+.ssp .round-summary table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 12px 0;
+}
+
+.ssp .round-summary td, .ssp .round-summary th {
+  padding: 7px 8px;
+  border-bottom: 1px dashed rgba(110, 85, 40, 0.32);
+  text-align: left;
+}
+.ssp .round-summary th {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #7a6440;
+  border-bottom: 2px solid rgba(110, 85, 40, 0.35);
+}
+.ssp .round-summary tbody tr { animation: cc-rise-in 420ms var(--ease-out) backwards; }
+.ssp .round-summary tbody tr:nth-child(1) { animation-delay: 120ms; }
+.ssp .round-summary tbody tr:nth-child(2) { animation-delay: 200ms; }
+.ssp .round-summary tbody tr:nth-child(3) { animation-delay: 280ms; }
+.ssp .round-summary tbody tr:nth-child(4) { animation-delay: 360ms; }
+.ssp .round-summary tr.round-best td { background: rgba(79, 209, 197, 0.16); font-weight: 800; }
+.ssp .round-summary tr.round-best td:first-child { box-shadow: inset 4px 0 0 #2a9d8f; }
+
+.ssp .round-summary td.num, .ssp .round-summary th.num { text-align: right; }
+
+.ssp .round-summary tr.forfeit td { color: var(--danger); }
+/* Single-cell forfeit indicator — used for the Bonus column on STOP rounds
+ * (where the special bonus is shown for reference but doesn't count) and
+ * for the Cards column when a LAST CHANCE bet is lost. The number stays
+ * visible so the player can see what they "would have" scored, but it's
+ * struck through to indicate it's not in the total. */
+.ssp .round-summary td.forfeit-cell {
+  color: var(--danger);
+  text-decoration: line-through;
+}
+
+.ssp .round-summary .ssp-event-outcome {
+  margin: 4px 0 8px;
+  padding-left: 18px;
+  font-size: 13px;
+}
+.ssp .round-summary .ssp-event-choice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: stretch;
+  margin: 6px 0 10px;
+}
+.ssp .round-summary .ssp-event-choice p { flex: 1 1 100%; margin: 0; font-weight: 600; }
+.ssp .round-summary .ssp-event-choice button {
+  flex: 1 1 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+  border-radius: 12px;
+  box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.15), 0 8px 16px -10px rgba(0, 0, 0, 0.7);
+}
+.ssp .round-summary .ssp-event-choice .ssp-event-rule { font-size: 11px; opacity: 0.8; font-weight: 400; }
+.ssp .round-summary .help { color: #3d3020; }
+
+/* ---------------------------------------------------- game over: a crown */
+
+/* Big celebratory winner card shown at the top of the GameOver screen. */
+.ssp .ssp-winner-banner {
+  position: relative;
+  overflow: hidden;
+  max-width: 760px;
+  margin: 0 auto 14px;
+  background:
+    radial-gradient(120% 140% at 50% -20%, rgba(255, 255, 255, 0.75), transparent 55%),
+    var(--paper-fibre),
+    linear-gradient(160deg, #ffe08a 0%, #f8c95a 45%, #efae45 100%);
+  color: var(--paper-ink);
+  padding: 22px 18px 20px;
+  border-radius: 18px;
+  text-align: center;
+  box-shadow:
+    0 30px 60px -26px rgba(0, 0, 0, 0.9),
+    0 0 0 1px rgba(120, 80, 10, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.75),
+    inset 0 -4px 0 rgba(150, 95, 10, 0.25);
+  animation: cc-zoom-in 600ms var(--ease-spring) backwards;
+}
+.ssp .ssp-winner-trophy {
+  line-height: 0;
+  margin-bottom: 4px;
+}
+.ssp .ssp-winner-trophy svg { animation: cc-float 4s ease-in-out infinite; }
+.ssp .ssp-winner-eyebrow {
+  font-family: var(--font-display);
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: rgba(28, 26, 46, 0.7);
+  margin-bottom: 2px;
+}
+.ssp .ssp-winner-name {
+  font-family: var(--font-hand);
+  font-size: 54px;
+  font-weight: 700;
+  line-height: 1;
+  margin: 4px 0 8px;
+  text-decoration: underline;
+  text-decoration-color: var(--seat, #12536a);
+  text-decoration-thickness: 4px;
+  text-underline-offset: 7px;
+  animation: cc-pop 600ms var(--ease-spring) 250ms both;
+}
+.ssp .ssp-winner-sub {
+  font-size: 14px;
+  font-weight: 600;
+  font-style: italic;
+  opacity: 0.85;
+}
+/* Paper confetti, once. */
+.ssp-confetti {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.ssp-confetti span {
+  position: absolute;
+  top: -14px;
+  width: 7px;
+  height: 11px;
+  border-radius: 1px;
+  opacity: 0;
+  box-shadow: inset 0 0 0 0.5px rgba(28, 26, 46, 0.4);
+  animation: ssp-confetti 2.6s cubic-bezier(0.25, 0.6, 0.4, 1) forwards;
+}
+.ssp-confetti span.tri {
+  width: 10px;
+  height: 9px;
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+}
+@keyframes ssp-confetti {
+  0%   { opacity: 0; transform: translate3d(0, 0, 0) rotate(0deg); }
+  8%   { opacity: 1; }
+  80%  { opacity: 1; }
+  100% { opacity: 0; transform: translate3d(var(--drift, 0px), 260px, 0) rotate(var(--spin, 360deg)); }
+}
+
+/* Highlight the winning row in the final-scores table. */
+.ssp .round-summary tr.ssp-winner-row {
+  background: rgba(244, 210, 104, 0.35);
+  font-weight: 700;
+}
+.ssp .round-summary tr.ssp-winner-row td {
+  border-bottom-color: var(--paper-edge);
+}
+.ssp .ssp-winner-pip {
+  background: var(--yellow);
+  color: var(--paper-ink);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 999px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  box-shadow: inset 0 0 0 1px rgba(28, 26, 46, 0.25);
+}
+
+/* ----------------------------------------------------- layout + sidebar */
+
 /* Two-column layout: board on the left, sidebar on the right */
 .ssp-layout {
   display: grid;
@@ -803,34 +1578,40 @@
   .ssp-layout { grid-template-columns: minmax(0, 1fr); }
 }
 
-/* Right sidebar */
+/* Right sidebar: deep water with a wave under its title. */
 .ssp-sidebar {
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  background: linear-gradient(180deg, rgba(10, 46, 58, 0.94), rgba(6, 26, 36, 0.96));
+  border: 1px solid rgba(214, 248, 242, 0.16);
+  border-radius: 16px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   max-height: 80vh;
+  box-shadow: 0 24px 48px -24px rgba(0, 0, 0, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 .ssp-sidebar-tabs {
   display: flex;
-  border-bottom: 1px solid var(--border);
+  padding-bottom: 7px;
+  background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 8'><path d='M0 4 Q10 0 20 4 T40 4' fill='none' stroke='%234fd1c5' stroke-opacity='0.55' stroke-width='1.4'/></svg>") left bottom / 40px 8px repeat-x;
 }
 .ssp-sidebar-tabs button {
   flex: 1;
   background: transparent;
-  color: var(--fg-muted);
+  color: #e9fbf6;
   border: none;
   border-radius: 0;
-  padding: 10px 12px;
-  font-size: 13px;
-  font-weight: 600;
+  padding: 10px 12px 4px;
+  font-family: var(--font-hand);
+  font-size: 23px;
+  font-weight: 700;
+  line-height: 1;
   cursor: pointer;
   border-bottom: 2px solid transparent;
 }
 .ssp-sidebar-tabs button:hover { background: var(--bg-hover); color: var(--fg); }
-.ssp-sidebar-tabs button.active { color: var(--fg); border-bottom-color: var(--accent); }
+.ssp-sidebar-tabs button.active { color: #f2fffb; }
+/* The single tab is a title, not a control. */
+.ssp-sidebar-tabs button.active:disabled { opacity: 1; cursor: default; background: transparent; }
 .ssp-sidebar-body {
   padding: 12px;
   overflow-y: auto;
@@ -874,11 +1655,11 @@
   gap: 4px;
 }
 .ssp-log-entry {
-  padding: 4px 6px;
-  border-radius: 4px;
+  padding: 4px 7px;
+  border-radius: 6px;
   font-size: 11px;
   line-height: 1.4;
-  color: var(--fg);
+  color: #d9efea;
 }
 
 /* Combined History + Chat feed */
@@ -898,11 +1679,21 @@
   gap: 4px;
   padding-right: 2px;
 }
+/* New lines wash in. */
+.ssp-feed-thread > * { animation: cc-fade-in 360ms ease backwards; }
 .ssp-feed .ssp-chat-input {
   flex-shrink: 0;
 }
-.ssp-log-entry.round-end { background: rgba(106, 160, 255, 0.15); font-weight: 600; }
-.ssp-log-entry.match-end { background: rgba(244, 210, 104, 0.2); font-weight: 700; }
+.ssp-log-entry.round-end {
+  background: rgba(79, 209, 197, 0.13);
+  box-shadow: inset 3px 0 0 rgba(79, 209, 197, 0.7);
+  font-weight: 600;
+}
+.ssp-log-entry.match-end {
+  background: rgba(255, 209, 102, 0.18);
+  box-shadow: inset 3px 0 0 #ffd166;
+  font-weight: 700;
+}
 .ssp-log-entry .who {
   font-weight: 600;
   color: var(--accent);
@@ -911,7 +1702,7 @@
    prefixes) use a NEUTRAL hue that's distinct from any seat color. Use the
    `system-who` class on these spans — generic `.who` keeps its inline seat
    color (set from JSX via style={{color: seat.color}}). */
-.ssp-log-entry .system-who { color: #aab2c5 !important; }
+.ssp-log-entry .system-who { color: #9fd9d2 !important; }
 
 /* Chat */
 .ssp-chat-thread {
@@ -939,85 +1730,108 @@
 .ssp-chat-input input { flex: 1; font-size: 12px; padding: 6px 8px; }
 .ssp-chat-input button { font-size: 12px; padding: 6px 12px; }
 
-/* Click-to-draw deck / discard piles */
-.ssp .center {
-  align-items: stretch;
-}
-.ssp .deck-stack, .ssp .pile {
-  cursor: default;
-  border-radius: 10px;
-  padding: 6px;
-  transition: background 100ms ease, transform 100ms ease;
-}
-.ssp .deck-stack.clickable, .ssp .pile.clickable {
-  cursor: pointer;
-}
-@media (hover: hover) {
-  .ssp .deck-stack.clickable:hover, .ssp .pile.clickable:hover {
-    background: rgba(255,255,255,0.08);
-    transform: translateY(-2px);
-  }
-}
-.ssp .pile.target-discard {
-  outline: 2px dashed var(--yellow);
-  outline-offset: -2px;
-}
-.ssp .center .label {
-  font-size: 11px;
-  color: rgba(255,255,255,0.75);
-  text-align: center;
-  margin-top: 2px;
-}
-/* Reserved-height "action hint" slot under deck/pile widgets. Always present
- * so adding/removing a hint never reflows the row — eyes were getting
- * scrolled around the board on every subPhase tick. */
-.ssp .center .label.hint {
-  font-size: 11px;
-  color: #f4d268;
-  min-height: 1.2em;
-  white-space: nowrap;
-  /* Inherit visibility from text — &nbsp; placeholder keeps height. */
-}
+/* --------------------------------------------------------------- lobby */
 
-/* Keep-from-draw chooser inline near the deck */
-.ssp .keep-hint {
-  background: rgba(244, 210, 104, 0.12);
-  border: 1px dashed var(--yellow);
-  border-radius: 8px;
-  padding: 6px 10px;
+.ssp-lobby .ssp-lobby-target {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.ssp-lobby .ssp-lobby-heading {
+  margin: 16px 0 8px;
   font-size: 12px;
-  color: rgba(255,255,255,0.9);
-  text-align: center;
-  margin-bottom: 8px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fg-muted);
+}
+.ssp-lobby .ssp-lobby-exps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+.ssp-lobby .ssp-lobby-exp {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 11px 52px 11px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.16));
+  background-color: rgba(255, 255, 255, 0.03);
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 30px auto;
+  cursor: pointer;
+  transition: border-color var(--dur-fast) ease, background-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
+}
+.ssp-lobby .ssp-lobby-exp.salt {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M3 12 Q3 3 12 3 Q21 3 21 12 Z' fill='%23eab0e6' stroke='%231c1a2e' stroke-width='1' stroke-linejoin='round'/><path d='M6 12.5 q-1 4 1 8 M10 12.5 q1 4 -1 9 M14 12.5 q-1 4 1 9 M18 12.5 q1 4 -1 8' fill='none' stroke='%23c983c6' stroke-width='1.5' stroke-linecap='round'/></svg>");
+}
+.ssp-lobby .ssp-lobby-exp.pepper {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect x='5' y='2' width='14' height='20' rx='2' fill='%23fbf5e6' stroke='%231c1a2e' stroke-width='1'/><polygon points='12,6 13.5,10 17.5,10 14.3,12.5 15.5,16.5 12,14 8.5,16.5 9.7,12.5 6.5,10 10.5,10' fill='%23c54a4a'/></svg>");
+}
+.ssp-lobby .ssp-lobby-exp:hover { border-color: rgba(79, 209, 197, 0.55); }
+.ssp-lobby .ssp-lobby-exp.on {
+  border-color: #4fd1c5;
+  background-color: rgba(79, 209, 197, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(79, 209, 197, 0.35), 0 0 18px -6px rgba(79, 209, 197, 0.6);
+}
+.ssp-lobby .ssp-lobby-exp input { margin-top: 4px; flex-shrink: 0; }
+.ssp-lobby .ssp-lobby-exp-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.ssp-lobby .ssp-lobby-exp strong {
+  font-family: var(--font-hand);
+  font-size: 23px;
+  line-height: 1;
+}
+.ssp-lobby .ssp-lobby-exp small {
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--fg-muted);
 }
 
 /* ---------- phones ---------- */
 
 @media (max-width: 600px) {
-  .ssp .board { gap: 10px; padding: 10px; border-radius: 10px; }
+  .ssp .board { gap: 12px; padding: 10px; border-radius: 14px; }
   .ssp .target-info { font-size: 12px; gap: 4px 10px; margin-bottom: 0; }
+  .ssp .ssp-round-tag { font-size: 20px; padding: 1px 10px 3px; }
   .ssp .match-progress { gap: 4px; }
   .ssp .match-progress-pill { padding: 2px 8px; font-size: 11px; }
   .ssp-event-banner { padding: 6px 10px; margin: 0; gap: 4px 8px; }
+  .ssp-event-banner strong { font-size: 21px; }
 
   .ssp .opponents { gap: 8px; }
-  .ssp .player-strip { padding: 6px 8px; }
+  .ssp .player-strip { padding: 7px 8px 8px; }
   /* The shell's `.app-shell header` rule pads and rules every <header>; a
      strip's name row needs none of that height. */
   .ssp .player-strip header { padding: 0 0 4px; margin-bottom: 4px; font-size: 14px; }
+  .ssp .ssp-strip-name { font-size: 21px; }
   .ssp .player-strip .table-strip { margin-top: 0; }
 
-  .ssp .center { gap: 6px; }
+  .ssp .board > .center { gap: 6px; padding: 8px 4px 2px; }
+  .ssp .board > .center::before, .ssp .board > .center::after { inset: 0 -2px; border-radius: 34px; }
+  /* The beach finds move to the ends, clear of the narrow columns. */
+  .ssp .board > .center::before { background-position: 4% 96%, 66% 5%, 97% 95%, 0 0, 0 0; }
   .ssp .deck-stack, .ssp .pile { padding: 4px; }
+  .ssp .center .label.hint { font-size: 17px; }
 
   .ssp .hand-area { padding: 10px 8px; }
   .ssp .hand-area h3 { flex-wrap: wrap; gap: 4px; }
+  .ssp .hand-area .ssp-hand-name { font-size: 24px; }
   .ssp-color-strip { margin-left: 0; }
   /* 5px gaps: five cards to a row down to a 360px screen. */
   .ssp .hand-area .cards { gap: 5px; min-height: 92px; }
   .ssp .actions { gap: 6px; margin-top: 10px; min-height: 40px; }
   /* Buttons fill each wrapped row: wide, even tap targets. */
   .ssp .actions button { flex: 1 1 auto; padding: 9px 12px; }
+  .ssp .player-strip .table-strip:empty::after,
+  .ssp .hand-area .table-strip:empty::after,
+  .ssp .hand-area .cards:empty::after { font-size: 17px; }
+  .ssp .ssp-moment { font-size: 17px; right: 30px; }
 
   /* The keep-a-card and dig-into-a-pile choosers sit at the bottom of the
      screen, not of the board: the board is taller than a phone, and the
@@ -1038,18 +1852,27 @@
     z-index: 150;
   }
 
-  .ssp-lastchance-card { padding: 16px 20px; max-width: calc(100% - 24px); }
-  .ssp-lastchance-eyebrow { font-size: 18px; letter-spacing: 3px; }
-  .ssp-lastchance-name { font-size: 30px; }
+  .ssp-lastchance-card { padding: 14px 18px 12px; max-width: calc(100% - 24px); }
+  .ssp-lastchance-eyebrow { font-size: 24px; letter-spacing: 0.06em; }
+  .ssp-lastchance-name { font-size: 34px; }
 
-  .ssp .round-summary { padding: 12px; }
-  .ssp .round-summary h2 { font-size: 20px; }
+  .ssp .round-summary { padding: 20px 12px 12px; }
+  .ssp .round-summary h2 { font-size: 30px; }
   .ssp .round-summary-header button { padding: 8px 12px; }
   .ssp .round-summary td, .ssp .round-summary th { padding: 5px 4px; }
   .ssp .round-summary-player .table-strip { gap: 4px; padding: 4px; }
+  .ssp .ssp-stamp { font-size: 18px; }
 
   .ssp .ssp-winner-banner { padding: 16px 12px; }
-  .ssp .ssp-winner-name { font-size: 26px; }
+  .ssp .ssp-winner-name { font-size: 40px; }
 
   .ssp-sidebar { max-height: min(80vh, 420px); }
+}
+
+/* Reduced motion: the LAST CHANCE banner fades out by keyframes, which a
+   1 ms animation would end at once — show it still instead (the view takes
+   it down after 2.5 s). */
+@media (prefers-reduced-motion: reduce) {
+  .ssp-lastchance-banner,
+  .ssp-lastchance-card { animation: none; }
 }

@@ -58,7 +58,7 @@ function LobbyConfig({ config, seats, onChange, readOnly }: { config: JaipurConf
   return (
     <div className="game-config">
       <h4 className="jp-lobby-h">Match length</h4>
-      <div role="radiogroup" aria-label="Match length" style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
+      <div role="radiogroup" aria-label="Match length" className="jp-lobby-lengths">
         {options.map((o) => (
           <button
             key={o.seals}
@@ -67,6 +67,11 @@ function LobbyConfig({ config, seats, onChange, readOnly }: { config: JaipurConf
             className={config.sealsToWin === o.seals ? undefined : 'secondary'}
             onClick={() => onChange({ ...config, sealsToWin: o.seals })}
           >
+            <span className="jp-lobby-seals" aria-hidden="true">
+              {Array.from({ length: o.seals }, (_, i) => (
+                <svg key={i} viewBox="0 0 40 40" width={16} height={16}><SealArt earned /></svg>
+              ))}
+            </span>
             {o.label}
           </button>
         ))}
@@ -368,14 +373,20 @@ function GameView({ state, localPlayerId, dispatch }: {
   );
 }
 
+/** The deck is running low: the status chip and the deck's label warn. */
+const LOW_DECK = 8;
+
 function StatusStrip({ state }: { state: JaipurState }) {
   const empty = emptyPiles(state);
   return (
     <div className="jp-status">
       <span className="jp-status-round">Round {state.round}</span>
-      <span>Deck <strong>{state.deck.length}</strong></span>
-      <span title="The round ends when three goods piles are empty">
+      <span className={`jp-status-chip${state.deck.length <= LOW_DECK ? ' low' : ''}`}>Deck <strong>{state.deck.length}</strong></span>
+      <span className="jp-status-chip" title="The round ends when three goods piles are empty">
         Sold out <strong>{empty}</strong>/{EMPTY_PILES_TO_END}
+        <span className="jp-soldout-pips" aria-hidden="true">
+          {Array.from({ length: EMPTY_PILES_TO_END }, (_, i) => <i key={i} className={i < empty ? 'on' : undefined} />)}
+        </span>
       </span>
       <span className="jp-status-goal">
         {state.config.sealsToWin === 1 ? 'Single round' : `First to ${state.config.sealsToWin} seals`}
@@ -399,6 +410,21 @@ function Seals({ have, need, size = 18 }: { have: number; need: number; size?: n
 // ---------------------------------------------------------------------------
 // Players
 
+/** The last rise of a shown score (for a floating "+N"); a new round or
+ *  another player in the row (hot-seat flip) starts over. */
+function useGain(playerId: PlayerId, round: number, value: number): { key: number; amount: number } | null {
+  const prev = useRef({ playerId, round, value });
+  const seq = useRef(0);
+  const [gain, setGain] = useState<{ key: number; amount: number } | null>(null);
+  useEffect(() => {
+    const p = prev.current;
+    if (p.playerId !== playerId || p.round !== round) setGain(null);
+    else if (value > p.value) setGain({ key: ++seq.current, amount: value - p.value });
+    prev.current = { playerId, round, value };
+  }, [playerId, round, value]);
+  return gain;
+}
+
 function PlayerRow({
   state, player, position, reveal, active, selection, takingTypes, onHandClick, onHerdClick, children,
 }: {
@@ -419,6 +445,9 @@ function PlayerRow({
   const small = position === 'top';
   const showBonus = reveal || state.phase === 'gameOver';
   const score = rupees(player);
+  // What the row shows (an opponent's bonus values stay hidden), and its rise.
+  const shown = showBonus ? score : goodsPoints(player);
+  const gain = useGain(player.id, state.round, shown);
   return (
     <section className={`jp-player jp-player-${position}${active ? ' active' : ''}`} style={{ ['--seat' as string]: seat?.color ?? '#888' }}>
       <header className="jp-player-head">
@@ -431,8 +460,9 @@ function PlayerRow({
         <Seals have={player.seals} need={state.config.sealsToWin} />
         <span className="jp-player-score" title="Rupees from tokens so far (the camel token is awarded at the end of the round)">
           {showBonus
-            ? <>₹ <strong>{score}</strong></>
-            : <>₹ <strong>{goodsPoints(player)}</strong>{player.bonusTokens.length > 0 && <span className="muted"> + {plural(player.bonusTokens.length, 'bonus token')}</span>}</>}
+            ? <>₹ <strong key={shown}>{score}</strong></>
+            : <>₹ <strong key={shown}>{goodsPoints(player)}</strong>{player.bonusTokens.length > 0 && <span className="muted"> + {plural(player.bonusTokens.length, 'bonus token')}</span>}</>}
+          {gain && <span key={gain.key} className="jp-gain" aria-hidden="true">+{gain.amount}</span>}
         </span>
       </header>
       <div className="jp-player-body">
@@ -511,47 +541,50 @@ function MarketRug({ state, selected, selectable, freshIds, onClick }: {
   const deckRef = useFlipAnchor('deck');
   const layers = Math.min(4, Math.ceil(state.deck.length / 10));
   return (
-    <div className="jp-rug">
-      <div className="jp-pile">
-        <div className="jp-deck" ref={deckRef}>
-          {state.deck.length === 0
-            ? <div className="jp-card jp-card-normal jp-slot-empty">empty</div>
-            : Array.from({ length: layers }, (_, i) => (
-              <CardBack key={i} style={{ position: i === 0 ? 'relative' : 'absolute', top: -i * 2, left: -i * 2 }} />
-            ))}
+    <div className="jp-stall">
+      <div className="jp-awning" aria-hidden="true"><span className="jp-awning-silk" /></div>
+      <div className="jp-rug">
+        <div className="jp-pile">
+          <div className="jp-deck" ref={deckRef}>
+            {state.deck.length === 0
+              ? <div className="jp-card jp-card-normal jp-slot-empty">empty</div>
+              : Array.from({ length: layers }, (_, i) => (
+                <CardBack key={i} style={{ position: i === 0 ? 'relative' : 'absolute', top: -i * 2, left: -i * 2 }} />
+              ))}
+          </div>
+          <div className={`jp-pile-label${state.deck.length <= LOW_DECK ? ' low' : ''}`}>Deck · {state.deck.length}</div>
         </div>
-        <div className="jp-pile-label">Deck · {state.deck.length}</div>
-      </div>
-      <div className="jp-market" aria-label="Market" style={{ ['--n' as string]: Math.max(1, state.market.length) }}>
-        {state.market.map((c) => (
-          <CardView
-            key={c.id}
-            card={c}
-            zone="market"
-            selectable={selectable}
-            selected={selected.includes(c.id)}
-            fresh={freshIds.has(c.id)}
-            onClick={() => onClick(c)}
-            title={c.type === 'camel' ? 'Camel — click to select every camel' : CARD_INFO[c.type].label}
-          />
-        ))}
-      </div>
-      <div className="jp-pile">
-        <div className="jp-discard">
-          {state.discard.length === 0 && <div className="jp-card jp-card-normal jp-slot-empty">sold cards</div>}
-          {state.discard.map((c, i) => (
+        <div className="jp-market" aria-label="Market" style={{ ['--n' as string]: Math.max(1, state.market.length) }}>
+          {state.market.map((c) => (
             <CardView
               key={c.id}
               card={c}
-              zone="discard"
-              style={{
-                position: i === 0 ? 'relative' : 'absolute', top: 0, left: 0,
-                transform: `rotate(${((c.id * 37) % 15) - 7}deg)`,
-              }}
+              zone="market"
+              selectable={selectable}
+              selected={selected.includes(c.id)}
+              fresh={freshIds.has(c.id)}
+              onClick={() => onClick(c)}
+              title={c.type === 'camel' ? 'Camel — click to select every camel' : CARD_INFO[c.type].label}
             />
           ))}
         </div>
-        <div className="jp-pile-label">Sold · {state.discard.length}</div>
+        <div className="jp-pile">
+          <div className="jp-discard">
+            {state.discard.length === 0 && <div className="jp-card jp-card-normal jp-slot-empty">sold cards</div>}
+            {state.discard.map((c, i) => (
+              <CardView
+                key={c.id}
+                card={c}
+                zone="discard"
+                style={{
+                  position: i === 0 ? 'relative' : 'absolute', top: 0, left: 0,
+                  transform: `rotate(${((c.id * 37) % 15) - 7}deg)`,
+                }}
+              />
+            ))}
+          </div>
+          <div className="jp-pile-label">Sold · {state.discard.length}</div>
+        </div>
       </div>
     </div>
   );
@@ -576,9 +609,9 @@ function ActionBar({ state, me, intent, error, onAct, onClear, hasSelection }: {
     <div className="jp-actions">
       <div className={`jp-intent jp-intent-${intent.tone}`}>
         <button className="jp-go" disabled={!intent.action} onClick={() => onAct(intent.action)}>
-          {intent.label}
+          <span key={intent.label} className="jp-go-label">{intent.label}</span>
         </button>
-        <span className="jp-intent-hint">{error ?? intent.hint}</span>
+        <span key={error ?? intent.hint} className="jp-intent-hint">{error ?? intent.hint}</span>
         {hasSelection && <button className="secondary jp-clear" onClick={onClear}>Clear</button>}
       </div>
       <div className="jp-quick">
@@ -615,7 +648,7 @@ function PriceBoard({ state }: { state: JaipurState }) {
     <div className="jp-prices">
       <h4>Price board</h4>
       {GOODS.map((g) => (
-        <div key={g} className={`jp-price-row${state.tokens[g].length === 0 ? ' soldout' : ''}`}>
+        <div key={g} className={`jp-price-row${state.tokens[g].length === 0 ? ' soldout' : ''}`} style={{ ['--good' as string]: CARD_INFO[g].color }}>
           <TypeIcon type={g} size={22} />
           <div className="jp-price-tokens">
             {state.tokens[g].map((t) => (
@@ -761,7 +794,11 @@ function ScoreTable({ state, summary }: { state: JaipurState; summary: NonNullab
           <div key={row.playerId} className={`jp-score-col${won ? ' won' : ''}`}>
             <div className="jp-score-name" style={{ color: seatOf(state, p.id)?.color }}>{nameOf(state, p.id)}</div>
             {won && (
-              <svg viewBox="0 0 40 40" className="jp-seal-pop" width={64} height={64}><SealArt earned /></svg>
+              <>
+                <span className="jp-seal-burst" aria-hidden="true" />
+                <Petals className="jp-seal-petals" n={14} />
+                <svg viewBox="0 0 40 40" className="jp-seal-pop" width={64} height={64}><SealArt earned /></svg>
+              </>
             )}
             <div className="jp-score-line">
               <span>Goods tokens ({row.goodsCount})</span><strong>{row.goods}</strong>
@@ -791,6 +828,30 @@ function ScoreTable({ state, summary }: { state: JaipurState; summary: NonNullab
   );
 }
 
+/** Marigold petals (CSS-animated, decorative): `--i` of `--n` places each
+ *  one, `--j` (a fixed scatter in 0..1) varies its timing and drift. */
+function Petals({ className, n }: { className: string; n: number }) {
+  return (
+    <span className={`jp-petals ${className}`} aria-hidden="true">
+      {Array.from({ length: n }, (_, i) => (
+        <i key={i} style={{ ['--i' as string]: i, ['--n' as string]: n, ['--j' as string]: ((i * 7) % 11) / 10 }} />
+      ))}
+    </span>
+  );
+}
+
+/** A lotus finial over the summary / game-over arch. */
+function ArchFinial() {
+  return (
+    <svg className="jp-finial" viewBox="0 0 60 30" width={60} height={30} aria-hidden="true">
+      <path d="M30 2 Q35 12 30 22 Q25 12 30 2 Z" fill="#f3cf63" stroke="#7a5308" strokeWidth={1} />
+      <path d="M30 22 Q20 18 14 8 Q24 10 30 22 Z M30 22 Q40 18 46 8 Q36 10 30 22 Z" fill="#e7b84a" stroke="#7a5308" strokeWidth={1} />
+      <path d="M30 22 Q16 26 4 20 Q18 16 30 22 Z M30 22 Q44 26 56 20 Q42 16 30 22 Z" fill="#c8506a" stroke="#7a5308" strokeWidth={1} />
+      <circle cx={30} cy={25} r={3} fill="#f3cf63" stroke="#7a5308" strokeWidth={1} />
+    </svg>
+  );
+}
+
 const DECIDED_BY: Record<string, string> = {
   rupees: '',
   bonusTokens: ' (tied on rupees — more bonus tokens)',
@@ -804,6 +865,7 @@ function RoundSummary({ state, onNext, canAdvance }: { state: JaipurState; onNex
   return (
     <div className="jp-overlay">
       <div className="jp-overlay-card">
+        <ArchFinial />
         <div className="jp-overlay-eyebrow">
           Round {s.round} · {s.endedBy === 'deck' ? 'the deck ran out' : 'three goods sold out'}
         </div>
@@ -830,6 +892,8 @@ function GameOver({ state }: { state: JaipurState }) {
   return (
     <div className="jp-overlay jp-final">
       <div className="jp-overlay-card">
+        <Petals className="jp-shower" n={22} />
+        <ArchFinial />
         <div className="jp-overlay-eyebrow">Match over</div>
         <h3>
           {winner ? <>{nameOf(state, winner.id)} is the Maharaja's trader!</> : 'Match over'}

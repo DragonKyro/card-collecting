@@ -418,7 +418,7 @@ function CoinStat({ coins }: { coins: number }) {
   const deltas = useDeltas(coins);
   return (
     <span className="swd-stat swd-coins" title="Coins">
-      <CoinIcon size={24} title="coins" /> {coins}
+      <span key={deltas.at(-1)?.id ?? 0} className={`swd-coin-ico${deltas.length > 0 ? ' bump' : ''}`}><CoinIcon size={24} title="coins" /></span> {coins}
       {deltas.map((x) => (
         <span key={x.id} className={`swd-delta ${x.d > 0 ? 'up' : 'down'}`}>{x.d > 0 ? `+${x.d}` : `−${-x.d}`}</span>
       ))}
@@ -520,25 +520,50 @@ function PlayerPanel({ state, seatIdx, viewerSeatIdx }: { state: DuelState; seat
   );
 }
 
+/** Where the pawn stood before its latest move, and a key that changes with
+ *  every move (the track's streak and landing ring replay on it). */
+function usePawnTrail(pawn: number): { from: number | null; key: number } {
+  const [trail, setTrail] = useState<{ from: number | null; key: number }>({ from: null, key: 0 });
+  const last = useRef(pawn);
+  useEffect(() => {
+    const from = last.current;
+    last.current = pawn;
+    if (from !== pawn) setTrail((t) => ({ from, key: t.key + 1 }));
+  }, [pawn]);
+  return trail;
+}
+
 function MilitaryTrack({ state }: { state: DuelState }) {
   const pawn = state.militaryPawn;
   const left = state.seats[0]?.name ?? 'P1';
   const right = state.seats[1]?.name ?? 'P2';
+  const leftColor = state.seats[0]?.color ?? '#8a6a4a';
+  const rightColor = state.seats[1]?.color ?? '#8a6a4a';
   const lead = pawn === 0 ? 'Even' : pawn > 0 ? `${left} pushes ${pawn}` : `${right} pushes ${-pawn}`;
+  const trail = usePawnTrail(pawn);
+  const leadColor = pawn === 0 ? undefined : pawn > 0 ? leftColor : rightColor;
   return (
-    <div className="swd-military">
+    <div className="swd-military" style={{ ['--swd-left' as string]: leftColor, ['--swd-right' as string]: rightColor }}>
       <MilitaryTrackArt
         pawn={pawn}
         awards={state.militaryAwards}
-        leftColor={state.seats[0]?.color ?? '#8a6a4a'}
-        rightColor={state.seats[1]?.color ?? '#8a6a4a'}
+        leftColor={leftColor}
+        rightColor={rightColor}
         minerva={state.pantheon?.minerva ?? null}
         agora={!!state.agora}
+        trailFrom={trail.from}
+        trailKey={trail.key}
       />
       <div className="swd-military-labels">
-        <span>◀ {left}’s capital</span>
-        <span className="swd-military-lead">{lead}</span>
-        <span>{right}’s capital ▶</span>
+        <span className="swd-military-cap left">◀ {left}’s capital</span>
+        <span
+          key={trail.key}
+          className={`swd-military-lead${leadColor ? ' pushed' : ''}`}
+          style={leadColor ? { ['--swd-lead' as string]: leadColor } : undefined}
+        >
+          {lead}
+        </span>
+        <span className="swd-military-cap right">{right}’s capital ▶</span>
       </div>
     </div>
   );
@@ -634,6 +659,8 @@ function PyramidSlot({ slot, card, age, minX, pickable, available, selected, onP
         left: ((slot.x - minX) * PYRAMID.stepX) / 2,
         top: slot.row * PYRAMID.stepY,
         zIndex: slot.row + 1 + (selected ? 10 : 0),
+        // Deal order: back row first (the entrance animation's delay).
+        ['--swd-deal' as string]: slot.index,
       }}
     >
       {slot.faceUp && card
@@ -700,7 +727,9 @@ function PyramidView({ state, viewerSeatIdx, isMyTurn, dispatch, space, onClearS
         <h3 className="swd-table-title">
           Age {['I', 'II', 'III'][state.age - 1]} · {isMyTurn ? mine : `${actor}${state.subPhase === 'turn' ? '’s' : ' is'} ${theirs}`}
         </h3>
+        {/* Remounted each age, so the new structure is dealt in. */}
         <div
+          key={state.age}
           className="swd-pyramid"
           style={{ width: fullW, height: fullH, ...(scale < 1 ? { zoom: scale } : {}) }}
         >
@@ -726,6 +755,12 @@ function PyramidView({ state, viewerSeatIdx, isMyTurn, dispatch, space, onClearS
               />
             );
           })}
+        </div>
+        <div key={`age${state.age}`} className="swd-age-banner" aria-hidden="true">
+          <span className="swd-age-banner-text">
+            <small>Age</small>
+            <b>{['I', 'II', 'III'][state.age - 1]}</b>
+          </span>
         </div>
       </div>
       <DecisionPanel
@@ -863,7 +898,7 @@ function CardActionsPanel({ state, viewerSeatIdx, cardId, dispatch, onClear }: {
 
   return (
     <div className="swd-pick-panel swd-pick-panel-card">
-      <CardFace card={card} size="lg" />
+      <CardFace key={card.id} card={card} size="lg" />
       <div className="swd-pick-cost">
         <span>Cost: {costText(card.cost)}</span>
         {paymentLines(payment, card)}
@@ -1108,10 +1143,10 @@ function GameOver({ state }: { state: DuelState }) {
     : state.endReason === 'science' ? (winnerSeat ? 'Scientific Supremacy' : 'Both reached Scientific Supremacy')
     : state.endReason === 'political' ? 'Political Supremacy'
     : winnerSeat ? 'Civilian Victory' : 'Shared victory';
-  const reasonIcon = state.endReason === 'military' ? <ShieldIcon size={34} />
-    : state.endReason === 'science' ? <ScienceIcon symbol="globe" size={34} />
-    : state.endReason === 'political' ? <CubeIconBig />
-    : <LaurelIcon size={34} />;
+  const reasonIcon = state.endReason === 'military' ? <ShieldIcon size={58} />
+    : state.endReason === 'science' ? <ScienceIcon symbol="globe" size={58} />
+    : state.endReason === 'political' ? <CubeIconBig size={58} />
+    : <LaurelIcon size={58} value={state.finalScoringBreakdown?.find((r) => r.playerId === winnerSeat?.id)?.total} />;
   const head = (title: string, icon: ReactNode) => <th title={title}><span className="swd-th">{icon}</span></th>;
   const chip = (c: DuelCardColor) => <Icon size={22}><ChipGlyph color={c} /></Icon>;
   const pantheon = !!state.pantheon;
@@ -1119,12 +1154,20 @@ function GameOver({ state }: { state: DuelState }) {
   return (
     <div className="swd-game swd-game-over">
       <div className="swd-main">
-        <div className="swd-gameover">
+        <div
+          className={`swd-gameover swd-end-${state.endReason ?? 'civilian'}`}
+          style={winnerSeat ? { ['--swd-winner' as string]: winnerSeat.color } : undefined}
+        >
+          {/* The finale: light rays, a burst of gold leaf, the seal stamped down. */}
+          <div className="swd-finale-rays" aria-hidden="true" />
+          <div className="swd-confetti" aria-hidden="true">
+            {Array.from({ length: 18 }, (_, i) => <i key={i} style={{ ['--i' as string]: i }} />)}
+          </div>
           <div className="swd-gameover-banner">
-            {reasonIcon}
+            <span className="swd-finale-seal">{reasonIcon}</span>
             <div>
               <h2>{winnerSeat ? `${winnerSeat.name} wins` : 'Draw'}</h2>
-              <span>{reasonText}</span>
+              <span className="swd-finale-stamp">{reasonText}</span>
             </div>
           </div>
           {state.finalScoringBreakdown && (

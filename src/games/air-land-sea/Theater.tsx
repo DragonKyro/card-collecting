@@ -8,7 +8,8 @@ import type { AlsState, AlsTheaterId } from './types';
 import { AlsCardView, FaceDownCard } from './Card';
 import { cardById, THEATER_DEFS } from './cards';
 import { effectiveCardStrength, theaterControl, theaterStrengthParts, type StrengthParts } from './rules';
-import { ControlFlag, SupplyToken, TheaterBanner, TheaterEmblem, THEATER_TINT } from './art';
+import { BlastArt, ControlFlag, SupplyToken, TheaterBanner, TheaterEmblem, THEATER_TINT } from './art';
+import { useBump, type TheaterFx } from './boardFx';
 
 interface Props {
   state: AlsState;
@@ -23,9 +24,11 @@ interface Props {
   highlightCards?: Set<number>;
   /** Cards to point at without being picks (Envoy's target). */
   markedCards?: Set<number>;
+  /** What just happened here, for the entrance animations. */
+  fx?: TheaterFx;
 }
 
-export function TheaterColumn({ state, theaterIdx, viewer, onCardClick, onTheaterClick, highlighted, highlightCards, markedCards }: Props) {
+export function TheaterColumn({ state, theaterIdx, viewer, onCardClick, onTheaterClick, highlighted, highlightCards, markedCards, fx }: Props) {
   const theaterId: AlsTheaterId = state.theaters[theaterIdx];
   const def = THEATER_DEFS[theaterId];
   const stacks = state.board[theaterIdx];
@@ -42,6 +45,8 @@ export function TheaterColumn({ state, theaterIdx, viewer, onCardClick, onTheate
     // Hidden information: the opponent's face-down cards stay backs.
     const reveal = (faceDown: boolean) => viewer === -1 || side === viewer || !faceDown;
     const badge = <StrengthBadge parts={parts[side]} holds={holder === side} tied={tied} seatName={seatName(side)} />;
+    const blast = fx?.blasts[side] ?? null;
+    const supplied = fx?.supplies[side] ?? null;
     return (
       <div className={`als-theater-half als-theater-${position === 'top' ? 'opp' : 'self'} ${holder === side ? 'holds' : ''}`}>
         {position === 'top' && badge}
@@ -49,24 +54,32 @@ export function TheaterColumn({ state, theaterIdx, viewer, onCardClick, onTheate
           {stacks[side].map((p, slotIdx) => {
             const card = cardById(p.cardId);
             const isTop = slotIdx === stacks[side].length - 1;
+            const moved = fx?.cards.get(p.cardId);
             const cls = [
               'als-stack-slot',
               isTop ? 'uncovered' : 'covered',
               highlightCards?.has(p.cardId) ? 'highlighted' : '',
               markedCards?.has(p.cardId) ? 'marked' : '',
+              moved ? `fx-${moved.kind}` : '',
             ].filter(Boolean).join(' ');
             const effective = effectiveCardStrength(state, theaterIdx, side, slotIdx);
             const click = onCardClick ? () => onCardClick(p.cardId) : undefined;
             return (
-              <div key={p.cardId} className={cls} data-card={p.cardId}>
+              // A fresh key per event, so the slot remounts and its animation plays.
+              <div key={moved ? `${p.cardId}-${moved.seq}` : p.cardId} className={cls} data-card={p.cardId}>
                 {p.faceDown && !reveal(true)
                   ? <FaceDownCard size="small" selectable={!!click} onClick={click} effective={effective} />
                   : <AlsCardView card={card} size="small" faceDown={p.faceDown} effective={effective} selectable={!!click} onClick={click} />}
               </div>
             );
           })}
-          {stacks[side].length === 0 && <div className={`als-empty-slot ${highlighted && side === bottomSide ? 'ready' : ''}`} />}
-          {supplies[side] > 0 && <SupplyBadge n={supplies[side]} />}
+          {stacks[side].length === 0 && (
+            <div className={`als-empty-slot ${highlighted && side === bottomSide ? 'ready' : ''}`}>
+              <TheaterEmblem theater={theaterId} size={30} />
+            </div>
+          )}
+          {supplies[side] > 0 && <SupplyBadge n={supplies[side]} gained={supplied} />}
+          {blast !== null && <div key={blast} className="als-fx-blast" aria-hidden="true"><BlastArt /></div>}
         </div>
         {position === 'bottom' && badge}
       </div>
@@ -94,6 +107,9 @@ export function TheaterColumn({ state, theaterIdx, viewer, onCardClick, onTheate
 }
 
 function StrengthBadge({ parts, holds, tied, seatName }: { parts: StrengthParts; holds: boolean; tied: boolean; seatName: string }) {
+  // Pop the number when the total changes; plant the flag when control does.
+  const bumped = useBump(parts.total);
+  const planted = useBump(holds);
   const bits = [`cards ${parts.cards}`];
   if (parts.support) bits.push(`Support +${parts.support}`);
   if (parts.spyNetwork) bits.push(`Spy Network +${parts.spyNetwork}`);
@@ -101,17 +117,18 @@ function StrengthBadge({ parts, holds, tied, seatName }: { parts: StrengthParts;
   const title = `${seatName}: ${parts.total} (${bits.join(', ')})${holds ? ` — holds this theater${tied ? ' on the tie (1st player)' : ''}` : ''}`;
   return (
     <div className={`als-strength-badge ${holds ? 'holds' : ''} ${holds && tied ? 'tied' : ''}`} title={title}>
-      {holds && <ControlFlag size={12} color={tied ? '#d9cfa8' : '#f2c230'} />}
-      <span className="num">{parts.total}</span>
+      {holds && <span key={`flag${planted}`} className={planted ? 'als-flag-pole fx-plant' : 'als-flag-pole'}><ControlFlag size={12} color={tied ? '#d9cfa8' : '#f2c230'} /></span>}
+      <span key={`num${bumped}`} className={bumped ? 'num fx-bump' : 'num'}>{parts.total}</span>
     </div>
   );
 }
 
-function SupplyBadge({ n }: { n: number }) {
+function SupplyBadge({ n, gained }: { n: number; gained: { seq: number; amount: number } | null }) {
   return (
     <div className="als-supply-badge" title={`${n} suppl${n === 1 ? 'y' : 'ies'} (+${n} strength)`}>
       <SupplyToken size={20} />
-      <span>+{n}</span>
+      <span key={`n${gained?.seq ?? 0}`} className={gained ? 'fx-bump' : ''}>+{n}</span>
+      {gained && <span key={`f${gained.seq}`} className="als-fx-float" aria-hidden="true">+{gained.amount}</span>}
     </div>
   );
 }

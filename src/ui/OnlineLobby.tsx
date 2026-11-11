@@ -4,12 +4,14 @@
 // the host picks the game and its options, adds / removes AI seats, removes
 // seats, and starts the match. Guests see the options read-only.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import type { GameStateShape, GameUiBundle } from '@/core/module';
 import { GAMES, getGameById } from '@/games/registry';
 import { lobbyStartProblem, useNetworkStore } from '@/store/networkStore';
 import { roomLink } from '@/net/roomLink';
 import { AiLevelSelect, ChatInput, ColorSwatchPicker, NameInput, RulesModal } from './lobbyParts';
+import { LobbyBanner } from './LobbyBanner';
+import { playerRange } from './gameTheme';
 
 const ONLINE_GAMES = GAMES.filter((g) => g.onlineSupported !== false);
 
@@ -46,11 +48,18 @@ export function OnlineLobby() {
 
   useEffect(() => { setStartError(null); }, [configJson, lobby?.seats.length, lobby?.gameId]);
 
-  if (!lobby) return <p>Loading the room…</p>;
+  if (!lobby) {
+    return (
+      <div className="cc-loading" role="status">
+        <div className="cc-loading-cards" aria-hidden="true"><span /><span /><span /></div>
+        Loading the room…
+      </div>
+    );
+  }
   if (!module) {
     return (
       <div className="lobby-single">
-        <section className="lobby-panel">
+        <section className="lobby-panel cc-chrome">
           <p>This room is set to a game this version of the app doesn't have ({lobby.gameId}). Reload the page.</p>
           <button className="secondary" onClick={() => net().leaveRoom()}>Leave room</button>
         </section>
@@ -85,16 +94,17 @@ export function OnlineLobby() {
 
   return (
     <div className="lobby-single">
-      <div className="lobby-topbar">
+      <div className="lobby-topbar cc-chrome">
         <button className="secondary" onClick={() => net().leaveRoom()}>← Leave room</button>
         {RulesComponent && (
           <button className="secondary" onClick={() => setShowRules(true)}>📖 Rules</button>
         )}
       </div>
 
-      <section className="lobby-panel">
-        <div className="online-lobby-head">
-          {isHost ? (
+      <LobbyBanner module={module}>
+        {isHost && (
+          <label className="online-game-pick">
+            <span>Game</span>
             <select
               className="online-game-select"
               aria-label="Game"
@@ -103,28 +113,34 @@ export function OnlineLobby() {
             >
               {ONLINE_GAMES.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
             </select>
-          ) : (
-            <h3>{module.name}</h3>
-          )}
-          {roomCode && (
-            <div className="online-room">
-              <span className="online-label">Room</span>
-              <code className="room-code">{roomCode}</code>
-              <button className="secondary tiny" onClick={() => copy('code')}>{copied === 'code' ? 'Copied' : 'Copy code'}</button>
-              <button className="secondary tiny" onClick={() => copy('link')}>{copied === 'link' ? 'Copied' : 'Copy invite link'}</button>
-            </div>
-          )}
-        </div>
+          </label>
+        )}
+      </LobbyBanner>
 
-        {/* ----- seats ----- */}
-        <h4 className="lobby-section-h">Seats · {seats.length} of {module.minPlayers === module.maxPlayers ? module.maxPlayers : `${module.minPlayers}–${module.maxPlayers}`}</h4>
+      {roomCode && (
+        <section className="lobby-panel online-invite cc-chrome">
+          <div className="online-room">
+            <span className="online-label">Room</span>
+            <code className="room-code">{roomCode}</code>
+            <button className="secondary tiny" onClick={() => copy('code')}>{copied === 'code' ? 'Copied' : 'Copy code'}</button>
+            <button className="secondary tiny" onClick={() => copy('link')}>{copied === 'link' ? 'Copied' : 'Copy invite link'}</button>
+          </div>
+          <span className="lobby-hint">Friends open the app and type the code, or follow the invite link.</span>
+        </section>
+      )}
+
+      {/* ----- seats ----- */}
+      <section className="lobby-panel cc-chrome">
+        <h4 className="lobby-section-h">
+          Seats <span className="lobby-section-count">{seats.length} of {playerRange(module)}</span>
+        </h4>
         <div className="seat-list">
-          {seats.map((s) => {
+          {seats.map((s, i) => {
             const mine = s.id === myUuid;
             const editable = mine || (isHost && s.isAI);
             const offline = !s.isAI && !onlineUuids.has(s.id);
             return (
-              <div key={s.id} className="seat-row">
+              <div key={s.id} className={`seat-row${offline ? ' offline' : ''}`} style={{ '--seat': s.color, animationDelay: `${i * 40}ms` } as CSSProperties}>
                 <ColorSwatchPicker
                   value={s.color}
                   takenBy={Object.fromEntries(seats.filter((x) => x.id !== s.id).map((x) => [x.color, x.name]))}
@@ -149,13 +165,13 @@ export function OnlineLobby() {
                   {offline && <span className="online-tag offline">offline</span>}
                 </span>
                 {isHost && s.id !== lobby.hostUuid && (
-                  <button className="secondary" title="Remove seat" onClick={() => net().hostRemoveSeat(s.id)}>×</button>
+                  <button className="secondary seat-remove" title="Remove seat" onClick={() => net().hostRemoveSeat(s.id)}>×</button>
                 )}
               </div>
             );
           })}
         </div>
-        <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {isHost && (
             <button className="secondary" onClick={() => net().hostAddAISeat()} disabled={roomFull}>+ Add AI</button>
           )}
@@ -165,31 +181,33 @@ export function OnlineLobby() {
             </button>
           )}
         </div>
+      </section>
 
-        {/* ----- game-specific options ----- */}
-        {LobbyConfigComponent && (
-          <>
-            <h4 className="lobby-section-h">Options{isHost ? '' : ' (set by the host)'}</h4>
-            <fieldset className="online-options" disabled={!isHost}>
-              <LobbyConfigComponent
-                key={lobby.gameId}
-                config={config}
-                seats={seats}
-                readOnly={!isHost}
-                onChange={(c) => { if (isHost) net().hostSetConfig(c); }}
-              />
-            </fieldset>
-          </>
-        )}
+      {/* ----- game-specific options ----- */}
+      {LobbyConfigComponent && (
+        <section className="lobby-panel lobby-options">
+          <h4 className="lobby-section-h">Options{isHost ? '' : ' (set by the host)'}</h4>
+          <fieldset className="online-options" disabled={!isHost}>
+            <LobbyConfigComponent
+              key={lobby.gameId}
+              config={config}
+              seats={seats}
+              readOnly={!isHost}
+              onChange={(c) => { if (isHost) net().hostSetConfig(c); }}
+            />
+          </fieldset>
+        </section>
+      )}
 
-        {/* ----- start ----- */}
-        <div style={{ marginTop: 16, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+      {/* ----- start, people, chat ----- */}
+      <section className="lobby-panel lobby-launch-panel cc-chrome">
+        <div className="lobby-launch">
           {isHost ? (
-            <button onClick={start} disabled={!!problem || starting}>
+            <button className="lobby-start" onClick={start} disabled={!!problem || starting}>
               {starting ? 'Starting…' : 'Start match'}
             </button>
           ) : (
-            <span className="lobby-hint" style={{ margin: 0 }}>
+            <span className="lobby-hint lobby-waiting" style={{ margin: 0 }}>
               {hostOnline
                 ? `Waiting for ${hostSeat?.name ?? 'the host'} to start the match.`
                 : `${hostSeat?.name ?? 'The host'} is offline; the match starts when they're back.`}
@@ -198,7 +216,6 @@ export function OnlineLobby() {
         </div>
         {isHost && (startError ?? problem) && <div className="online-error">{startError ?? problem}</div>}
 
-        {/* ----- people + chat ----- */}
         <div className="online-peers">
           <h4>In the room</h4>
           <ul>

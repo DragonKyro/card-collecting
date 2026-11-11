@@ -35,6 +35,19 @@ export interface GameStateShape {
   rngState: RngState;
 }
 
+/** How the shell dresses itself around one game: the picker tile, the lobby,
+ *  the in-game bar and the page behind the board. All CSS values. */
+export interface GameTheme {
+  /** Accent for the shell's buttons and highlights around this game. */
+  accent: string;
+  /** Text colour that reads on `accent`. */
+  accentInk: string;
+  /** CSS font-family for the game's title (lobby banner, game bar, tile). */
+  titleFont?: string;
+  /** CSS `background` for the page behind the lobby and the match. */
+  backdrop?: string;
+}
+
 export interface GameModule<
   S extends GameStateShape,
   A,
@@ -103,9 +116,14 @@ export interface GameModule<
    *  able to answer synchronously. Rejecting aborts the start with the error. */
   prepare?(config: C, seats: Seat[]): Promise<void>;
 
-  /** Optional thumbnail rendered on the game picker. Game-agnostic shell never imports
-   *  game art directly — modules render their own SVG inline. */
+  /** Optional hero art: a 16:9 scene (viewBox 320×180, `xMidYMid slice`)
+   *  shown on the game picker's tile and in the lobby's banner, sometimes
+   *  twice on one page (so derive SVG ids from `useSvgIds`). The shell never
+   *  imports game art directly — modules render their own SVG inline. */
   Thumbnail?: React.ComponentType;
+
+  /** Optional look of the shell around this game (lobby, game bar, page). */
+  readonly theme?: GameTheme;
 
   /** Lazy-loaded UI bundle: lobby config form + in-game view. */
   ui: () => Promise<GameUiBundle<S, A, C>>;

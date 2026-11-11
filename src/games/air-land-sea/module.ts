@@ -84,6 +84,14 @@ export const airLandSeaModule: GameModule<AlsState, AlsAction, AlsConfig> = {
   // Long enough to follow the AI's card landing and any flips it sets off.
   aiDelayMs: () => 650,
 
+  // The shell's look around this game (lobby banner, game bar, page).
+  theme: {
+    accent: '#e9c46a',
+    accentInk: '#231a00',
+    titleFont: 'var(--font-stencil)',
+    backdrop: 'radial-gradient(1000px 560px at 50% -6%, rgba(255, 214, 140, 0.13), transparent 70%), radial-gradient(1500px 1000px at 50% 35%, transparent 50%, rgba(0, 0, 0, 0.42) 100%), repeating-linear-gradient(0deg, rgba(160, 220, 180, 0.05) 0 1px, transparent 1px 48px), repeating-linear-gradient(90deg, rgba(160, 220, 180, 0.05) 0 1px, transparent 1px 48px), repeating-linear-gradient(0deg, rgba(160, 220, 180, 0.04) 0 1px, transparent 1px 240px), repeating-linear-gradient(90deg, rgba(160, 220, 180, 0.04) 0 1px, transparent 1px 240px), linear-gradient(180deg, #1b2a26 0%, #121c1a 60%, #0c1312 100%)',
+  },
+
   Thumbnail: AirLandSeaThumbnail,
 
   ui: async () => {

@@ -1,7 +1,36 @@
-/* Machi Koro — everything is prefixed mk-. */
+/* Machi Koro — everything is prefixed mk-.
 
-/* Catan-style: the board (market) on the left, your town + the action panel
-   in a strip under it, history + opponents in the side column. */
+   The look: a toy town at golden hour. The market is a wooden market stall
+   under a striped awning, each row a shelf; your town (and each opponent's)
+   is a plot of grass behind a picket fence; the action panel is a painted
+   wooden sign; the dice roll in a felt tray; the history is the town's
+   chalkboard. A win is a festival (bunting, fireworks, confetti).
+
+   Motion rules: fx.tsx measures the rects of its anchors (.mk-slot,
+   .mk-town-card, .mk-coins, .mk-bank) after every commit, so nothing here
+   puts a transform on those elements themselves — entrance animations and
+   hover lifts go on the card inside, and glows on pseudo-elements. Entrance
+   animations on containers use `backwards` fill (their end state is the
+   natural style) so they don't leave a stacking context behind. */
+
+.mk-layout,
+.mk-lobby {
+  --mk-ink: #3b2a20;
+  --mk-cream: #fff3dc;
+  --mk-gold: #ffd23f;
+  --mk-gold-deep: #c99512;
+  --mk-wood: #a86f3d;
+  --mk-wood-dark: #6b4226;
+  --mk-wood-deep: #3f2412;
+  --mk-grass: #57a248;
+  --mk-grass-deep: #357a33;
+  /* Picket fence along the top of a plot (repeat-x, 20×24 per picket). */
+  --mk-fence: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='24'%3E%3Crect x='0' y='9' width='20' height='3' fill='%23e8d6ae' stroke='%235a3a20' stroke-width='.8'/%3E%3Crect x='0' y='17' width='20' height='3' fill='%23e8d6ae' stroke='%235a3a20' stroke-width='.8'/%3E%3Cpath d='M5.5 23V5L10 1l4.5 4v18Z' fill='%23fff6e2' stroke='%235a3a20' stroke-width='1.1' stroke-linejoin='round'/%3E%3Cpath d='M13 6v16' stroke='%23d9c49c' stroke-width='1.4'/%3E%3C/svg%3E");
+  /* A few grass tufts and flowers (tiled sparsely over the plot's green). */
+  --mk-tufts: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='150' height='84'%3E%3Cg fill='none' stroke='%2390d26a' stroke-width='1.5' stroke-linecap='round' opacity='.5'%3E%3Cpath d='M14 22l-3-6M14 22v-7M14 22l3-6M96 14l-3-6M96 14v-7M96 14l3-6M58 66l-3-6M58 66v-7M58 66l3-6M130 70l-3-5M130 70v-6M130 70l3-5'/%3E%3C/g%3E%3Ccircle cx='44' cy='34' r='2' fill='%23fff6c8' opacity='.75'/%3E%3Ccircle cx='118' cy='42' r='1.8' fill='%23ffd23f' opacity='.7'/%3E%3Ccircle cx='8' cy='70' r='1.7' fill='%23ffb3c7' opacity='.65'/%3E%3C/svg%3E");
+  /* Little house emblem (deck backs, the empty-town placeholder). */
+  --mk-house: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath d='M6 21 20 9l14 12v13H6Z' fill='none' stroke='%23fff3dc' stroke-width='2.6' stroke-linejoin='round'/%3E%3Crect x='16.5' y='25' width='7' height='9' rx='1' fill='%23fff3dc'/%3E%3Ccircle cx='31' cy='7' r='3.2' fill='%23ffd23f'/%3E%3C/svg%3E");
+}
 .mk-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 300px;
@@ -9,36 +38,46 @@
   grid-template-areas:
     "board side"
     "bottom side";
-  gap: 12px;
+  gap: 14px;
   align-items: start;
 }
-.mk-board { grid-area: board; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.mk-board { grid-area: board; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+
+/* Your plot: the bottom strip (your town + the wooden action sign). */
 .mk-bottom {
   grid-area: bottom;
   position: sticky;
   bottom: 0;
   z-index: 5;
   display: flex;
-  gap: 12px;
+  gap: 14px;
   align-items: stretch;
   min-width: 0;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 10px 12px;
-  box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.35);
+  padding: 28px 12px 12px;
+  border-radius: 16px 16px 12px 12px;
+  border: 2px solid #2c5a24;
+  background:
+    var(--mk-fence) 0 2px / 20px 24px repeat-x,
+    linear-gradient(180deg, rgba(20, 50, 15, 0.35), rgba(20, 50, 15, 0) 26px),
+    var(--mk-tufts) 0 20px / 150px 84px,
+    radial-gradient(120% 120% at 50% 0%, rgba(255, 236, 160, 0.18), transparent 60%),
+    linear-gradient(180deg, #57a248, var(--mk-grass-deep));
+  box-shadow: 0 -10px 26px -8px rgba(0, 0, 0, 0.6), inset 0 -3px 0 rgba(0, 0, 0, 0.18);
 }
-.mk-bottom.mine { border-color: #f2c230; box-shadow: 0 0 0 1px rgba(242, 194, 48, 0.35), 0 -6px 22px rgba(242, 194, 48, 0.12); }
+.mk-bottom.mine { border-color: var(--mk-gold); box-shadow: 0 0 0 1px rgba(255, 210, 63, 0.45), 0 -8px 26px rgba(255, 210, 63, 0.18); }
 .mk-side {
   grid-area: side;
   position: sticky;
   top: 12px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   max-height: calc(100vh - 24px);
   overflow-y: auto;
   min-height: 0;
+  /* Room for the active town's glow inside the scroll box. */
+  padding: 6px;
+  margin: -6px;
 }
 @media (max-width: 1050px) {
   .mk-layout {
@@ -55,24 +94,31 @@
 
 .mk-tag {
   font-size: 10px;
-  font-weight: 700;
+  font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.4px;
   padding: 1px 6px;
   border-radius: 999px;
-  background: var(--bg-hover);
-  color: var(--fg-muted);
-  border: 1px solid var(--border);
+  background: rgba(20, 12, 4, 0.38);
+  color: #f1e6cf;
+  border: 1px solid rgba(255, 243, 220, 0.22);
 }
-.mk-tag.ai { color: #b7c6ff; }
-.mk-tag.win { background: #f2c230; color: #3a2a14; border-color: #c99512; }
-.mk-tag.hot { background: #d2433b; color: #fff; border-color: #a52a23; margin-left: 6px; }
+.mk-tag.ai { color: #cdd8ff; }
+.mk-tag.win { background: var(--mk-gold); color: #3a2a14; border-color: var(--mk-gold-deep); }
+.mk-tag.hot {
+  background: #e2513f;
+  color: #fff;
+  border-color: #a52a23;
+  margin-left: 6px;
+  display: inline-block;
+  animation: cc-stamp 0.5s var(--ease-spring) 0.1s both;
+}
 .mk-dot {
   display: inline-block;
-  width: 10px; height: 10px;
+  width: 11px; height: 11px;
   border-radius: 50%;
   background: var(--mk-seat, #888);
-  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.15);
+  box-shadow: 0 0 0 2px rgba(255, 243, 220, 0.7), 0 1px 2px rgba(0, 0, 0, 0.5);
 }
 
 /* ---------- Cards ---------- */
@@ -81,55 +127,66 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  background: #fffaf0;
+  background: var(--paper-fibre), #fffaf0;
   color: #2b2118;
   border-radius: 9px;
   border: 2px solid var(--mk-band, #888);
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.35);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 2px 0 rgba(0, 0, 0, 0.18),
+    0 7px 12px -5px rgba(0, 0, 0, 0.55);
   overflow: hidden;
   user-select: none;
   flex-shrink: 0;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  transition: transform 0.18s var(--ease-out), box-shadow 0.18s ease;
 }
 .mk-card-lg { width: 108px; height: 152px; }
 .mk-card-md { width: 84px; height: 120px; }
 .mk-card-sm { width: 62px; height: 86px; border-radius: 7px; }
-.mk-card-xs { width: 40px; height: 52px; border-radius: 6px; border-width: 1.5px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35); }
+.mk-card-xs { width: 40px; height: 52px; border-radius: 6px; border-width: 1.5px; box-shadow: 0 1px 0 rgba(0, 0, 0, 0.2), 0 3px 5px -2px rgba(0, 0, 0, 0.5); }
 .mk-card.clickable { cursor: pointer; }
 @media (hover: hover) {
-  .mk-card.clickable:hover { transform: translateY(-3px); box-shadow: 0 8px 16px rgba(0, 0, 0, 0.45); }
+  .mk-card.clickable:hover {
+    transform: translateY(-4px) rotate(-0.6deg);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 14px 20px -6px rgba(0, 0, 0, 0.6);
+  }
 }
 
 .mk-card-band {
-  background: var(--mk-band, #888);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0) 55%, rgba(0, 0, 0, 0.1)), var(--mk-band, #888);
   color: #fff;
   display: flex;
   justify-content: center;
   align-items: center;
   height: 22px;
   flex-shrink: 0;
+  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.18);
 }
 .mk-card-sm .mk-card-band { height: 17px; }
 .mk-card-xs .mk-card-band { height: 13px; }
 .mk-card-num {
   background: #fffaf0;
   color: var(--mk-band);
-  font-weight: 900;
-  font-size: 13px;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 13.5px;
+  letter-spacing: 0.3px;
   line-height: 1;
-  padding: 2px 8px;
+  padding: 2px 8px 1px;
   border-radius: 999px;
   min-width: 22px;
   text-align: center;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.22);
 }
-.mk-card-sm .mk-card-num { font-size: 11px; padding: 1px 6px; }
-.mk-card-xs .mk-card-num { font-size: 8.5px; padding: 0 4px; min-width: 0; }
+.mk-card-sm .mk-card-num { font-size: 11px; padding: 1px 6px 0; }
+.mk-card-xs .mk-card-num { font-size: 8.5px; padding: 0 4px; min-width: 0; box-shadow: none; }
 .mk-card-name {
   flex-shrink: 0;
-  font-size: 10.5px;
-  font-weight: 800;
+  font-family: var(--font-round);
+  font-size: 11px;
+  font-weight: 600;
   text-align: center;
-  line-height: 1.1;
+  line-height: 1.05;
   padding: 3px 4px 1px;
   min-height: 25px;
   display: flex;
@@ -143,6 +200,7 @@
   border-radius: 5px;
   overflow: hidden;
   background: #dff0fb;
+  box-shadow: inset 0 0 0 1px rgba(59, 42, 32, 0.22);
 }
 .mk-card-sm .mk-card-art { margin: 2px 3px 0; }
 .mk-card-xs .mk-card-art { margin: 2px; border-radius: 3px; }
@@ -176,11 +234,14 @@
   height: 18px;
   padding: 0 4px;
   border-radius: 999px;
-  background: #f2c230;
+  background: radial-gradient(circle at 35% 30%, #fff3b0 0%, #f2c230 55%, #d9a11a 100%);
   border: 1.5px solid #9a6b06;
+  box-shadow: inset 0 -1px 0 rgba(120, 70, 0, 0.35), 0 1px 1px rgba(0, 0, 0, 0.3);
   color: #3a2a14;
-  font-weight: 900;
-  font-size: 11px;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 11.5px;
+  line-height: 1;
 }
 .mk-card-sm .mk-cost { min-width: 15px; height: 15px; font-size: 9.5px; }
 .mk-card-count {
@@ -189,11 +250,12 @@
   right: 3px;
   background: #2b2118;
   color: #fff;
+  font-family: var(--font-display);
   font-size: 11px;
-  font-weight: 800;
-  padding: 1px 5px;
+  padding: 1px 5px 0;
   border-radius: 999px;
   border: 1.5px solid #fffaf0;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 .mk-card-sm .mk-card-count { top: auto; right: auto; bottom: 2px; left: 50%; transform: translateX(-50%); font-size: 9.5px; padding: 0 4px; }
 .mk-card-xs .mk-card-count { top: auto; left: auto; transform: none; right: -1px; bottom: -1px; font-size: 8.5px; padding: 0 3px; border-width: 1px; }
@@ -231,7 +293,7 @@
 }
 .mk-card-xs .mk-card-invested { top: 12px; right: 1px; min-width: 12px; height: 12px; font-size: 8px; }
 
-.mk-lm { background: #fff6e6; }
+.mk-lm { background: var(--paper-fibre), #fff6e6; }
 .mk-lm .mk-card-text { font-size: 8.8px; }
 .mk-lm-scope {
   font-size: 8px;
@@ -242,11 +304,12 @@
   color: #b05f00;
   padding: 2px 6px;
   border-radius: 999px;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.18);
 }
 .mk-lm-scope.everyone { color: #1f63a8; }
 .mk-lm-scope.once { color: #8a3c00; }
 .mk-card-sm .mk-lm-scope { padding: 0 5px; font-size: 9px; }
-.mk-card-xs .mk-lm-scope { padding: 0 3px; font-size: 7.5px; }
+.mk-card-xs .mk-lm-scope { padding: 0 3px; font-size: 7.5px; box-shadow: none; }
 .mk-lm.unbuilt { filter: grayscale(0.85) brightness(0.8); opacity: 0.75; }
 .mk-lm.unbuilt.clickable { filter: none; opacity: 1; }
 .mk-ladder { display: inline-flex; gap: 3px; }
@@ -261,137 +324,381 @@
 .mk-ladder s { opacity: 0.55; margin-right: 2px; }
 .mk-promo { font-size: 7px; text-transform: uppercase; color: #b05f00; font-weight: 800; }
 
+/* Deck backs: a navy card with the town emblem, a few more cards under it. */
 .mk-back {
-  border-color: #6b4f2a;
-  background: repeating-linear-gradient(45deg, #8a6a3d 0 6px, #7a5c33 6px 12px);
+  border-color: #1d2f57;
+  background:
+    var(--mk-house) 50% 26% / 30px 30px no-repeat,
+    repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.06) 0 5px, transparent 5px 10px),
+    radial-gradient(circle at 50% 30%, #4f76bf, #2a4886 72%);
+  box-shadow:
+    inset 0 0 0 3px #fff3dc,
+    inset 0 0 0 4px #1d2f57,
+    2px 2px 0 -0.5px #23386a,
+    4px 4px 0 -1px #1a2b52,
+    0 8px 12px -4px rgba(0, 0, 0, 0.6);
   color: #fff6dc;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-end;
+  padding-bottom: 6px;
 }
-.mk-back.empty { opacity: 0.35; }
-.mk-back-label { font-size: 11px; font-weight: 900; opacity: 0.9; }
-.mk-back-count { font-size: 18px; font-weight: 900; }
+.mk-back.empty { opacity: 0.35; box-shadow: inset 0 0 0 3px #fff3dc, inset 0 0 0 4px #1d2f57; }
+.mk-back-label { font-size: 9px; font-weight: 900; letter-spacing: 1px; text-transform: uppercase; opacity: 0.85; }
+.mk-back-count { font-family: var(--font-display); font-size: 20px; line-height: 1; text-shadow: 0 2px 0 rgba(0, 0, 0, 0.35); }
 
-.mk-die { display: block; filter: drop-shadow(0 3px 3px rgba(0, 0, 0, 0.35)); }
-.mk-die.ghost { opacity: 0.18; filter: none; }
+.mk-die { display: block; filter: drop-shadow(0 4px 3px rgba(0, 0, 0, 0.4)); }
+.mk-die.ghost { opacity: 0.2; filter: none; }
 .mk-coin-icon { display: inline-block; vertical-align: -3px; }
 
-/* ---------- Action panel + dice ---------- */
+/* ---------- Action panel: a painted wooden sign ---------- */
 
 .mk-turnbar {
-  flex: 0 0 240px;
+  position: relative;
+  flex: 0 0 250px;
   display: flex;
   flex-direction: column;
   gap: 6px;
   min-width: 0;
-  padding-left: 12px;
-  border-left: 1px dashed var(--border);
+  padding: 10px 12px 12px;
+  color: var(--mk-cream);
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath d='M6 21 20 9l14 12v13H6Z' fill='none' stroke='%23fff3dc' stroke-opacity='.09' stroke-width='2.2' stroke-linejoin='round'/%3E%3Crect x='16.5' y='25' width='7' height='9' rx='1' fill='%23fff3dc' fill-opacity='.08'/%3E%3C/svg%3E") right 10px bottom 8px / 64px 64px no-repeat,
+    var(--paper-fibre),
+    linear-gradient(180deg, #84522c, #5e3a1d);
+  border: 2px solid var(--mk-wood-deep);
+  border-radius: 12px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    inset 0 0 0 3px rgba(255, 220, 160, 0.08),
+    0 4px 0 #2e1a0b,
+    0 10px 16px -6px rgba(0, 0, 0, 0.65);
 }
+/* "Your turn": a breathing gold halo (opacity only). */
+.mk-turnbar::before {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 14px;
+  pointer-events: none;
+  opacity: 0;
+  box-shadow: 0 0 0 2px var(--mk-gold), 0 0 22px 4px rgba(255, 210, 63, 0.55);
+}
+.mk-turnbar.mine::before { animation: mk-breathe 1.9s ease-in-out infinite; }
+.mk-turnbar.over { background: var(--paper-fibre), linear-gradient(180deg, #84522c, #5e3a1d); }
+@keyframes mk-breathe { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
 @media (max-width: 760px) {
-  .mk-turnbar { flex: none; padding: 10px 0 0; border-left: none; border-top: 1px dashed var(--border); }
+  .mk-turnbar { flex: none; }
 }
-.mk-phase { font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--fg-muted); font-weight: 700; }
-.mk-whose { display: flex; align-items: center; gap: 8px; font-size: 17px; font-weight: 800; }
-.mk-turnbar.mine .mk-whose { color: #f2c230; }
-.mk-prompt { font-size: 13px; color: var(--fg); }
+.mk-phase { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.8px; color: #f0cf98; font-weight: 800; }
+.mk-whose {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 21px;
+  letter-spacing: 0.3px;
+  line-height: 1.1;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.35);
+  animation: mk-whose-in 0.45s var(--ease-spring) backwards;
+}
+.mk-whose .mk-tag { font-family: var(--font-ui); text-shadow: none; letter-spacing: 0.4px; }
+@keyframes mk-whose-in { from { opacity: 0; transform: translateY(6px) scale(0.92); } }
+.mk-turnbar.mine .mk-whose { color: var(--mk-gold); }
+.mk-prompt { font-size: 13px; color: var(--mk-cream); line-height: 1.35; }
+/* Game over: the sign hands out the town prize. */
+.mk-over-note {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  margin: auto 0;
+  padding: 8px 4px;
+  text-align: center;
+  font-size: 13px;
+  color: #f0dcb8;
+  animation: cc-pop 0.5s var(--ease-spring) 0.4s backwards;
+}
+.mk-over-note b { font-family: var(--font-display); font-weight: 400; font-size: 20px; letter-spacing: 0.3px; color: var(--mk-gold); text-shadow: 0 2px 0 rgba(0, 0, 0, 0.4); }
+.mk-over-rosette { width: 58px; height: 64px; filter: drop-shadow(0 4px 4px rgba(0, 0, 0, 0.45)); }
+.mk-prompt b { color: #ffe08a; }
 .mk-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 2px; }
+.mk-actions button {
+  font-weight: 800;
+  border: 2px solid rgba(59, 42, 32, 0.85);
+  border-radius: 10px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 3px 0 rgba(30, 16, 4, 0.9);
+  transition: transform 0.12s var(--ease-out), box-shadow 0.12s ease, filter 0.12s ease;
+}
+.mk-actions button:not(.secondary) {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.32), rgba(255, 255, 255, 0) 55%), var(--btn-bg, var(--mk-gold));
+}
+.mk-actions button.secondary {
+  color: var(--mk-cream);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0) 60%), #4a2c15;
+  border-color: #2a1708;
+}
+.mk-actions button:hover:not(:disabled) { transform: translateY(-1px); }
+.mk-actions button:active:not(:disabled) { transform: translateY(2px); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 1px 0 rgba(30, 16, 4, 0.9); }
+.mk-actions button:disabled { box-shadow: none; }
 .mk-actions button svg { vertical-align: -2px; }
-.mk-invest-toggle { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--fg-muted); flex-basis: 100%; }
-.mk-ev { font-weight: 500; font-size: 11px; opacity: 0.7; margin-left: 4px; }
+.mk-invest-toggle { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #f0dcb8; flex-basis: 100%; }
+.mk-ev { font-weight: 600; font-size: 11px; opacity: 0.72; margin-left: 4px; }
 /* The panel's own copy of the dice tray — phones only (see the end of the file). */
 .mk-turnbar-dice { display: none; }
 
+/* ---------- Dice tray: green felt in a wooden rim ---------- */
+
 .mk-dice {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  min-width: 140px;
-  padding: 5px 10px;
-  border-radius: 10px;
-  background: radial-gradient(ellipse at center, #2f5a3a 0%, #1f3d27 100%);
-  border: 2px solid #15281a;
-  box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.5);
+  gap: 3px;
+  min-width: 150px;
+  padding: 6px 12px 5px;
+  border-radius: 14px;
+  background:
+    var(--grain),
+    radial-gradient(ellipse at 50% 30%, #4a9a5c 0%, #2c6e3f 58%, #1d4d2c 100%);
+  border: 3px solid #5a3519;
+  box-shadow:
+    inset 0 3px 10px rgba(0, 0, 0, 0.55),
+    inset 0 0 0 2px rgba(255, 255, 255, 0.06),
+    0 3px 0 #3a210e,
+    0 8px 14px -6px rgba(0, 0, 0, 0.6);
 }
-.mk-dice.stale { opacity: 0.55; }
+.mk-dice.stale { opacity: 0.6; }
+.mk-dice.rolling { animation: mk-tray-rattle 0.65s ease-in-out; }
+@keyframes mk-tray-rattle {
+  0%, 100% { transform: none; }
+  15% { transform: translateX(-2px) rotate(-1deg); }
+  35% { transform: translateX(2px) rotate(1deg); }
+  55% { transform: translateX(-1.5px) rotate(-0.6deg); }
+  75% { transform: translateX(1px) rotate(0.4deg); }
+}
+/* The thud: a ring of light spreads over the felt as the dice land. */
+.mk-dice.landed::after {
+  content: '';
+  position: absolute;
+  left: 50%; top: 40%;
+  width: 90px; height: 50px;
+  margin: -25px 0 0 -45px;
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(ellipse, rgba(255, 236, 160, 0.55), rgba(255, 236, 160, 0) 70%);
+  opacity: 0;
+  animation: mk-thud 0.7s ease-out;
+}
+.mk-dice.stale::after { display: none; }
+@keyframes mk-thud {
+  0% { opacity: 0.9; transform: scale(0.4); }
+  100% { opacity: 0; transform: scale(1.8); }
+}
 .mk-dice-row { display: flex; gap: 10px; min-height: 44px; align-items: center; }
-.mk-dice-label { font-size: 12px; color: #e9f3e9; }
+/* The market header's tray is the big one: the roll is the moment of a turn. */
+.mk-market-head .mk-dice { min-width: 168px; padding: 7px 14px 6px; }
+.mk-market-head .mk-dice-row { min-height: 54px; gap: 12px; }
+.mk-market-head .mk-die { width: 52px; height: 52px; }
+.mk-market-head .mk-die.ghost { width: 44px; height: 44px; }
+.mk-dice.rolling { border-color: #c99512; }
+.mk-dice-label { font-size: 12px; color: #e9f3e9; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5); text-align: center; }
 .mk-total {
   display: inline-block;
-  font-size: 18px;
-  color: #f2c230;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 21px;
+  line-height: 1;
+  color: var(--mk-gold);
   margin-left: 2px;
-  vertical-align: -1px;
+  vertical-align: -2px;
+  text-shadow: 0 2px 0 #6b3e00, 0 0 12px rgba(255, 210, 63, 0.55);
 }
-.mk-dice.landed .mk-total { animation: mk-total-pop 0.45s ease-out; }
+.mk-dice.landed .mk-total { animation: mk-total-pop 0.5s var(--ease-spring); }
 .mk-die.tumble { animation: mk-tumble 0.22s linear infinite; }
 .mk-die.tumble.t1 { animation-duration: 0.19s; animation-direction: reverse; }
-.mk-die.settle { animation: mk-settle 0.4s cubic-bezier(.3, 1.6, .5, 1); }
+.mk-die.settle { animation: mk-settle 0.45s cubic-bezier(.3, 1.6, .5, 1); }
 @keyframes mk-tumble {
   0% { transform: translate(0, 0) rotate(0deg); }
-  25% { transform: translate(-3px, -6px) rotate(90deg); }
+  25% { transform: translate(-3px, -8px) rotate(90deg); }
   50% { transform: translate(2px, -2px) rotate(180deg); }
-  75% { transform: translate(3px, -7px) rotate(270deg); }
+  75% { transform: translate(3px, -9px) rotate(270deg); }
   100% { transform: translate(0, 0) rotate(360deg); }
 }
 @keyframes mk-settle {
-  0% { transform: scale(1.25) rotate(-12deg); }
-  100% { transform: scale(1) rotate(0deg); }
+  0% { transform: translateY(-6px) scale(1.25) rotate(-14deg); }
+  55% { transform: translateY(1px) scale(0.95, 1.04) rotate(2deg); }
+  100% { transform: none; }
 }
 @keyframes mk-total-pop {
-  0% { transform: scale(0.4); opacity: 0; }
-  70% { transform: scale(1.3); opacity: 1; }
+  0% { transform: scale(0.3); opacity: 0; }
+  65% { transform: scale(1.4); opacity: 1; }
   100% { transform: scale(1); }
 }
 
-/* ---------- Market ---------- */
+/* ---------- Market: a wooden stall under a striped awning ---------- */
 
 .mk-market {
+  position: relative;
+  margin-top: 6px;
+  padding: 44px 16px 10px;
+  border-radius: 16px 16px 12px 12px;
+  border: 3px solid var(--mk-wood-deep);
   background:
-    radial-gradient(ellipse at top, rgba(255, 255, 255, 0.05), transparent 70%),
-    #2a2e25;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 10px 12px 12px;
+    linear-gradient(180deg, rgba(40, 18, 4, 0.45), rgba(40, 18, 4, 0) 70px),
+    radial-gradient(90% 60% at 50% 30%, rgba(255, 225, 160, 0.16), transparent 70%),
+    var(--paper-fibre),
+    repeating-linear-gradient(90deg, #b98049 0 92px, #a46d3b 92px 94px, #c08852 94px 186px, #9f6a39 186px 188px);
+  box-shadow:
+    inset 0 0 0 4px #7a4a26,
+    inset 0 0 0 6px rgba(255, 220, 160, 0.12),
+    0 22px 40px -14px rgba(0, 0, 0, 0.75);
 }
-.mk-market-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 6px; }
-.mk-market-tools { display: flex; align-items: center; gap: 10px; }
-.mk-market-head h3 { margin: 0; font-size: 14px; text-transform: uppercase; letter-spacing: 0.8px; color: #d9e6c8; }
+/* The awning, overhanging the stall's posts. */
+.mk-market::before {
+  content: '';
+  position: absolute;
+  left: -9px; right: -9px; top: -10px;
+  height: 40px;
+  border-radius: 8px 8px 0 0;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0) 30%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='40'%3E%3Cpath d='M0 0H28V29A14 9 0 0 1 0 29Z' fill='%23e2513f' stroke='%233b2a20' stroke-width='1.5'/%3E%3Cpath d='M28 0H56V29A14 9 0 0 1 28 29Z' fill='%23fff3dc' stroke='%233b2a20' stroke-width='1.5'/%3E%3Cpath d='M0 0H56V5H0Z' fill='%233b2a20' opacity='.28'/%3E%3C/svg%3E") 0 0 / 56px 40px repeat-x;
+  filter: drop-shadow(0 5px 3px rgba(0, 0, 0, 0.4));
+}
+.mk-market-head { position: relative; display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 4px; }
+.mk-market-tools { display: flex; align-items: center; gap: 12px; }
+/* The stall's name on a hanging plaque. */
+.mk-market-head h3 {
+  position: relative;
+  margin: 0;
+  padding: 5px 14px 4px;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 19px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--mk-cream);
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.4);
+  background: var(--paper-fibre), linear-gradient(180deg, #5c3519, #3f2412);
+  border: 2px solid #2a1708;
+  border-radius: 8px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 4px 6px -2px rgba(0, 0, 0, 0.5);
+}
+.mk-market-head h3::before,
+.mk-market-head h3::after {
+  content: '';
+  position: absolute;
+  top: -10px;
+  width: 2px;
+  height: 10px;
+  background: #3b2a20;
+}
+.mk-market-head h3::before { left: 14px; }
+.mk-market-head h3::after { right: 14px; }
 .mk-bank {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
-  font-weight: 700;
-  color: #f2c230;
-  padding: 4px 10px;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 14px;
+  letter-spacing: 0.4px;
+  color: var(--mk-gold);
+  padding: 4px 12px 4px 8px;
   border-radius: 999px;
-  background: rgba(0, 0, 0, 0.25);
+  background: linear-gradient(180deg, #4a2c15, #2e1a0b);
+  border: 2px solid #c99512;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15), 0 3px 6px -2px rgba(0, 0, 0, 0.6);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
 }
-.mk-bank-stack { display: inline-flex; }
+.mk-bank-stack { display: inline-flex; filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.5)); }
 .mk-bank-stack svg + svg { margin-left: -9px; }
-.mk-market-row { display: flex; align-items: center; gap: 12px; padding: 6px 0; }
-.mk-market-row + .mk-market-row { border-top: 1px dashed rgba(255, 255, 255, 0.08); }
+
+/* Each market row is a shelf: the cards stand on a plank. */
+.mk-market-row { position: relative; display: flex; align-items: center; gap: 12px; padding: 8px 0 17px; }
+.mk-market-row::after {
+  content: '';
+  position: absolute;
+  left: -10px; right: -10px; bottom: 5px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1.5px solid var(--mk-wood-deep);
+  background: linear-gradient(180deg, #e4ad6c 0 3px, #ad743f 3px, #7a4a26);
+  box-shadow: 0 7px 9px -3px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+}
 .mk-row-label {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   width: 70px;
   flex-shrink: 0;
-  font-size: 11px;
-  font-weight: 800;
-  color: #c7d4b6;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
 }
-.mk-row-cards { display: flex; flex-wrap: wrap; gap: 10px; min-height: 152px; align-items: center; }
-.mk-market.open .mk-row-cards, .mk-market.marketplace .mk-row-cards, .mk-market.hybrid .mk-row-cards { gap: 8px; }
-.mk-slot { position: relative; border-radius: 11px; transition: opacity 0.2s, filter 0.2s; animation: mk-deal-in 0.45s ease-out both; }
-.mk-slot.dim { opacity: 0.45; filter: saturate(0.6); }
-.mk-slot.buyable .mk-card { box-shadow: 0 0 0 2px #f2c230, 0 4px 12px rgba(242, 194, 48, 0.35); }
-.mk-slot.selected .mk-card { box-shadow: 0 0 0 3px #fff, 0 0 0 6px #f2c230, 0 10px 22px rgba(0, 0, 0, 0.5); transform: translateY(-6px); }
+/* The row's chalkboard tag. */
+.mk-row-label > span:first-child {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: #f4f1e6;
+  padding: 2px 8px 1px;
+  border-radius: 5px;
+  background: var(--grain), #2c3a33;
+  border: 2px solid #6b4226;
+  box-shadow: 0 2px 3px rgba(0, 0, 0, 0.4);
+  white-space: nowrap;
+}
+.mk-row-cards {
+  position: relative;
+  z-index: 1;
+  flex: 1 1 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px 10px;
+  min-height: 152px;
+  align-items: flex-end;
+  /* When a row wraps, every line of cards gets its own plank (the row's
+     ::after shelf carries the last one). Period = card height + row gap. */
+  background: repeating-linear-gradient(180deg,
+    transparent 0 155px,
+    #3f2412 155px 156px, #e4ad6c 156px 158px, #ad743f 158px 162px, #7a4a26 162px 166px, #3f2412 166px 167px,
+    rgba(0, 0, 0, 0.22) 167px 170px);
+  background-size: calc(100% + 20px) 100%;
+  background-position: -10px 0;
+}
+.mk-market.open .mk-row-cards, .mk-market.marketplace .mk-row-cards, .mk-market.hybrid .mk-row-cards { gap: 18px 8px; }
+.mk-row-cards > .muted { align-self: center; color: #f3dfbd; font-style: italic; }
+/* The slot is an fx anchor: no transforms on it. Cards deal in from the deck
+   inside it, staggered (--i); the glow is a pseudo-element behind the card. */
+.mk-slot { position: relative; isolation: isolate; border-radius: 11px; transition: opacity 0.25s, filter 0.25s; }
+.mk-slot > .mk-card { animation: cc-deal-in 0.55s var(--ease-out) backwards; animation-delay: calc(var(--i, 0) * 45ms); }
+.mk-slot::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  z-index: -1;
+  border-radius: 14px;
+  pointer-events: none;
+  opacity: 0;
+  background: rgba(255, 210, 63, 0.35);
+  box-shadow: 0 0 16px 5px rgba(255, 210, 63, 0.75);
+}
+.mk-slot.buyable::before { animation: mk-breathe 1.8s ease-in-out infinite; animation-delay: calc(var(--i, 0) * -150ms); }
+.mk-slot.dim { opacity: 0.5; filter: saturate(0.55); }
+.mk-slot.buyable .mk-card { box-shadow: 0 0 0 2px var(--mk-gold), 0 8px 14px -4px rgba(0, 0, 0, 0.55); }
+.mk-slot.selected .mk-card {
+  box-shadow: 0 0 0 3px #fff, 0 0 0 6px var(--mk-gold), 0 16px 24px -6px rgba(0, 0, 0, 0.6);
+  transform: translateY(-8px) rotate(-1deg);
+  transition: transform 0.3s var(--ease-spring), box-shadow 0.2s ease;
+}
+.mk-slot.selected::before { opacity: 1; animation: none; }
 .mk-slot.soldout .mk-card { opacity: 0.3; filter: grayscale(1); }
 .mk-soldout {
   position: absolute;
@@ -399,127 +706,198 @@
   transform: translate(-50%, -50%) rotate(-14deg);
   background: #d2433b;
   color: #fff;
-  font-size: 11px;
-  font-weight: 900;
-  padding: 2px 8px;
-  border-radius: 4px;
+  font-family: var(--font-display);
+  font-size: 13px;
+  letter-spacing: 0.5px;
+  padding: 2px 9px 1px;
+  border: 2px solid #fff3dc;
+  border-radius: 5px;
   text-transform: uppercase;
-}
-@keyframes mk-deal-in {
-  from { transform: translateY(-14px) rotateY(80deg); opacity: 0; }
-  to { transform: none; opacity: 1; }
+  box-shadow: 0 3px 6px rgba(0, 0, 0, 0.45);
 }
 
-/* ---------- Towns ---------- */
+/* ---------- Towns: plots of grass ---------- */
 
-/* Your town sits in the bottom strip; the others are compact cards in the side column. */
 .mk-town {
+  position: relative;
   min-width: 0;
   transition: box-shadow 0.3s, border-color 0.3s;
 }
 .mk-town.own { flex: 1 1 auto; }
 .mk-town.compact {
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-left: 4px solid var(--mk-seat);
-  border-radius: var(--radius);
-  padding: 6px 8px 8px;
+  padding: 19px 8px 8px;
+  border: 2px solid #2c5a24;
+  border-radius: 12px;
+  background:
+    var(--mk-fence) 0 1px / 13px 16px repeat-x,
+    var(--mk-tufts) 0 14px / 120px 67px,
+    linear-gradient(180deg, color-mix(in srgb, var(--mk-seat) 22%, #57a248), var(--mk-grass-deep) 85%);
+  box-shadow: 0 6px 14px -6px rgba(0, 0, 0, 0.6), inset 0 -2px 0 rgba(0, 0, 0, 0.18);
 }
 .mk-town.compact.active {
   border-color: var(--mk-seat);
-  box-shadow: 0 0 0 1px var(--mk-seat), 0 0 18px color-mix(in srgb, var(--mk-seat) 35%, transparent);
+  --cc-glow: var(--mk-seat);
+  animation: cc-pulse-glow 1.8s ease-in-out infinite;
 }
-.mk-town.compact.won { box-shadow: 0 0 0 2px #f2c230, 0 0 26px rgba(242, 194, 48, 0.45); }
-.mk-town-head { display: flex; align-items: center; gap: 7px; margin-bottom: 8px; }
-.mk-town.compact .mk-town-head { gap: 5px; margin-bottom: 5px; }
-.mk-town-name { font-weight: 800; font-size: 14px; }
-.mk-town.compact .mk-town-name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mk-town-stars { margin-left: auto; letter-spacing: 1px; color: #4a4f5b; font-size: 15px; }
-.mk-town.compact .mk-town-stars { font-size: 12px; letter-spacing: 0; color: var(--fg-muted); font-weight: 700; white-space: nowrap; }
-.mk-town-stars .on { color: #f2a51c; text-shadow: 0 0 6px rgba(242, 165, 28, 0.6); }
+.mk-town.compact.won { box-shadow: 0 0 0 2px var(--mk-gold), 0 0 26px rgba(255, 210, 63, 0.55); }
+/* The winner's plot puts up bunting. */
+.mk-town.won::after {
+  content: '';
+  position: absolute;
+  left: 4px; right: 4px; top: -6px;
+  height: 26px;
+  pointer-events: none;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='26'%3E%3Cpath d='M0 3Q32 13 64 3T128 3' fill='none' stroke='%233b2a20' stroke-width='1.2'/%3E%3Cpath d='M9 5.6 23 7.6 16 21Z' fill='%23ef5a4c' stroke='%233b2a20'/%3E%3Cpath d='M41 7.6 55 5.6 48 21Z' fill='%23ffd23f' stroke='%233b2a20'/%3E%3Cpath d='M73 5.6 87 7.6 80 21Z' fill='%233e9bd6' stroke='%233b2a20'/%3E%3Cpath d='M105 7.6 119 5.6 112 21Z' fill='%2358b85c' stroke='%233b2a20'/%3E%3C/svg%3E") 0 0 / 96px 20px repeat-x;
+  animation: cc-unfurl 0.6s var(--ease-out) 0.5s backwards;
+}
+.mk-town.own.won::after { top: -24px; background-size: 128px 26px; }
+.mk-town-head { display: flex; align-items: center; gap: 7px; margin-bottom: 8px; color: var(--mk-cream); }
+.mk-town.compact .mk-town-head {
+  gap: 5px;
+  margin: 0 -2px 6px;
+  padding: 3px 6px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--mk-seat) 60%, rgba(20, 10, 0, 0.5)), rgba(20, 10, 0, 0.25));
+}
+.mk-town-name {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 17px;
+  letter-spacing: 0.3px;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.35);
+}
+.mk-town.compact .mk-town-name { font-size: 14px; min-width: 2.5em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mk-town.compact .mk-tag { font-size: 8.5px; padding: 0 4px; letter-spacing: 0.2px; flex-shrink: 0; }
+.mk-town-stars { margin-left: auto; letter-spacing: 1px; color: rgba(20, 40, 15, 0.55); font-size: 16px; }
+.mk-town.compact .mk-town-stars { font-size: 12px; letter-spacing: 0; color: var(--mk-cream); font-weight: 800; white-space: nowrap; }
+.mk-town-stars .on { color: #ffc93c; text-shadow: 0 0 6px rgba(255, 201, 60, 0.8), 0 1px 0 #8a5a00; }
+/* Coin purse (an fx anchor — no transforms). */
 .mk-coins {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-weight: 900;
-  font-size: 17px;
-  color: #f2c230;
-  background: rgba(0, 0, 0, 0.25);
-  padding: 2px 10px 2px 6px;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 18px;
+  color: var(--mk-gold);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+  background: linear-gradient(180deg, #4a2c15, #2e1a0b);
+  border: 2px solid #c99512;
+  padding: 1px 10px 1px 4px;
   border-radius: 999px;
-  min-width: 58px;
+  min-width: 60px;
   justify-content: center;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.15), 0 2px 4px rgba(0, 0, 0, 0.45);
 }
-.mk-town.compact .mk-coins { font-size: 14px; min-width: 46px; padding: 1px 8px 1px 4px; }
+.mk-town.compact .mk-coins { font-size: 14px; min-width: 46px; padding: 0 8px 0 3px; border-width: 1.5px; }
 .mk-town-body { display: flex; flex-direction: column; gap: 8px; }
 .mk-town.compact .mk-town-body { gap: 5px; }
+/* Landmarks stand on a patch of cobbles at the head of the plot. */
 .mk-town-landmarks {
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
-  padding-bottom: 8px;
-  border-bottom: 1px dashed var(--border);
+  padding: 5px;
+  border-radius: 10px;
+  background:
+    radial-gradient(circle at 25% 30%, rgba(255, 255, 255, 0.07) 0 3px, transparent 4px) 0 0 / 14px 12px,
+    rgba(70, 45, 18, 0.32);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
+  align-self: flex-start;
 }
-.mk-town.compact .mk-town-landmarks { padding-bottom: 5px; }
-.mk-town.own .mk-town-landmarks, .mk-town.own .mk-town-cards { gap: 3px; }
+.mk-town.compact .mk-town-landmarks { padding: 3px; border-radius: 7px; }
+.mk-town.own .mk-town-landmarks, .mk-town.own .mk-town-cards { gap: 4px; }
+/* An empty lot waiting for a landmark. */
 .mk-lm-slot {
   width: 62px; height: 86px;
-  border: 2px dashed #4a4f5b;
+  border: 2px dashed rgba(255, 243, 220, 0.6);
   border-radius: 7px;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #4a4f5b;
+  color: rgba(255, 243, 220, 0.75);
   font-size: 20px;
+  background: repeating-linear-gradient(45deg, rgba(120, 80, 40, 0.42) 0 5px, rgba(120, 80, 40, 0.24) 5px 10px);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.4);
 }
 .mk-town.compact .mk-lm-slot { width: 37px; height: 50px; font-size: 14px; border-radius: 6px; border-width: 1.5px; }
 .mk-town.compact .mk-card-xs { width: 37px; height: 50px; }
 .mk-town.compact .mk-town-landmarks, .mk-town.compact .mk-town-cards { gap: 2px; }
 .mk-town-cards { display: flex; flex-wrap: wrap; gap: 5px; min-height: 86px; align-items: flex-start; }
 .mk-town.compact .mk-town-cards { min-height: 0; }
-.mk-empty-town { font-size: 12px; align-self: center; }
+.mk-town .mk-empty-town {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-style: italic;
+  color: rgba(255, 243, 220, 0.82);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
+}
+.mk-empty-town::before {
+  content: '';
+  width: 26px; height: 26px;
+  background: var(--mk-house) center / contain no-repeat;
+  opacity: 0.6;
+}
+.mk-town.compact .mk-empty-town::before { width: 18px; height: 18px; }
 .mk-town-card { border-radius: 9px; }
 .mk-town-card.activated .mk-card { animation: mk-ring-in 0.3s ease-out 0.65s both; }
-.mk-town-card.pickable .mk-card { box-shadow: 0 0 0 2px #6aa0ff; }
-.mk-town-card.buyable .mk-card { box-shadow: 0 0 0 2px #f2c230; }
+.mk-town-card.pickable .mk-card { box-shadow: 0 0 0 2px #6aa0ff, 0 0 12px rgba(106, 160, 255, 0.6); }
+.mk-town-card.buyable .mk-card { box-shadow: 0 0 0 2px var(--mk-gold), 0 0 12px rgba(255, 210, 63, 0.65); }
 .mk-town-card.selected .mk-card { box-shadow: 0 0 0 3px #fff, 0 0 0 5px #6aa0ff; transform: translateY(-4px); }
-.mk-town-card.buyable.selected .mk-card { box-shadow: 0 0 0 3px #fff, 0 0 0 5px #f2c230; }
+.mk-town-card.buyable.selected .mk-card { box-shadow: 0 0 0 3px #fff, 0 0 0 5px var(--mk-gold); }
 @keyframes mk-ring-in {
-  from { box-shadow: 0 0 0 0 rgba(242, 194, 48, 0); }
-  to { box-shadow: 0 0 0 2px #f2c230, 0 0 12px rgba(242, 194, 48, 0.7); }
+  from { box-shadow: 0 0 0 0 rgba(255, 210, 63, 0); }
+  to { box-shadow: 0 0 0 2px #ffd23f, 0 0 14px rgba(255, 210, 63, 0.8); }
 }
 
-/* ---------- Side column: history ---------- */
+/* ---------- Side column: the town's chalkboard ---------- */
 
 .mk-log-panel {
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
   display: flex;
   flex-direction: column;
   flex: 0 0 260px;
   min-height: 0;
   overflow: hidden;
+  border-radius: 12px;
+  border: 5px solid var(--mk-wood-dark);
+  background: var(--grain), radial-gradient(120% 100% at 30% 0%, #34473d, #233129 80%);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.5), inset 0 2px 12px rgba(0, 0, 0, 0.45), 0 0 0 1px #3f2412, 0 10px 18px -8px rgba(0, 0, 0, 0.65);
 }
 .mk-sidebar-head {
-  padding: 10px 12px;
-  font-size: 12px;
-  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 12px 6px;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 15px;
+  letter-spacing: 0.8px;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--fg-muted);
-  border-bottom: 1px solid var(--border);
+  color: #f4f1e6;
+  border-bottom: 2px dashed rgba(244, 241, 230, 0.25);
 }
-.mk-feed { overflow-y: auto; padding: 8px 10px 12px; font-size: 12px; line-height: 1.45; }
+.mk-sidebar-head::before {
+  content: '';
+  width: 16px; height: 16px;
+  background: var(--mk-house) center / contain no-repeat;
+}
+.mk-feed { overflow-y: auto; padding: 8px 10px 12px; font-size: 12px; line-height: 1.45; color: #ebe8dc; }
+.mk-feed b { color: #fffbea; }
+.mk-feed .muted { color: #a9b8ac; }
+.mk-feed > .mk-log-line:last-child { animation: mk-chalk-in 0.4s ease-out backwards; }
+@keyframes mk-chalk-in { from { opacity: 0; transform: translateX(-6px); } }
 .mk-log-turn {
   margin: 8px 0 3px;
   padding-top: 6px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid rgba(244, 241, 230, 0.16);
   font-size: 10.5px;
   font-weight: 800;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--fg-muted);
+  letter-spacing: 0.6px;
+  color: #c8d6c0;
 }
 .mk-log-line { padding: 1px 0; }
 .mk-log-card {
@@ -528,29 +906,47 @@
   border: 1px solid;
   border-radius: 4px;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 700;
   line-height: 1.35;
-  background: rgba(0, 0, 0, 0.18);
+  background: rgba(255, 255, 255, 0.07);
+  filter: brightness(1.45) saturate(1.1);
 }
-.mk-log-short { color: var(--danger); }
-.mk-log-sep { display: block; text-align: center; color: #f2c230; font-weight: 700; margin: 6px 0; }
-.mk-log-win { color: #f2c230; font-weight: 800; }
+.mk-log-short { color: #ff9b8e; }
+.mk-log-sep { display: block; text-align: center; color: var(--mk-gold); font-family: var(--font-display); font-weight: 400; letter-spacing: 0.4px; margin: 6px 0; }
+.mk-log-win { color: var(--mk-gold); font-weight: 800; }
 
-/* ---------- Game over ---------- */
+/* ---------- Game over: a town festival ---------- */
 
 .mk-gameover {
   position: relative;
   overflow: hidden;
   text-align: center;
-  background: linear-gradient(135deg, #3b2a12, #2a2e25);
-  border: 2px solid #f2c230;
-  border-radius: var(--radius);
-  padding: 18px 16px 14px;
+  padding: 40px 16px 16px;
+  border: 3px solid var(--mk-gold);
+  border-radius: 16px;
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='26'%3E%3Cpath d='M0 3Q32 13 64 3T128 3' fill='none' stroke='%23fff3dc' stroke-width='1.4'/%3E%3Cpath d='M9 5.6 23 7.6 16 21Z' fill='%23ef5a4c' stroke='%233b2a20'/%3E%3Cpath d='M41 7.6 55 5.6 48 21Z' fill='%23ffd23f' stroke='%233b2a20'/%3E%3Cpath d='M73 5.6 87 7.6 80 21Z' fill='%233e9bd6' stroke='%233b2a20'/%3E%3Cpath d='M105 7.6 119 5.6 112 21Z' fill='%2358b85c' stroke='%233b2a20'/%3E%3C/svg%3E") 0 4px / 128px 26px repeat-x,
+    radial-gradient(70% 90% at 50% 0%, rgba(255, 214, 120, 0.4), transparent 70%),
+    linear-gradient(180deg, #2c4a94 0%, #6a5aa8 55%, #b0687a 100%);
+  box-shadow: 0 0 0 1px rgba(255, 210, 63, 0.4), 0 0 40px rgba(255, 210, 63, 0.25), 0 20px 40px -14px rgba(0, 0, 0, 0.7);
+  animation: cc-rise-in 0.5s var(--ease-out) backwards;
 }
-.mk-gameover h2 { margin: 0 0 4px; font-size: 26px; }
-.mk-standings { margin: 10px auto 0; border-collapse: collapse; font-size: 13px; }
-.mk-standings th, .mk-standings td { padding: 4px 10px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); text-align: left; }
-.mk-standings tr.win td { color: #f2c230; font-weight: 700; }
+.mk-gameover h2 {
+  position: relative;
+  margin: 0 0 4px;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 36px;
+  letter-spacing: 0.5px;
+  color: #ffe27a;
+  text-shadow: 0 3px 0 #7a3d0c, 0 8px 18px rgba(0, 0, 0, 0.5);
+  animation: cc-stamp 0.7s var(--ease-spring) 0.2s both;
+}
+.mk-gameover > p { position: relative; color: #f3e6ff; }
+.mk-standings { position: relative; margin: 12px auto 0; border-collapse: collapse; font-size: 13px; background: rgba(20, 12, 40, 0.35); border-radius: 10px; overflow: hidden; }
+.mk-standings th, .mk-standings td { padding: 5px 12px; border-bottom: 1px solid rgba(255, 255, 255, 0.12); text-align: left; }
+.mk-standings th { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.6px; color: #d9cdf2; }
+.mk-standings tr.win td { color: var(--mk-gold); font-weight: 800; background: rgba(255, 210, 63, 0.1); }
 .mk-confetti { position: absolute; inset: 0; pointer-events: none; }
 .mk-confetti i {
   position: absolute;
@@ -559,11 +955,35 @@
   width: 7px; height: 12px;
   background: hsl(calc(var(--i) * 47deg), 85%, 60%);
   border-radius: 2px;
-  animation: mk-confetti 2.6s ease-in calc(var(--i) * 0.11s) 2 both;
+  animation: mk-confetti 2.6s ease-in calc(var(--i) * 0.11s) 3 both;
 }
 @keyframes mk-confetti {
   0% { transform: translateY(0) rotate(0deg); opacity: 1; }
-  100% { transform: translateY(260px) rotate(540deg); opacity: 0; }
+  100% { transform: translateY(300px) rotate(540deg); opacity: 0; }
+}
+/* Fireworks: twelve sparks on a ring that bursts outward and fades. */
+.mk-fireworks { position: absolute; inset: 0; pointer-events: none; }
+.mk-firework {
+  position: absolute;
+  left: var(--x); top: var(--y);
+  width: 6px; height: 6px;
+  margin: -3px 0 0 -3px;
+  border-radius: 50%;
+  color: var(--c);
+  background: currentColor;
+  box-shadow:
+    0 -44px 0 currentColor, 22px -38px 0 currentColor, 38px -22px 0 currentColor, 44px 0 0 currentColor,
+    38px 22px 0 currentColor, 22px 38px 0 currentColor, 0 44px 0 currentColor, -22px 38px 0 currentColor,
+    -38px 22px 0 currentColor, -44px 0 0 currentColor, -38px -22px 0 currentColor, -22px -38px 0 currentColor,
+    0 -24px 0 -1px #fff6d0, 17px -17px 0 -1px #fff6d0, 24px 0 0 -1px #fff6d0, 17px 17px 0 -1px #fff6d0,
+    0 24px 0 -1px #fff6d0, -17px 17px 0 -1px #fff6d0, -24px 0 0 -1px #fff6d0, -17px -17px 0 -1px #fff6d0;
+  opacity: 0;
+  animation: mk-firework 1.9s ease-out var(--d) 4;
+}
+@keyframes mk-firework {
+  0% { transform: scale(0.1); opacity: 1; }
+  60% { opacity: 1; }
+  100% { transform: scale(1.25); opacity: 0; }
 }
 
 /* ---------- Lobby ---------- */
@@ -573,15 +993,28 @@
 .mk-lobby-check + .mk-lobby-check { margin-top: 4px; }
 .mk-edition-pick { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
 .mk-edition {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 3px;
   text-align: left;
-  padding: 10px 12px;
+  padding: 10px 12px 10px 46px;
   font-weight: 500;
+  border-radius: 12px;
 }
-.mk-edition strong { font-size: 14px; }
+/* A little town emblem on each edition button. */
+.mk-edition::before {
+  content: '';
+  position: absolute;
+  left: 10px; top: 50%;
+  width: 28px; height: 28px;
+  margin-top: -14px;
+  border-radius: 8px;
+  background: var(--mk-house) center / 20px 20px no-repeat, linear-gradient(180deg, #66b452, #3c8538);
+  box-shadow: inset 0 0 0 1.5px rgba(0, 0, 0, 0.25);
+}
+.mk-edition strong { font-family: var(--font-display); font-weight: 400; font-size: 16px; letter-spacing: 0.3px; }
 .mk-edition-players { font-size: 11px; font-weight: 700; opacity: 0.8; }
 .mk-lobby-check { display: flex; gap: 8px; align-items: center; font-size: 13px; }
 .mk-lobby-check .muted { color: var(--fg-muted); }
@@ -611,30 +1044,94 @@
 .mk-fx-card .mk-card { width: 100%; height: 100%; }
 .mk-fx-float {
   position: absolute;
-  font-weight: 900;
-  font-size: 15px;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 18px;
+  letter-spacing: 0.3px;
   white-space: nowrap;
-  text-shadow: 0 1px 2px #000, 0 0 6px rgba(0, 0, 0, 0.7);
+  -webkit-text-stroke: 3px #2b1a0a;
+  paint-order: stroke fill;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.6);
   z-index: 3;
 }
 .mk-fx-float.gain { color: #ffe066; }
 .mk-fx-float.loss { color: #ff8a80; }
 .mk-fx-float.info { color: #b7c6ff; }
+/* Dust puff where a new building lands. */
+.mk-fx-puff { position: absolute; width: 0; height: 0; z-index: 1; }
+.mk-fx-puff i {
+  position: absolute;
+  left: -9px; top: -9px;
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 40% 35%, #fffaf0, #e6d6b8 70%);
+  opacity: 0;
+}
+/* Sparkles bursting off a new landmark. */
+.mk-fx-burst { position: absolute; width: 0; height: 0; z-index: 4; }
+.mk-fx-burst i {
+  position: absolute;
+  left: -7px; top: -7px;
+  width: 14px; height: 14px;
+  opacity: 0;
+  background: #ffe27a;
+  clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%);
+}
+.mk-fx-burst i:nth-child(3n) { background: #fff6d0; }
+.mk-fx-burst i:nth-child(3n + 1) { background: #ffb938; }
+/* Toasts: a cream ribbon; landmarks a gold banner; a win the festival banner. */
 .mk-fx-toast {
   position: fixed;
   left: 50%;
-  top: 72px;
-  background: #2b2118;
-  color: #ffe9a8;
-  border: 2px solid #f2c230;
-  border-radius: 999px;
-  padding: 8px 18px;
-  font-weight: 800;
-  font-size: 15px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  top: 84px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: linear-gradient(180deg, #fffaf0, #f3dfb6);
+  color: #3b2a20;
+  border: 2.5px solid #3b2a20;
+  border-radius: 12px;
+  padding: 7px 18px 6px;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 17px;
+  letter-spacing: 0.3px;
+  box-shadow: 0 4px 0 #3b2a20, 0 16px 30px rgba(0, 0, 0, 0.45);
   white-space: nowrap;
-  z-index: 4;
+  z-index: 5;
 }
+.mk-fx-toast.big,
+.mk-fx-toast.win {
+  font-size: 22px;
+  padding: 9px 30px 8px;
+  background: linear-gradient(180deg, #fff1a0, #ffc23d 60%, #f59e1b);
+  border-radius: 6px;
+}
+.mk-fx-toast.big::before,
+.mk-fx-toast.big::after,
+.mk-fx-toast.win::before,
+.mk-fx-toast.win::after {
+  content: '';
+  position: absolute;
+  top: 10px;
+  z-index: -1;
+  width: 30px;
+  height: 100%;
+  background: #d9771a;
+  border: 2.5px solid #3b2a20;
+}
+.mk-fx-toast.big::before, .mk-fx-toast.win::before { left: -22px; clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%, 34% 50%); }
+.mk-fx-toast.big::after, .mk-fx-toast.win::after { right: -22px; clip-path: polygon(0 0, 100% 0, 66% 50%, 100% 100%, 0 100%); }
+.mk-fx-toast.win {
+  font-size: 30px;
+  padding: 13px 40px 12px;
+  top: 36vh;
+  z-index: 6;
+  color: #3a1d00;
+}
+.mk-fx-toast.bad { background: linear-gradient(180deg, #ffd2c9, #f59683); }
+.mk-fx-toast-icon { font-size: 1.1em; line-height: 1; color: #c25b00; }
+.mk-fx-toast.win .mk-fx-toast-icon, .mk-fx-toast.big .mk-fx-toast-icon { color: #fff8d8; -webkit-text-stroke: 2px #8a3c00; paint-order: stroke fill; }
 
 /* ---------- Phones ---------- */
 
@@ -642,16 +1139,20 @@
    others follow, and the action panel — carrying the dice — pins to the
    bottom of the screen, so Roll / Build stay in reach while you browse. */
 @media (max-width: 600px) {
-  .mk-layout { display: flex; flex-direction: column; align-items: stretch; gap: 10px; }
+  .mk-layout { display: flex; flex-direction: column; align-items: stretch; gap: 12px; }
   /* The board is a <main>, so it also picks up the shell's main padding. */
   .mk-layout > .mk-board { padding: 0; }
   .mk-bottom { display: contents; }
   .mk-town.own {
     order: 1;
-    background: var(--bg-elevated);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 8px 10px 10px;
+    padding: 24px 10px 10px;
+    border: 2px solid #2c5a24;
+    border-radius: 14px;
+    background:
+      var(--mk-fence) 0 1px / 17px 20px repeat-x,
+      var(--mk-tufts) 0 18px / 150px 84px,
+      linear-gradient(180deg, #57a248, var(--mk-grass-deep));
+    box-shadow: 0 8px 16px -8px rgba(0, 0, 0, 0.6);
   }
   .mk-side { order: 2; }
   .mk-log-panel { order: 1; flex: none; max-height: 240px; }
@@ -667,37 +1168,45 @@
     align-items: center;
     gap: 3px 10px;
     padding: 8px 10px calc(10px + env(safe-area-inset-bottom, 0px));
-    background: var(--bg-elevated);
-    border: 1px solid var(--border);
-    border-radius: var(--radius) var(--radius) 0 0;
-    box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.45);
+    border-radius: 14px 14px 0 0;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 -8px 20px rgba(0, 0, 0, 0.5);
   }
-  .mk-turnbar.over { position: static; border-radius: var(--radius); }
-  .mk-turnbar.mine { border-color: #f2c230; box-shadow: 0 0 0 1px rgba(242, 194, 48, 0.35), 0 -6px 22px rgba(242, 194, 48, 0.12); }
+  .mk-turnbar::before { border-radius: 16px 16px 0 0; }
+  .mk-turnbar.over { position: static; border-radius: 14px; }
+  .mk-turnbar.mine { border-color: var(--mk-gold); }
   .mk-phase { grid-area: phase; font-size: 10px; }
-  .mk-whose { grid-area: whose; font-size: 15px; flex-wrap: wrap; gap: 4px 8px; }
+  .mk-whose { grid-area: whose; font-size: 18px; flex-wrap: wrap; gap: 4px 8px; }
   .mk-prompt { grid-area: prompt; font-size: 12.5px; margin-top: 2px; }
   /* Long choice lists (Renovation Company: one button per type) scroll
      inside the panel instead of covering the screen. */
-  .mk-actions { grid-area: actions; gap: 6px; max-height: 34vh; overflow-y: auto; }
+  .mk-actions { grid-area: actions; gap: 6px; max-height: 34vh; overflow-y: auto; padding: 2px 2px 4px; }
   .mk-actions button { padding: 8px 11px; font-size: 13.5px; }
   .mk-turnbar-dice { grid-area: dice; display: block; }
-  .mk-turnbar-dice .mk-dice { flex-direction: row; min-width: 0; gap: 8px; padding: 4px 8px; border-radius: 8px; }
+  .mk-turnbar-dice .mk-dice { flex-direction: row; min-width: 0; gap: 8px; padding: 4px 8px; border-radius: 10px; border-width: 2px; }
   .mk-turnbar-dice .mk-dice-row { gap: 5px; min-height: 30px; }
   .mk-turnbar-dice .mk-die { width: 30px; height: 30px; }
   .mk-turnbar-dice .mk-dice-label { font-size: 11px; line-height: 1.25; max-width: 96px; }
-  .mk-turnbar-dice .mk-total { font-size: 15px; }
+  .mk-turnbar-dice .mk-total { font-size: 17px; }
   .mk-turnbar-dice .mk-tag.hot { margin-left: 0; }
   .mk-market-head .mk-dice { display: none; }
 
-  .mk-market { padding: 8px 10px 4px; }
+  .mk-market { padding: 38px 10px 4px; border-width: 2px; }
+  .mk-market::before { left: -5px; right: -5px; top: -8px; height: 34px; background-size: auto, 44px 32px; }
   .mk-market-head { margin-bottom: 0; }
-  .mk-market-head h3 { font-size: 13px; }
-  .mk-market-row { flex-direction: column; align-items: stretch; gap: 0; padding: 6px 0 0; }
+  .mk-market-head h3 { font-size: 15px; padding: 4px 10px 3px; }
+  .mk-market-row { flex-direction: column; align-items: stretch; gap: 0; padding: 6px 0 15px; }
   .mk-row-label { flex-direction: row; width: auto; gap: 8px; }
-  .mk-row-label .mk-back { width: auto; height: 20px; flex-direction: row; gap: 5px; padding: 0 8px; border-radius: 5px; border-width: 1.5px; box-shadow: none; }
+  .mk-row-label .mk-back {
+    width: auto; height: 22px;
+    flex-direction: row; justify-content: center; gap: 5px;
+    padding: 0 8px;
+    border-radius: 6px;
+    border-width: 1.5px;
+    background: radial-gradient(circle at 50% 30%, #4f76bf, #2a4886 72%);
+    box-shadow: inset 0 0 0 1.5px rgba(255, 243, 220, 0.6);
+  }
   .mk-row-label .mk-back-label { font-size: 9px; }
-  .mk-row-label .mk-back-count { font-size: 12px; }
+  .mk-row-label .mk-back-count { font-size: 13px; }
   /* Swipe through a row; the next card peeks in at the edge. */
   .mk-row-cards,
   .mk-market.open .mk-row-cards,
@@ -711,15 +1220,17 @@
     scrollbar-width: none;
     gap: 8px;
     margin: 0 -10px;
-    padding: 7px 10px 8px;
-    align-items: flex-start;
+    padding: 9px 10px 4px;
+    align-items: flex-end;
+    background: none;
   }
   .mk-row-cards::-webkit-scrollbar { display: none; }
   .mk-slot { scroll-snap-align: start; }
   .mk-slot.selected .mk-card { transform: none; }
+  .mk-slot::before { inset: -2px; box-shadow: 0 0 8px 2px rgba(255, 210, 63, 0.75); }
 
-  .mk-gameover { padding: 14px 10px 12px; }
-  .mk-gameover h2 { font-size: 21px; }
+  .mk-gameover { padding: 34px 10px 12px; }
+  .mk-gameover h2 { font-size: 26px; }
   .mk-standings { font-size: 12px; }
   .mk-standings th, .mk-standings td { padding: 4px 5px; }
   .mk-standings td:nth-child(2) { white-space: nowrap; }
@@ -731,10 +1242,18 @@
   /* Twelve totals don't fit across a phone: the odds table scrolls on its own. */
   .rules-modal-body table.mk-odds { display: block; overflow-x: auto; }
 
-  .mk-fx-toast { width: max-content; max-width: calc(100vw - 24px); white-space: normal; text-align: center; font-size: 14px; }
+  .mk-fx-toast { width: max-content; max-width: calc(100vw - 24px); white-space: normal; text-align: center; font-size: 15px; }
+  .mk-fx-toast.big { font-size: 18px; padding: 8px 20px; }
+  .mk-fx-toast.win { font-size: 21px; padding: 10px 22px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .mk-slot, .mk-die.tumble, .mk-die.settle, .mk-dice.landed .mk-total, .mk-confetti i { animation: none !important; }
+  .mk-slot > .mk-card, .mk-die.tumble, .mk-die.settle, .mk-dice.landed .mk-total, .mk-dice.rolling, .mk-dice.landed::after,
+  .mk-confetti i, .mk-firework, .mk-whose, .mk-feed > .mk-log-line:last-child, .mk-over-note, .mk-town.won::after {
+    animation: none !important;
+  }
+  .mk-slot.buyable::before { animation: none; opacity: 0.8; }
+  .mk-turnbar.mine::before { animation: none; opacity: 0.8; }
+  .mk-town.compact.active { animation: none; box-shadow: 0 0 0 1px var(--mk-seat), 0 0 18px color-mix(in srgb, var(--mk-seat) 45%, transparent); }
   .mk-town-card.activated .mk-card { animation-duration: 0.01s; animation-delay: 0s; }
 }

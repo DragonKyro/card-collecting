@@ -27,6 +27,8 @@ export function CardView({ card, size, selectable, selected, onClick, zone }: Pr
     selectable ? 'selectable' : '',
     selected ? 'selected' : '',
     `color-${card.color}`,
+    // Presentational only (the face shows the family anyway): mermaids shimmer.
+    `fam-${card.family}`,
   ].filter(Boolean).join(' ');
   const info = FAMILY[card.family];
   const flipRef = useFlipCard(card.id, zone ?? `static-${card.id}`);

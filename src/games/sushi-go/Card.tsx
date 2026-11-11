@@ -12,15 +12,21 @@ interface Props {
   selected?: boolean;
   dim?: boolean;
   onClick?: () => void;
+  /** Extra presentational classes (e.g. `armed`, `resolving`). */
+  className?: string;
+  /** Presentational CSS (e.g. `--i`, the stagger index of an entrance). */
+  style?: CSSProperties;
 }
 
-export function CardView({ card, size = 'normal', selectable, selected, dim, onClick }: Props) {
+export function CardView({ card, size = 'normal', selectable, selected, dim, onClick, className, style: extraStyle }: Props) {
   const cls = [
     'sgp-card',
     size === 'small' ? 'small' : '',
     selectable ? 'selectable' : '',
     selected ? 'selected' : '',
     dim ? 'dim' : '',
+    card.copyOf ? 'copied' : '',
+    className ?? '',
   ].filter(Boolean).join(' ');
 
   // A special order shows the card it copies, marked as a copy.
@@ -32,7 +38,7 @@ export function CardView({ card, size = 'normal', selectable, selected, dim, onC
 
   if (shown.flipped) {
     return (
-      <div className={`${cls} flipped`} onClick={onClick}>
+      <div className={`${cls} flipped`} style={extraStyle} onClick={onClick}>
         <div className="art">
           <svg viewBox="0 0 100 100" width={size === 'small' ? 44 : 70}>
             <TakeoutTray />
@@ -47,7 +53,7 @@ export function CardView({ card, size = 'normal', selectable, selected, dim, onC
     );
   }
 
-  const style = { '--kind-color': cardColor(shown.kind) } as CSSProperties;
+  const style = { ...extraStyle, '--kind-color': cardColor(shown.kind) } as CSSProperties;
   return (
     <div className={cls} style={style} onClick={onClick}>
       <div className="ribbon">
@@ -76,8 +82,8 @@ export function CardView({ card, size = 'normal', selectable, selected, dim, onC
   );
 }
 
-export function FaceDownCard({ size = 'normal' }: { size?: 'normal' | 'small' }) {
-  return <div className={`sgp-card facedown ${size === 'small' ? 'small' : ''}`} />;
+export function FaceDownCard({ size = 'normal', style }: { size?: 'normal' | 'small'; style?: CSSProperties }) {
+  return <div className={`sgp-card facedown ${size === 'small' ? 'small' : ''}`} style={style} />;
 }
 
 function hasOrderNumber(kind: SushiGoCardKind): boolean {

@@ -1,6 +1,6 @@
 // Air, Land & Sea — lobby config, rule book and in-game view.
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import type { GameUiBundle } from '@/core/module';
 import type { PlayerId, Seat } from '@/core/types';
 import type { AlsAction, AlsAnswer, AlsConfig, AlsPending, AlsState, AlsTheaterId } from './types';
@@ -13,7 +13,8 @@ import {
   WITHDRAW_CHARTS, cardById, cardIdsForTheaters, cardLabel,
 } from './cards';
 import { isEpic, locate, otherSeat, playOptions, vpForWithdraw } from './rules';
-import { ControlFlag, MedalIcon, SupplyToken, TheaterBanner, TheaterEmblem } from './art';
+import { ControlFlag, MedalIcon, SupplyToken, TheaterBanner, TheaterEmblem, THEATER_TINT, WhiteFlag } from './art';
+import { useArrivals, useBoardFx } from './boardFx';
 import './als.css';
 
 // ============================================================================
@@ -76,6 +77,7 @@ function LobbyConfig({ config, onChange }: { config: AlsConfig; seats: Seat[]; o
               key={t}
               type="button"
               className={`als-theater-pill ${at !== -1 ? 'selected' : ''}`}
+              style={{ '--als-tint': THEATER_TINT[t].main, '--als-tint-dark': THEATER_TINT[t].dark } as CSSProperties}
               disabled={full}
               onClick={() => toggle(t)}
             >
@@ -316,6 +318,15 @@ function GameView({ state, localPlayerId, dispatch }: { state: AlsState; localPl
 
   const name = (s: 0 | 1) => state.seats.find((x) => x.id === state.players[s].id)?.name ?? `Seat ${s + 1}`;
 
+  // Entrance animations: what changed on the board, which hand cards are new.
+  const fx = useBoardFx(state);
+  const freshHand = useArrivals(
+    viewer === -1 ? [] : state.players[viewer].hand,
+    viewer,
+    state.battleNumber,
+    state.log[state.log.length - 1]?.kind === 'battleStart',
+  );
+
   if (state.phase === 'gameOver' || state.subPhase === 'battleEnd') {
     return (
       <div className="als-layout">
@@ -390,8 +401,8 @@ function GameView({ state, localPlayerId, dispatch }: { state: AlsState; localPl
       <div className="als">
         <Header state={state} viewer={viewer} name={name} />
         {mine && mine.prompt !== 'redeployPlay'
-          ? <Decision state={state} p={mine} name={name} moving={moving} onAnswer={answer} onCancelMove={() => setMoving(null)} />
-          : pending && <Waiting p={pending} name={name} viewer={viewer} />}
+          ? <Decision key={decisionKey(mine)} state={state} p={mine} name={name} moving={moving} onAnswer={answer} onCancelMove={() => setMoving(null)} />
+          : pending && <Waiting key={decisionKey(pending)} p={pending} name={name} viewer={viewer} />}
         <div className={`als-board ${isEpic(state) ? 'epic' : ''}`} style={{ ['--als-theater-count' as string]: state.theaters.length }}>
           {state.theaters.map((_, t) => (
             <TheaterColumn
@@ -404,6 +415,7 @@ function GameView({ state, localPlayerId, dispatch }: { state: AlsState; localPl
               highlighted={targetTheaters.has(t)}
               highlightCards={boardTargets}
               markedCards={marked}
+              fx={fx[t]}
             />
           ))}
         </div>
@@ -422,12 +434,13 @@ function GameView({ state, localPlayerId, dispatch }: { state: AlsState; localPl
             setConfirmWithdraw={setConfirmWithdraw}
             dispatch={dispatch}
             drawnCardId={mine?.drawnCardId}
+            fresh={freshHand}
           />
         ) : (
           <p className="help">Spectating — every card is shown.</p>
         )}
         {me && !myTurn && !mine && state.subPhase === 'action' && (
-          <p className="help center als-waiting-line">Waiting for {name(state.turnSeatIdx)}…</p>
+          <p className="help center als-waiting-line"><span className="als-radio" aria-hidden="true" />Waiting for {name(state.turnSeatIdx)}…</p>
         )}
       </div>
       <Sidebar state={state} viewer={viewer} />
@@ -445,7 +458,7 @@ function Header({ state, viewer, name }: { state: AlsState; viewer: 0 | 1 | -1; 
     <div className="als-header">
       <CommanderPanel state={state} seat={left} name={name(left)} color={seatColor(left)} />
       <div className="als-header-middle">
-        <div className="als-header-battle">Battle {state.battleNumber}</div>
+        <div className="als-header-battle" key={state.battleNumber}>Battle {state.battleNumber}</div>
         <div className="als-header-sub">
           First to {state.config.targetVp} VP{state.config.beginner ? ' (Beginner)' : ''}{isEpic(state) ? ' · Epic Mode' : ''} · deck {state.deck.length}
         </div>
@@ -468,7 +481,7 @@ function CommanderPanel({ state, seat, name, color, alignRight }: { state: AlsSt
       <div className="als-commander">
         <span className="als-seat-dot" style={{ background: color ?? '#888' }} />
         <strong>{name}</strong>
-        <span className={`als-first-tag ${first ? '' : 'second'}`} title={first ? '1st Player — wins tied theaters' : '2nd Player'}>{first ? '1st' : '2nd'}</span>
+        <span key={state.battleNumber} className={`als-first-tag ${first ? '' : 'second'}`} title={first ? '1st Player — wins tied theaters' : '2nd Player'}>{first ? '1st' : '2nd'}</span>
       </div>
       <div className="als-vp" title={`${p.vp} of ${state.config.targetVp} VP`}>
         <MedalIcon size={18} />
@@ -537,6 +550,11 @@ function promptText(state: AlsState, p: AlsPending, moving: number | null): stri
   }
 }
 
+/** One key per decision, so a new prompt's panel plays its entrance. */
+function decisionKey(p: AlsPending): string {
+  return `${p.prompt}-${p.ability}-${p.sourceCardId}-${p.seat}-${p.revealedCardId ?? ''}-${p.drawnCardId ?? ''}`;
+}
+
 const SKIP_LABEL: Partial<Record<AlsPending['prompt'], string>> = {
   transport: "Don't move",
   redeployPick: "Don't return",
@@ -553,6 +571,7 @@ function Decision({ state, p, name, moving, onAnswer, onCancelMove }: {
   return (
     <div className="als-decision" data-prompt={p.prompt}>
       <div className="als-decision-head">
+        <span className="als-decision-stamp" aria-hidden="true">Orders</span>
         <span className="als-decision-ability">{abilityName(p.ability)}</span>
         {source.ability !== p.ability && <span className="als-decision-via">via {source.name}</span>}
         <span className="als-decision-who">{name(p.seat)}, your call</span>
@@ -625,6 +644,7 @@ function Waiting({ p, name, viewer }: { p: AlsPending; name: (s: 0 | 1) => strin
   else if (p.prompt === 'envoy') what = 'deciding whether to move Envoy';
   return (
     <div className="als-decision waiting">
+      <span className="als-radio" aria-hidden="true" />
       <span className="als-decision-ability">{abilityName(p.ability)}</span>
       <span>{viewer === -1 ? '' : 'Waiting — '}{name(p.seat)} is {what}…</span>
     </div>
@@ -634,7 +654,7 @@ function Waiting({ p, name, viewer }: { p: AlsPending; name: (s: 0 | 1) => strin
 // ----- hand
 
 function Hand({
-  state, viewer, sel, setSel, playable, handTargets, onHandCard, myTurn, redeploying, confirmWithdraw, setConfirmWithdraw, dispatch, drawnCardId,
+  state, viewer, sel, setSel, playable, handTargets, onHandCard, myTurn, redeploying, confirmWithdraw, setConfirmWithdraw, dispatch, drawnCardId, fresh,
 }: {
   state: AlsState;
   viewer: 0 | 1;
@@ -649,6 +669,8 @@ function Hand({
   setConfirmWithdraw: (b: boolean) => void;
   dispatch: (a: AlsAction) => void;
   drawnCardId?: number;
+  /** Cards new to the hand, with their place in the batch (deal-in stagger). */
+  fresh: Map<number, number>;
 }) {
   const me = state.players[viewer];
   const opp = state.players[otherSeat(viewer)];
@@ -663,7 +685,7 @@ function Hand({
   })();
 
   return (
-    <div className="als-hand-area">
+    <div className={`als-hand-area ${myTurn || redeploying || handTargets.size > 0 ? 'live' : ''}`}>
       <div className="als-opp-hand">
         <div className="als-opp-hand-row">
           {opp.hand.map((c, i) => (opp.known.includes(c)
@@ -676,7 +698,7 @@ function Hand({
         </span>
       </div>
 
-      {hint && <div className="als-hint">{hint}</div>}
+      {hint && <div className="als-hint" key={hint}>{hint}</div>}
 
       <div className="als-hand">
         {me.hand.length === 0 && <p className="help">No cards in hand.</p>}
@@ -686,9 +708,12 @@ function Hand({
           const badge = cardId === drawnCardId ? 'Drawn'
             : me.neutralized.includes(cardId) ? 'Face down next'
               : me.known.includes(cardId) ? 'Revealed' : null;
+          const dealt = fresh.get(cardId);
           return (
             <AlsCardView
               key={cardId}
+              className={dealt !== undefined ? 'als-fx-deal' : ''}
+              style={dealt !== undefined ? ({ '--i': dealt } as CSSProperties) : undefined}
               card={cardById(cardId)}
               selectable={can}
               selected={sel?.cardId === cardId || handTargets.has(cardId)}
@@ -725,12 +750,13 @@ function Hand({
           </button>
         )}
         {myTurn && confirmWithdraw && (
-          <>
+          <div className="als-withdraw-confirm">
+            <span className="als-withdraw-ask"><WhiteFlag size={22} /> Sound the retreat? Your enemy scores {wvp} VP.</span>
             <button className="danger" onClick={() => dispatch({ type: 'withdraw', playerId: me.id })}>
               Confirm withdraw (+{wvp} VP to opponent)
             </button>
             <button className="secondary" onClick={() => setConfirmWithdraw(false)}>Keep fighting</button>
-          </>
+          </div>
         )}
       </div>
     </div>
@@ -756,7 +782,7 @@ function ResultTable({ state, name }: { state: AlsState; name: (s: 0 | 1) => str
         {r.theaters.map((tid, t) => {
           const holder = r.theaterControl[t];
           return (
-            <tr key={tid}>
+            <tr key={tid} style={{ '--i': t } as CSSProperties}>
               <td><span className="als-result-theater"><TheaterEmblem theater={tid} size={20} /> {THEATER_DEFS[tid].name}</span></td>
               <td className={`num ${holder === 0 ? 'won' : ''}`}>{r.theaterStrengths[t][0]}</td>
               <td className={`num ${holder === 1 ? 'won' : ''}`}>{r.theaterStrengths[t][1]}</td>
@@ -769,32 +795,79 @@ function ResultTable({ state, name }: { state: AlsState; name: (s: 0 | 1) => str
   );
 }
 
+/** The VP a battle paid, as a row of medals popping in one by one. */
+function MedalRow({ n }: { n: number }) {
+  return (
+    <div className="als-medal-row" aria-hidden="true">
+      {Array.from({ length: Math.min(n, 12) }, (_, i) => (
+        <span key={i} style={{ '--i': i } as CSSProperties}><MedalIcon size={26} /></span>
+      ))}
+    </div>
+  );
+}
+
+/** Between battles: the 1st / 2nd Supreme Commander chips trade places and the
+ *  rightmost theater swings round to the left end. */
+function NextBattle({ state, viewer, name }: { state: AlsState; viewer: 0 | 1 | -1; name: (s: 0 | 1) => string }) {
+  const r = state.lastBattleResult!;
+  const left: 0 | 1 = viewer === -1 ? 0 : viewer;
+  const right = otherSeat(left);
+  const firstOnLeft = r.firstPlayerSeatIdx === left;
+  const n = r.theaters.length;
+  return (
+    <div className="als-next" aria-hidden="true">
+      <div className="als-next-swap">
+        <span className="als-next-name">{name(left)}</span>
+        <span className="als-next-track">
+          <span className={`als-first-tag ${firstOnLeft ? 'from-left' : 'from-right'}`}>1st</span>
+          <span className={`als-first-tag second ${firstOnLeft ? 'from-right' : 'from-left'}`}>2nd</span>
+        </span>
+        <span className="als-next-name">{name(right)}</span>
+      </div>
+      <div className="als-next-row" style={{ '--n': n } as CSSProperties}>
+        {r.theaters.map((t, i) => (
+          <span key={t} className={i === n - 1 ? 'last' : ''}><TheaterEmblem theater={t} size={24} /></span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function BattleEnd({ state, viewer, name, dispatch }: { state: AlsState; viewer: 0 | 1 | -1; name: (s: 0 | 1) => string; dispatch: (a: AlsAction) => void }) {
   const r = state.lastBattleResult;
   if (!r) return null;
   const canContinue = viewer !== -1 && state.activePlayerId === state.players[viewer].id;
-  const how: ReactNode = r.endedBy === 'withdraw'
+  const withdrew = r.endedBy === 'withdraw';
+  const how: ReactNode = withdrew
     ? <>{name(r.withdrawerSeatIdx!)} withdrew with {r.cardsLeft} card{r.cardsLeft === 1 ? '' : 's'} left</>
     : <>Fought to the last card</>;
   return (
     <div className="als-battle-end">
+      <div className="als-gameover-banners">
+        {r.theaters.map((tid) => <div key={tid}><TheaterBanner theater={tid} /></div>)}
+      </div>
       <div className="als-panel-eyebrow">Battle {r.battleNumber} complete</div>
-      <h2><MedalIcon size={30} /> {name(r.winnerSeatIdx)} {wins(name(r.winnerSeatIdx))} the battle</h2>
+      <div className={`als-stamp ${withdrew ? 'retreat' : ''}`} aria-hidden="true">{withdrew ? 'Withdrawal' : 'Battle won'}</div>
+      <h2>{name(r.winnerSeatIdx)} {wins(name(r.winnerSeatIdx))} the battle</h2>
+      <MedalRow n={r.vpAwarded} />
       <p className="als-panel-sub">{how} · +{r.vpAwarded} VP to {name(r.winnerSeatIdx)}</p>
       <ResultTable state={state} name={name} />
       <div className="als-result-score">
         {([0, 1] as const).map((s) => (
-          <span key={s} className="als-result-vp">{name(s)} <MedalIcon size={16} /> <strong>{state.players[s].vp}</strong></span>
+          <span key={s} className={`als-result-vp ${s === r.winnerSeatIdx ? 'gained' : ''}`}>{name(s)} <MedalIcon size={16} /> <strong>{state.players[s].vp}</strong></span>
         ))}
         <span className="als-panel-sub">first to {state.config.targetVp}</span>
       </div>
+      <NextBattle state={state} viewer={viewer} name={name} />
       <p className="als-panel-sub">Next: the rightmost theater moves to the left end and the Supreme Commanders swap.</p>
       {canContinue
-        ? <button className="primary" onClick={() => dispatch({ type: 'continueBattle' })}>Next battle →</button>
+        ? <button className="primary als-next-btn" onClick={() => dispatch({ type: 'continueBattle' })}>Next battle →</button>
         : <p className="help">Waiting for {name(state.firstPlayerSeatIdx)} to start the next battle…</p>}
     </div>
   );
 }
+
+const CONFETTI = ['#c8452f', '#2b4c8c', '#f2c230', '#fbf6ea', '#5f8f3e'];
 
 function GameOver({ state, name }: { state: AlsState; name: (s: 0 | 1) => string }) {
   const winner: 0 | 1 = state.players[0].vp >= state.config.targetVp ? 0 : 1;
@@ -803,7 +876,21 @@ function GameOver({ state, name }: { state: AlsState; name: (s: 0 | 1) => string
       <div className="als-gameover-banners">
         {state.theaters.map((tid) => <div key={tid}><TheaterBanner theater={tid} /></div>)}
       </div>
-      <MedalIcon size={72} />
+      <div className="als-confetti" aria-hidden="true">
+        {Array.from({ length: 22 }, (_, i) => (
+          <span
+            key={i}
+            style={{
+              '--x': `${(i * 41 + 7) % 100}%`,
+              '--d': `${((i * 0.17) % 1.3).toFixed(2)}s`,
+              '--r': `${(i * 67) % 360}deg`,
+              '--c': CONFETTI[i % CONFETTI.length],
+            } as CSSProperties}
+          />
+        ))}
+      </div>
+      <div className="als-gameover-medal"><MedalIcon size={72} /></div>
+      <div className="als-stamp big" aria-hidden="true">Victory</div>
       <h1>{name(winner)} {wins(name(winner))} the war!</h1>
       <p className="als-panel-sub">
         Final VP — {name(0)} <strong>{state.players[0].vp}</strong> · {name(1)} <strong>{state.players[1].vp}</strong>

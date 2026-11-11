@@ -76,6 +76,16 @@ export const sushiGoModule: GameModule<SushiGoState, SushiGoAction, SushiGoConfi
     await Promise.all(aiLevelsOf(seats).map((level) => prepareAiLevel(level)));
   },
 
+  // The shell's look around this game (lobby banner, game bar, page).
+  theme: {
+    accent: '#ff7a59',
+    accentInk: '#2b0f06',
+    titleFont: 'var(--font-round)',
+    // Lacquer-red sushi bar: two lantern glows over seigaiha scales (each row
+    // drawn opaque over the one above, so the glows and shade sit on top).
+    backdrop: `radial-gradient(640px 420px at 6% -4%, rgba(255, 170, 96, 0.42), transparent 70%), radial-gradient(560px 380px at 96% 2%, rgba(255, 130, 80, 0.3), transparent 70%), radial-gradient(900px 520px at 50% 115%, rgba(255, 90, 70, 0.14), transparent 70%), linear-gradient(180deg, rgba(28, 6, 4, 0) 0%, rgba(20, 4, 3, 0.62) 100%), url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='56' height='28' viewBox='0 0 40 20'><g fill='%23461410' stroke='%23ffcf94' stroke-opacity='0.07' stroke-width='0.9'><g><circle cx='20' cy='-10' r='19.5'/><circle cx='20' cy='-10' r='14' fill='none'/><circle cx='20' cy='-10' r='8.5' fill='none'/><circle cx='20' cy='-10' r='3' fill='none'/></g><g><circle cx='0' cy='0' r='19.5'/><circle cx='0' cy='0' r='14' fill='none'/><circle cx='0' cy='0' r='8.5' fill='none'/><circle cx='0' cy='0' r='3' fill='none'/></g><g><circle cx='40' cy='0' r='19.5'/><circle cx='40' cy='0' r='14' fill='none'/><circle cx='40' cy='0' r='8.5' fill='none'/><circle cx='40' cy='0' r='3' fill='none'/></g><g><circle cx='20' cy='10' r='19.5'/><circle cx='20' cy='10' r='14' fill='none'/><circle cx='20' cy='10' r='8.5' fill='none'/><circle cx='20' cy='10' r='3' fill='none'/></g><g><circle cx='0' cy='20' r='19.5'/><circle cx='0' cy='20' r='14' fill='none'/><circle cx='0' cy='20' r='8.5' fill='none'/><circle cx='0' cy='20' r='3' fill='none'/></g><g><circle cx='40' cy='20' r='19.5'/><circle cx='40' cy='20' r='14' fill='none'/><circle cx='40' cy='20' r='8.5' fill='none'/><circle cx='40' cy='20' r='3' fill='none'/></g><g><circle cx='20' cy='30' r='19.5'/><circle cx='20' cy='30' r='14' fill='none'/><circle cx='20' cy='30' r='8.5' fill='none'/><circle cx='20' cy='30' r='3' fill='none'/></g></g></svg>"), #461410`,
+  },
+
   Thumbnail: SushiGoThumbnail,
 
   ui: async () => {

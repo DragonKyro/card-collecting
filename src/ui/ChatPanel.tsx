@@ -29,7 +29,7 @@ export function ChatPanel() {
   const unread = Math.max(0, userCount - seen);
 
   return (
-    <div className={`chat-panel ${open ? 'open' : 'closed'}`}>
+    <div className={`chat-panel cc-chrome ${open ? 'open' : 'closed'}`}>
       <button className="chat-toggle" onClick={() => setOpen(!open)} type="button" aria-label={open ? 'Close chat' : 'Open chat'}>
         {open ? '✕' : '💬'} {unread > 0 && !open ? `(${unread})` : ''}
       </button>

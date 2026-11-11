@@ -36,6 +36,9 @@ function SetCardInner({
   const count = at('count', 0) + 1;
 
   const classes = ['set-card'];
+  // MegaSet's fifth feature is the border, so it has to read as ink; everywhere
+  // else the edge is just the card's rim.
+  if (axisIndex('border') >= 0) classes.push('has-border-trait');
   if (selected) classes.push('is-selected');
   if (hinted) classes.push('is-hinted');
   if (wrong) classes.push('is-wrong');

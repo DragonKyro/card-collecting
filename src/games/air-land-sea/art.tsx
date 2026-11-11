@@ -1444,6 +1444,31 @@ export function SupplyToken({ size = 22 }: { size?: number }) {
   );
 }
 
+/** A white flag of truce — the withdraw marker. */
+export function WhiteFlag({ size = 18 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true" className="als-white-flag">
+      <path d="M5 22 L5 2.5" {...line(INK, 2.2)} />
+      <path d="M5 3 C 9 1.4 12 5 16 3.6 C 18 3 19.4 2.6 21 3 L21 12.4 C 19.4 12 18 12.4 16 13 C 12 14.4 9 10.8 5 12.4 Z" fill={WHITE} {...LINE} />
+      <path d="M8 6.4 C 11 5.6 13 8.2 17 7" {...line('#c9c2b0', 0.8)} />
+    </svg>
+  );
+}
+
+/** A shell burst with smoke — played over a theater when a card there is
+ *  destroyed (48 × 48). */
+export function BlastArt(): JSX.Element {
+  return (
+    <svg viewBox="0 0 48 48" width="100%" height="100%" aria-hidden="true">
+      <Puff x={13} y={30} s={2} fill={SMOKE_DARK} />
+      <Puff x={33} y={28} s={1.8} fill={SMOKE} />
+      <Burst x={24} y={24} r={20} inner={0.5} points={11} fill={FIRE} />
+      <Burst x={24} y={24} r={12} inner={0.55} points={9} rot={14} fill={FIRE_HI} outline={false} />
+      <circle cx={24} cy={24} r={4.5} fill="#fff6d0" />
+    </svg>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Card back (100 × 140)
 

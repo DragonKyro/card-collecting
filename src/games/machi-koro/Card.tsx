@@ -213,10 +213,15 @@ const PIPS: Record<number, [number, number][]> = {
 export function DieFace({ value, size = 44, className = '' }: { value: number; size?: number; className?: string }) {
   return (
     <svg viewBox="0 0 100 100" width={size} height={size} className={`mk-die ${className}`} aria-label={`die showing ${value}`}>
-      <rect x={4} y={4} width={92} height={92} rx={20} fill="#fffdf6" stroke="#3a2a14" strokeWidth={4} />
-      {(PIPS[value] ?? []).map(([x, y], i) => (
-        <circle key={i} cx={x} cy={y} r={9} fill={value === 1 ? '#d2433b' : '#2b2118'} />
-      ))}
+      {/* the die's lower edge (depth), its face, a highlight along the top */}
+      <rect x={4} y={8} width={92} height={88} rx={20} fill="#d9c49c" stroke="#3a2a14" strokeWidth={4} />
+      <rect x={4} y={3} width={92} height={88} rx={20} fill="#fffdf6" stroke="#3a2a14" strokeWidth={4} />
+      <path d="M22 12 H78" stroke="#ffffff" strokeWidth={5} strokeLinecap="round" opacity={0.9} />
+      <g transform="translate(0 -3)">
+        {(PIPS[value] ?? []).map(([x, y], i) => (
+          <circle key={i} cx={x} cy={y} r={9} fill={value === 1 ? '#d2433b' : '#2b2118'} />
+        ))}
+      </g>
     </svg>
   );
 }

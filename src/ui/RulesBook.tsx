@@ -25,8 +25,8 @@ export function RulesBook({ pages }: { pages: RulesPage[] }) {
         </span>
         <h4 className="rules-book-title">{page.title}</h4>
       </div>
-      <div className="rules-book-body">{page.body}</div>
-      <div className="rules-book-nav">
+      <div className="rules-book-body" key={safeIdx}>{page.body}</div>
+      <div className="rules-book-nav cc-chrome">
         <button
           className="secondary"
           onClick={() => setIdx((i) => Math.max(0, i - 1))}

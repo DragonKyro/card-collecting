@@ -5,7 +5,7 @@
 // state, so the view is a thin renderer: click a card, dispatch a toggle, and the
 // reducer decides whether that completed a group.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import type { GameUiBundle } from '@/core/module';
 import type { PlayerId, Seat } from '@/core/types';
 import { CardSpace, type CardId } from './cards';
@@ -16,9 +16,10 @@ import { SetBoard, type BoardLayout } from './BoardView';
 import { SetSidebar } from './Sidebar';
 import {
   MODE_GROUP_LABELS, SET_MODES, engineFor, getModeSpec,
-  type SetModeGroup, type SetModeId,
+  type ModeEngine, type SetModeGroup, type SetModeId,
 } from './modes';
-import type { SetAction, SetConfig, SetResultFlash, SetState } from './types';
+import { formatMs, formatSeconds, matchStats } from './stats';
+import type { SetAction, SetConfig, SetHistoryEntry, SetResultFlash, SetState } from './types';
 import { RulesBook, RulesGrid, RulesHero, RulesTile } from '@/ui/RulesBook';
 import './set.css';
 
@@ -117,6 +118,7 @@ function GameView({ state, localPlayerId, dispatch }: {
   const board = boardCards(state.deck, state.boardSize);
   const wrongCards = useErrorFlash(state.lastResult);
   const playing = state.phase === 'playing';
+  const matchKey = useMatchKey(state.phase);
 
   // Memory mode leaves a failed reveal on screen for a beat so it can be
   // memorised, then hides it again.
@@ -153,16 +155,18 @@ function GameView({ state, localPlayerId, dispatch }: {
     });
   }
 
+  // On a shared screen the selection glows in the claimant's colour.
+  const claimant = multiSeat ? state.seats.find((s) => s.id === state.claimantId) : undefined;
+  const rootStyle = claimant ? ({ ['--set-claim' as string]: claimant.color } as CSSProperties) : undefined;
+
   return (
-    <div className="set-root">
+    <div className={`set-root${playing ? '' : ' is-over'}${multiSeat ? ' is-shared' : ''}`} style={rootStyle}>
       <SetArtDefs />
       <div className="set-main">
-        <div className={`set-banner${bannerClass(state)}`}>
-          {playing
-            ? state.lastResult?.message ?? `${state.selection.length}/${engine.setSize} selected`
-            : `Deck exhausted — no ${engine.rule.noun} left. ${totalOf(state)} found.`}
-        </div>
+        <Hud state={state} engine={engine} />
+        {!playing && <Finale state={state} engine={engine} board={board} />}
         <SetBoard
+          key={matchKey}
           space={engine.space}
           board={board}
           lastSet={state.lastSet}
@@ -173,6 +177,8 @@ function GameView({ state, localPlayerId, dispatch }: {
           layout={layout}
           showShortcuts={showShortcuts}
           interactive={playing}
+          result={state.lastResult}
+          opening={state.history.length === 0}
           onCardClick={claim}
           onClear={() => dispatch({ type: 'clearSelection', atMs: Date.now() })}
         />
@@ -194,6 +200,7 @@ function GameView({ state, localPlayerId, dispatch }: {
       <SetSidebar
         state={state}
         spec={spec}
+        deckSize={engine.deckSize}
         layout={layout}
         showShortcuts={showShortcuts}
         onToggleLayout={() => setLayout((l) => (l === 'rows' ? 'columns' : 'rows'))}
@@ -204,6 +211,180 @@ function GameView({ state, localPlayerId, dispatch }: {
       />
     </div>
   );
+}
+
+/** The status strip over the table: selection pips, the last outcome, and
+ *  the live clock on the current find. */
+function Hud({ state, engine }: { state: SetState; engine: ModeEngine }) {
+  const playing = state.phase === 'playing';
+  const result = state.lastResult;
+  const text = playing
+    ? result?.message ?? `${state.selection.length}/${engine.setSize} selected`
+    : `Deck exhausted — no ${engine.rule.noun} left. ${totalOf(state)} found.`;
+  const found = playing && result?.kind === 'set'
+    ? state.history.find((h) => h.kind === 'set' && h.atMs === result.atMs)
+    : undefined;
+  const splits = state.history.filter((h) => h.kind === 'set' && h.splitMs > 0);
+  const best = !!found && found.splitMs > 0 && splits.length > 1
+    && splits.every((h) => h === found || h.splitMs > found.splitMs);
+  const msgKey = result ? `${result.kind}-${result.atMs}` : playing ? 'idle' : 'done';
+
+  return (
+    <div className={`set-banner${bannerClass(state)}`}>
+      {playing && (
+        <span className="set-pips" aria-hidden="true">
+          {Array.from({ length: engine.setSize }, (_, i) => (
+            <span key={i} className={`set-pip${i < state.selection.length ? ' is-on' : ''}`} />
+          ))}
+        </span>
+      )}
+      <span className="set-hud-msg" key={msgKey}>
+        {text}
+        {found && found.splitMs > 0 && <span className="set-hud-split">{formatSeconds(found.splitMs)}</span>}
+        {best && <span className="set-hud-best">Best!</span>}
+      </span>
+      {playing && <SplitClock from={state.lastEventAtMs} history={state.history} />}
+    </div>
+  );
+}
+
+const RING_R = 9;
+const RING_C = 2 * Math.PI * RING_R;
+
+/** Time on the current find. The ring fills toward the median split so far
+ *  (or laps every ten seconds before there is one) and turns amber past it. */
+function SplitClock({ from, history }: { from: number | null; history: readonly SetHistoryEntry[] }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (from === null) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 100);
+    return () => window.clearInterval(timer);
+  }, [from]);
+  const pace = useMemo(() => medianSplit(history), [history]);
+  const ms = from === null ? 0 : Math.max(0, now - from);
+  const frac = pace ? Math.min(1, ms / pace) : (ms % 10000) / 10000;
+  const slow = pace !== null && ms > pace;
+  return (
+    <span
+      className={`set-clock${slow ? ' is-slow' : ''}${from === null ? ' is-idle' : ''}`}
+      title={pace ? `Time on this find — the ring fills at your median (${formatSeconds(pace)})` : 'Time on this find'}
+    >
+      <svg className="set-clock-ring" viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="12" r={RING_R} className="set-clock-track" />
+        <circle
+          cx="12" cy="12" r={RING_R}
+          className="set-clock-fill"
+          strokeDasharray={RING_C}
+          strokeDashoffset={RING_C * (1 - frac)}
+          transform="rotate(-90 12 12)"
+        />
+      </svg>
+      <span className="set-clock-time">{formatSeconds(ms)}</span>
+    </span>
+  );
+}
+
+function medianSplit(history: readonly SetHistoryEntry[]): number | null {
+  const xs = history
+    .filter((h) => h.kind === 'set' && h.splitMs > 0)
+    .map((h) => h.splitMs)
+    .sort((a, b) => a - b);
+  if (xs.length === 0) return null;
+  const mid = xs.length >> 1;
+  return xs.length % 2 ? xs[mid] : (xs[mid - 1] + xs[mid]) / 2;
+}
+
+const CONFETTI_COLORS = ['#8a4fd6', '#17a05e', '#d63b48', '#ffc53d', '#ffffff', '#b98cff', '#3ddc97', '#ff6b81'];
+
+/** The game-over moment over the table: a stamp, the haul, the key numbers
+ *  (or the standings on a shared screen) and a one-off confetti burst. */
+function Finale({ state, engine, board }: { state: SetState; engine: ModeEngine; board: readonly CardId[] }) {
+  const stats = matchStats(state);
+  const cleared = useMemo(
+    () => !engine.hasSet(board, state.lastSet, state.foundKeys),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [engine, state.deck, state.boardSize, state.lastSet, state.foundKeys],
+  );
+  const noun = `${engine.rule.noun}${stats.totalSets === 1 ? '' : 's'}`;
+  const multi = state.seats.length > 1;
+  const scoreOf = (id: PlayerId) => state.scores[id] ?? 0;
+  const top = Math.max(0, ...state.seats.map((s) => scoreOf(s.id)));
+  const standings = [...state.seats].sort((a, b) => scoreOf(b.id) - scoreOf(a.id));
+  const solo = stats.seats[0];
+
+  return (
+    <section className="set-finale" aria-label="Results">
+      <span className="set-confetti" aria-hidden="true">
+        {Array.from({ length: 26 }, (_, i) => (
+          <i
+            key={i}
+            className={`is-${['pill', 'dot', 'diamond'][i % 3]}`}
+            style={{
+              ['--x' as string]: `${(i * 37 + 11) % 100}%`,
+              ['--d' as string]: `${(i * 53) % 520}ms`,
+              ['--rot' as string]: `${((i * 71) % 300) - 150}deg`,
+              ['--fall' as string]: `${170 + ((i * 29) % 160)}px`,
+              ['--c' as string]: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
+            } as CSSProperties}
+          />
+        ))}
+      </span>
+      <div className="set-finale-head">
+        <span className="set-finale-eyebrow">{engine.spec.name}</span>
+        <span className="set-finale-title">{cleared ? 'Deck cleared!' : 'Session over'}</span>
+      </div>
+      <div className="set-finale-total">
+        <span className="set-finale-num">{stats.totalSets}</span>
+        <span className="set-finale-noun">{noun} found</span>
+      </div>
+      {multi ? (
+        <ol className="set-finale-standings">
+          {standings.map((seat, i) => {
+            const lead = top > 0 && scoreOf(seat.id) === top;
+            return (
+              <li
+                key={seat.id}
+                className={lead ? 'is-top' : undefined}
+                style={{ ['--seat' as string]: seat.color, ['--i' as string]: i } as CSSProperties}
+              >
+                <span className="set-finale-place">{lead ? '♛' : i + 1}</span>
+                <span className="set-finale-name">{seat.name}</span>
+                <span className="set-finale-score">{scoreOf(seat.id)}</span>
+              </li>
+            );
+          })}
+        </ol>
+      ) : (
+        <div className="set-finale-tiles">
+          <FinaleTile i={0} label="Time" value={formatMs(stats.elapsedMs, false)} />
+          <FinaleTile i={1} label="Fastest" value={!solo || solo.bestMs === null ? '—' : formatSeconds(solo.bestMs)} />
+          <FinaleTile i={2} label="Median" value={!solo || solo.medianMs === null ? '—' : formatSeconds(solo.medianMs)} />
+          <FinaleTile i={3} label="Accuracy" value={solo ? `${Math.round(solo.accuracy * 100)}%` : '—'} />
+        </div>
+      )}
+    </section>
+  );
+}
+
+function FinaleTile({ i, label, value }: { i: number; label: string; value: string }) {
+  return (
+    <div className="set-finale-tile" style={{ ['--i' as string]: i } as CSSProperties}>
+      <span className="set-finale-tile-value">{value}</span>
+      <span className="set-finale-tile-label">{label}</span>
+    </div>
+  );
+}
+
+/** Bumps when a finished match is replaced by a fresh one (Play again), so the
+ *  board remounts and the new deck deals in from scratch. */
+function useMatchKey(phase: string): number {
+  const [track, setTrack] = useState({ n: 0, phase });
+  if (track.phase !== phase) {
+    const fresh = track.phase === 'gameOver' && phase === 'playing';
+    setTrack({ n: track.n + (fresh ? 1 : 0), phase });
+  }
+  return track.n;
 }
 
 function pickClaimant(state: SetState, localPlayerId: PlayerId | null): PlayerId {

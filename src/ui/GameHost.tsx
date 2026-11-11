@@ -7,7 +7,7 @@
 // small loop with a short delay so the UI shows the move. In online matches
 // only the host runs the AI driver — guests would double-dispatch otherwise.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { useGameStore } from '@/store/gameStore';
 import { offlineSeats, useNetworkStore } from '@/store/networkStore';
 import type { GameUiBundle, GameStateShape } from '@/core/module';
@@ -114,9 +114,11 @@ export function GameHost({ onExit, onReturnToLobby }: Props) {
 
   if (!module || !state) {
     return (
-      <div>
-        <p>No game in progress.</p>
-        <button onClick={onExit}>← Back</button>
+      <div className="lobby-single">
+        <section className="lobby-panel online-status cc-chrome">
+          <p>No game in progress.</p>
+          <button onClick={onExit}>← Back</button>
+        </section>
       </div>
     );
   }
@@ -225,8 +227,8 @@ export function GameHost({ onExit, onReturnToLobby }: Props) {
   }
 
   return (
-    <div>
-      <div className="game-host-bar">
+    <div className="game-host">
+      <div className="game-host-bar cc-chrome">
         <strong className="game-host-title">{module.name}</strong>
         <div className="game-host-actions">
           {online && roomCode && (
@@ -271,17 +273,23 @@ export function GameHost({ onExit, onReturnToLobby }: Props) {
         </div>
       )}
       {GameView ? (
-        <GameView state={state} localPlayerId={effectiveLocalPlayerId} dispatch={effectiveDispatch} />
+        <div className="game-host-stage">
+          <GameView state={state} localPlayerId={effectiveLocalPlayerId} dispatch={effectiveDispatch} />
+        </div>
       ) : (
-        <p>Loading…</p>
+        <div className="cc-loading" role="status">
+          <div className="cc-loading-cards" aria-hidden="true"><span /><span /><span /></div>
+          Loading…
+        </div>
       )}
       {online && <ChatPanel />}
       {rulesOpen && RulesComponent && (
         <RulesModal title={module.name} Rules={RulesComponent} onClose={() => setRulesOpen(false)} />
       )}
       {passSeat && (
-        <div className="hotseat-pass-backdrop">
-          <div className="hotseat-pass-card">
+        <div className="hotseat-pass-backdrop" style={{ '--pass-color': passSeat.color } as CSSProperties}>
+          <div className="hotseat-pass-card cc-chrome" key={passSeat.id}>
+            <PassArt color={passSeat.color} />
             <div className="hotseat-pass-eyebrow">Pass the device</div>
             <div className="hotseat-pass-name" style={{ color: passSeat.color }}>
               {passSeat.name}
@@ -300,5 +308,24 @@ export function GameHost({ onExit, onReturnToLobby }: Props) {
         </div>
       )}
     </div>
+  );
+}
+
+/** Two face-down cards swapping hands: the pass-the-device screen's emblem. */
+function PassArt({ color }: { color: string }) {
+  const back = (cls: string, x: number, tint: string) => (
+    <g className={cls}>
+      <rect x={x} y={14} width={46} height={66} rx={7} fill="#1d1638" stroke="#fff" strokeWidth={2.5} />
+      <rect x={x + 5} y={19} width={36} height={56} rx={4} fill={tint} opacity={0.9} />
+      <path d={`M${x + 23} 30 l9 17 l-9 17 l-9 -17 Z`} fill="#fff" opacity={0.85} />
+      <rect x={x + 5} y={19} width={36} height={14} rx={4} fill="#fff" opacity={0.14} />
+    </g>
+  );
+  return (
+    <svg className="hotseat-pass-art" viewBox="0 0 120 92" aria-hidden="true">
+      <ellipse cx={60} cy={86} rx={40} ry={4} fill="#000" opacity={0.35} />
+      {back('pass-card-a', 18, '#5b4bb7')}
+      {back('pass-card-b', 56, color)}
+    </svg>
   );
 }
