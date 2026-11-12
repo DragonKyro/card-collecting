@@ -25,6 +25,10 @@
 // Animations API, which leaves the items' own CSS transforms (hover,
 // selected) alone. A `scene` change (new round, a hot-seat hand-over flipping
 // the point of view, summary) animates nothing.
+//
+// A token landing in a player's pile (zone `tokens-…`) clinks: once its
+// flight finishes, its artwork (the node's child, never the flown node
+// itself) bounces and flashes.
 
 import { Component, createContext, useContext, type ReactNode } from 'react';
 
@@ -100,21 +104,22 @@ export class JaipurFlipProvider extends Component<ProviderProps> {
       for (const m of moves) {
         const k = landed.get(m.zone) ?? 0;
         landed.set(m.zone, k + 1);
-        this.fly(m.node, m.from, m.reveal, pace.duration, Math.min(pace.maxStagger, k * pace.stagger));
+        const flight = this.fly(m.node, m.from, m.reveal, pace.duration, Math.min(pace.maxStagger, k * pace.stagger));
+        if (flight && m.zone.startsWith('tokens-')) clinkOnLanding(m.node, flight);
       }
     }
     this.remember();
   }
 
-  private fly(node: HTMLElement, from: DOMRect, reveal: boolean, duration: number, delay: number): void {
+  private fly(node: HTMLElement, from: DOMRect, reveal: boolean, duration: number, delay: number): Animation | null {
     this.flights.get(node)?.cancel();
     const to = node.getBoundingClientRect();
-    if (to.width === 0 || to.height === 0) return;
+    if (to.width === 0 || to.height === 0) return null;
     const dx = from.left - to.left;
     const dy = from.top - to.top;
     const sx = from.width / to.width;
     const sy = from.height / to.height;
-    if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5 && Math.abs(sx - 1) < 0.01) return;
+    if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5 && Math.abs(sx - 1) < 0.01) return null;
     const start = `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`;
     // A card coming off the deck turns over mid-flight (squeezes to an edge
     // and opens up face-up); opacity is pinned so mount fades don't run mid-air.
@@ -129,7 +134,9 @@ export class JaipurFlipProvider extends Component<ProviderProps> {
         { transform: 'none', transformOrigin: o, opacity: 1 },
       ]
       : [{ transform: start, transformOrigin: o, opacity: 1 }, { transform: 'none', transformOrigin: o, opacity: 1 }];
-    this.flights.set(node, node.animate(frames, { duration, delay, easing: EASING, fill: 'backwards' }));
+    const flight = node.animate(frames, { duration, delay, easing: EASING, fill: 'backwards' });
+    this.flights.set(node, flight);
+    return flight;
   }
 
   private remember(): void {
@@ -140,6 +147,23 @@ export class JaipurFlipProvider extends Component<ProviderProps> {
   override render(): ReactNode {
     return <Ctx.Provider value={this.registry}>{this.props.children}</Ctx.Provider>;
   }
+}
+
+/** A coin-like bounce on a landed token's artwork. Interrupted flights don't clink. */
+function clinkOnLanding(node: HTMLElement, flight: Animation): void {
+  const art = node.firstElementChild;
+  if (!flight.finished || !art || typeof art.animate !== 'function') return;
+  flight.finished.then(() => {
+    art.animate(
+      [
+        { transform: 'scale(1)', filter: 'brightness(1)' },
+        { transform: 'scale(1.32) rotate(-8deg)', filter: 'brightness(1.45)', offset: 0.35 },
+        { transform: 'scale(0.94) rotate(3deg)', filter: 'brightness(1.1)', offset: 0.7 },
+        { transform: 'none', filter: 'brightness(1)' },
+      ],
+      { duration: 340, easing: 'ease-out' },
+    );
+  }, () => {});
 }
 
 function prefersReducedMotion(): boolean {

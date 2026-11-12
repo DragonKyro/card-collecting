@@ -1,4 +1,30 @@
-/* Jaipur — pink-city bazaar: a maroon board, a gold-bordered market rug. */
+/* Jaipur — the pink city at dusk. The board is a rose-sandstone palace wall
+ * with a jali lattice; each player trades from a velvet alcove in it; the
+ * market is a woven rug under a striped silk awning hung with marigolds; the
+ * price board and log are carved rosewood with brass trim.
+ *
+ * flip.tsx flies cards and tokens with the Web Animations API on
+ * `transform`: nothing here animates or transitions a transform on a
+ * `.jp-card` / `.jp-token` beyond the hover / selected lifts it was built
+ * around — decorations animate pseudo-elements and children instead.
+ * Entrances on containers use `backwards` fill, so nothing keeps a
+ * transform (a containing block) once it has landed. */
+
+.jp-layout {
+  --jp-gold: #f3cf63;
+  --jp-gold-deep: #d9a43a;
+  --jp-brass-line: rgba(243, 207, 99, 0.32);
+  --jp-ink: #f8ecd8;
+  --jp-muted: #dcbcaa;
+  --jp-faint: #b89282;
+  --jp-velvet: #2a0a1c;
+  --jp-velvet-deep: #1a0511;
+  --jp-coral: #ff9a8a;
+  --jp-jali: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='34' height='34' viewBox='0 0 34 34'><g fill='none' stroke='%23ffe0d2' stroke-opacity='0.13' stroke-width='1.3'><circle cx='17' cy='17' r='12'/><circle cx='0' cy='0' r='12'/><circle cx='34' cy='0' r='12'/><circle cx='0' cy='34' r='12'/><circle cx='34' cy='34' r='12'/><circle cx='17' cy='17' r='3'/></g></svg>");
+  --jp-wood-grain: repeating-linear-gradient(92deg, rgba(255, 220, 190, 0.025) 0 2px, transparent 2px 9px, rgba(0, 0, 0, 0.05) 9px 10px, transparent 10px 17px);
+}
+
+/* ---------- lobby ---------- */
 
 .jp-lobby-h {
   margin: 0 0 6px;
@@ -7,11 +33,18 @@
   letter-spacing: 0.5px;
   color: var(--fg-muted);
 }
+.jp-lobby-lengths { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
+.jp-lobby-lengths button { display: inline-flex; align-items: center; gap: 8px; }
+.jp-lobby-seals { display: inline-flex; gap: 1px; }
+.jp-lobby-seals svg { display: block; filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.4)); }
+.jp-lobby-lengths button.secondary .jp-lobby-seals { opacity: 0.7; }
+
+/* ---------- layout + board ---------- */
 
 .jp-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 258px;
-  gap: 14px;
+  grid-template-columns: minmax(0, 1fr) 262px;
+  gap: 16px;
   align-items: start;
 }
 
@@ -22,48 +55,105 @@
 .jp-board {
   position: relative;
   container-type: inline-size;
-  padding: 12px;
-  border-radius: 14px;
-  color: #f8ecd8;
+  padding: 14px;
+  border-radius: 18px;
+  color: var(--jp-ink);
   background:
-    radial-gradient(ellipse at 50% 45%, rgba(232, 141, 132, 0.18), transparent 60%),
-    linear-gradient(180deg, #3b1a22 0%, #2a1218 100%);
-  border: 1px solid #5a2a33;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+    radial-gradient(110% 55% at 50% -6%, rgba(255, 214, 160, 0.3), transparent 62%),
+    radial-gradient(70% 40% at 50% 104%, rgba(40, 0, 18, 0.45), transparent 70%),
+    var(--jp-jali),
+    linear-gradient(180deg, #b24c62 0%, #973a51 48%, #772840 100%);
+  border: 1px solid rgba(255, 210, 190, 0.35);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 236, 222, 0.45),
+    inset 0 0 0 5px rgba(80, 10, 30, 0.22),
+    inset 0 -14px 34px rgba(50, 0, 20, 0.35),
+    0 24px 48px -16px rgba(10, 0, 6, 0.8),
+    0 4px 10px rgba(10, 0, 6, 0.4);
 }
 
-.jp-board .muted, .jp-side .muted { color: #c7aa98; }
+.jp-board .muted, .jp-side .muted { color: var(--jp-muted); }
+
+/* ---------- status strip ---------- */
 
 .jp-status {
   display: flex;
   flex-wrap: wrap;
-  gap: 16px;
+  gap: 6px 8px;
   align-items: center;
   font-size: 13px;
-  color: #e8cdb8;
-  margin-bottom: 10px;
+  color: #f4dccb;
+  margin-bottom: 12px;
 }
 .jp-status-round {
-  font-family: Georgia, 'Times New Roman', serif;
-  font-weight: 700;
-  font-size: 15px;
-  color: #f3cf63;
+  font-family: var(--font-ornate);
+  font-size: 21px;
+  line-height: 1;
+  color: #fff1c2;
+  letter-spacing: 0.3px;
+  padding: 2px 10px 2px 2px;
+  text-shadow: 0 2px 0 rgba(80, 10, 30, 0.6), 0 0 16px rgba(255, 200, 120, 0.4);
 }
-.jp-status-goal { margin-left: auto; color: #c7aa98; }
+.jp-status-chip, .jp-status-goal {
+  display: inline-block;
+  line-height: 18px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(36, 6, 18, 0.55);
+  border: 1px solid rgba(243, 207, 99, 0.25);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+.jp-status-chip strong { color: var(--jp-gold); font-variant-numeric: tabular-nums; }
+.jp-status-chip.low { border-color: rgba(255, 154, 138, 0.7); animation: cc-pulse-glow 1.6s ease-in-out infinite; --cc-glow: rgba(255, 120, 100, 0.55); }
+.jp-status-chip.low strong { color: var(--jp-coral); }
+.jp-status-goal { margin-left: auto; color: var(--jp-muted); }
+.jp-soldout-pips { display: inline-flex; gap: 4px; margin-left: 7px; vertical-align: 1px; }
+.jp-soldout-pips i {
+  width: 8px;
+  height: 8px;
+  transform: rotate(45deg);
+  border: 1px solid rgba(243, 207, 99, 0.6);
+  border-radius: 1px;
+}
+.jp-soldout-pips i.on {
+  background: linear-gradient(135deg, #ffe08a, #e0902a);
+  border-color: #ffe08a;
+  box-shadow: 0 0 6px rgba(255, 190, 90, 0.8);
+  animation: jp-pip-on 520ms var(--ease-spring) backwards;
+}
+@keyframes jp-pip-on {
+  from { transform: rotate(45deg) scale(0.2); opacity: 0; }
+  to { transform: rotate(45deg) scale(1); opacity: 1; }
+}
 
-/* ---------- players ---------- */
+/* ---------- player alcoves ---------- */
 
 .jp-player {
   --seat: #888;
-  border: 1px solid rgba(231, 184, 74, 0.22);
-  border-radius: 12px;
-  padding: 8px 10px 10px;
-  background: rgba(0, 0, 0, 0.18);
-  transition: border-color 200ms, box-shadow 200ms;
+  position: relative;
+  border: 1px solid var(--jp-brass-line);
+  border-radius: 16px;
+  padding: 9px 12px 11px;
+  background:
+    radial-gradient(120% 80% at 50% 0%, rgba(150, 40, 80, 0.32), transparent 62%),
+    linear-gradient(180deg, var(--jp-velvet) 0%, var(--jp-velvet-deep) 100%);
+  outline: 1px dashed rgba(243, 207, 99, 0.16);
+  outline-offset: -6px;
+  box-shadow:
+    inset 0 3px 14px rgba(0, 0, 0, 0.6),
+    0 1px 0 rgba(255, 226, 210, 0.3),
+    0 6px 14px -8px rgba(30, 0, 12, 0.7);
+  transition: border-color 220ms;
 }
-.jp-player.active {
-  border-color: var(--seat);
-  box-shadow: 0 0 0 1px var(--seat), 0 0 18px -4px var(--seat);
+.jp-player.active { border-color: var(--seat); }
+.jp-player.active::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  pointer-events: none;
+  --cc-glow: color-mix(in srgb, var(--seat) 70%, transparent);
+  animation: cc-pulse-glow 2.4s ease-in-out infinite;
 }
 .jp-player-head {
   display: flex;
@@ -72,24 +162,90 @@
   margin-bottom: 6px;
   font-size: 14px;
 }
-.jp-player-name { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; }
-.jp-player-name .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--seat); }
-.jp-tag {
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.12);
-  color: #e8cdb8;
+.jp-player-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-ornate);
+  font-size: 17px;
+  line-height: 1.1;
+  letter-spacing: 0.2px;
+  min-width: 0;
 }
-.jp-tag-turn { background: var(--seat); color: #1a0d10; }
-.jp-player-score { margin-left: auto; font-size: 14px; }
-.jp-player-score strong { color: #f3cf63; font-size: 16px; }
+.jp-player-name .dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--seat);
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35), 0 0 8px var(--seat);
+  flex: none;
+}
+.jp-tag {
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #f0d6c4;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+.jp-tag-turn {
+  background: var(--seat);
+  color: #1a0d10;
+  border-color: transparent;
+  animation: jp-tag-breathe 1.8s ease-in-out infinite;
+}
+@keyframes jp-tag-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+.jp-player-score {
+  position: relative;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  font-size: 14px;
+  padding: 2px 11px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(243, 207, 99, 0.16), rgba(243, 207, 99, 0.04));
+  border: 1px solid rgba(243, 207, 99, 0.3);
+  white-space: nowrap;
+}
+.jp-player-score strong {
+  display: inline-block;
+  color: var(--jp-gold);
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+  animation: jp-tick 520ms var(--ease-spring) 380ms backwards;
+}
+@keyframes jp-tick {
+  0% { transform: scale(1.5); color: #fff6d0; text-shadow: 0 0 12px rgba(255, 220, 120, 0.9); }
+  100% { transform: scale(1); }
+}
+.jp-player-score .muted { font-size: 12px; }
+/* "+N" floating off the score as a sale's tokens land. */
+.jp-gain {
+  position: absolute;
+  right: 10px;
+  bottom: 100%;
+  font-weight: 800;
+  font-size: 15px;
+  color: #ffe08a;
+  text-shadow: 0 1px 0 rgba(60, 10, 0, 0.7), 0 0 10px rgba(255, 200, 90, 0.8);
+  pointer-events: none;
+  opacity: 0;
+  animation: cc-float-up 1500ms var(--ease-out) 420ms both;
+}
 
 .jp-seals { display: inline-flex; gap: 2px; vertical-align: middle; }
-.jp-seals svg.earned { filter: drop-shadow(0 0 3px rgba(243, 207, 99, 0.7)); }
+.jp-seals svg.earned {
+  filter: drop-shadow(0 0 3px rgba(243, 207, 99, 0.75));
+  animation: cc-pop 520ms var(--ease-spring) backwards;
+}
 
 /* The viewer's hand gets a row to itself (seven full-size cards are wider
  * than what's left beside a herd and a token pile); herd and tokens share
@@ -113,12 +269,15 @@
 }
 .jp-player-top .jp-hand-zone { flex: 1 1 200px; min-width: 0; }
 .jp-zone-label {
-  font-size: 11px;
+  font-size: 10.5px;
+  font-weight: 800;
   text-transform: uppercase;
-  letter-spacing: 0.6px;
-  color: #c7aa98;
+  letter-spacing: 1.2px;
+  color: #e6c27a;
   margin-bottom: 4px;
 }
+.jp-zone-label .muted { color: var(--jp-faint); font-weight: 700; letter-spacing: 0.4px; }
+
 /* A hand never overflows its zone: the gap between cards (--n of them, set
  * inline) shrinks, down to a deep overlap, until they fit; each card's
  * corner pip stays visible. */
@@ -136,15 +295,69 @@
 .jp-hand .jp-card + .jp-card {
   margin-left: clamp(var(--min-gap), calc((100% - var(--n) * var(--card-w)) / max(var(--n) - 1, 1)), var(--gap));
 }
+/* Your hand rests on a silk runner, lit from the lantern above. */
+.jp-player-bottom .jp-hand {
+  padding-left: 6px;
+  padding-right: 6px;
+  border-radius: 12px;
+  background:
+    radial-gradient(55% 60% at 28% 100%, rgba(255, 190, 120, 0.16), transparent 72%),
+    linear-gradient(180deg, transparent 45%, rgba(196, 42, 71, 0.2) 75%, rgba(120, 18, 44, 0.32) 100%);
+  box-shadow: inset 0 -2px 0 rgba(243, 207, 99, 0.3);
+}
 
-.jp-herd { display: flex; align-items: flex-end; min-height: 60px; padding-top: 12px; }
+/* The herd: a strip of desert sand. */
+.jp-herd {
+  display: flex;
+  align-items: flex-end;
+  min-height: 60px;
+  padding: 12px 8px 4px 6px;
+  border-radius: 10px;
+  background:
+    radial-gradient(120% 60% at 40% 100%, rgba(231, 196, 133, 0.32), transparent 70%),
+    linear-gradient(180deg, transparent 50%, rgba(214, 170, 100, 0.14));
+}
 .jp-herd .jp-card + .jp-card { margin-left: -26px; }
-.jp-player-top .jp-herd { padding-top: 0; }
+.jp-player-top .jp-herd { padding-top: 4px; }
 
-.jp-tokens { display: flex; flex-wrap: wrap; gap: 2px; min-height: 26px; }
+/* The token purse: a brass tray. */
+.jp-tokens {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  min-height: 34px;
+  align-content: flex-start;
+  padding: 4px 6px;
+  border-radius: 10px;
+  background: radial-gradient(100% 120% at 50% 0%, rgba(243, 207, 99, 0.1), rgba(0, 0, 0, 0.18));
+  border: 1px solid rgba(243, 207, 99, 0.16);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.4);
+}
 .jp-player-top .jp-tokens { max-width: 250px; }
-.jp-empty { font-size: 12px; color: #a98d7c; font-style: italic; align-self: center; }
-
+.jp-empty {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--jp-faint);
+  font-style: italic;
+  align-self: center;
+}
+/* Faint emblems in empty zones: a camel in the pen, a coin in the tray. */
+.jp-herd .jp-empty::before, .jp-tokens .jp-empty::before {
+  content: '';
+  width: 24px;
+  height: 24px;
+  flex: none;
+  opacity: 0.4;
+  background: center / contain no-repeat;
+}
+.jp-herd .jp-empty::before {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='18 36 70 64'><path d='M22 72 C 24 62 32 55 40 55 C 44 42 58 42 60 54 C 63 57 66 58 68 56 L 72 44 C 73 39 77 37 81 38.5 L 86 42 L 85 45.5 L 77.5 46.5 L 73.5 61 C 71 67 69 71 67 73 L 67 98 L 62.5 98 L 61.5 78 L 56 78 L 55 98 L 50.5 98 L 50 78 C 44 80 36 80 32 78 L 33 98 L 28.5 98 L 27 80 L 24.5 98 L 20 98 L 21 76 Z' fill='none' stroke='%23e7c48d' stroke-width='3' stroke-linejoin='round'/></svg>");
+}
+.jp-tokens .jp-empty::before {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'><g fill='none' stroke='%23e7c48d' stroke-width='2'><circle cx='20' cy='20' r='17'/><circle cx='20' cy='20' r='12' stroke-dasharray='2 2'/></g><text x='20' y='26' text-anchor='middle' font-size='16' font-weight='700' fill='%23e7c48d' font-family='Georgia'>₹</text></svg>");
+}
 
 /* ---------- cards ---------- */
 
@@ -152,56 +365,172 @@
   position: relative;
   flex: none;
   border-radius: 8px;
-  transition: transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease;
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.45);
+  transition: transform 160ms var(--ease-out), box-shadow 160ms ease, opacity 160ms ease;
+  box-shadow: 0 7px 12px -5px rgba(20, 0, 8, 0.7), 0 1px 2px rgba(20, 0, 8, 0.55);
 }
 .jp-card svg { display: block; width: 100%; height: 100%; }
+/* Card-stock gloss: light catching the top-left corner. */
+.jp-card:not(.jp-slot-empty)::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(140deg, rgba(255, 255, 255, 0.24) 0%, rgba(255, 255, 255, 0.05) 26%, transparent 42%, transparent 80%, rgba(60, 0, 20, 0.12) 100%);
+  pointer-events: none;
+}
 .jp-card-normal { width: 84px; height: 118px; }
 .jp-card-small { width: 50px; height: 70px; }
 .jp-card-tiny { width: 40px; height: 56px; }
 
+/* Cards you may pick beckon: a slow gold halo (opacity only, on a pseudo-element). */
 .jp-card.selectable { cursor: pointer; }
-.jp-card.selectable:hover { transform: translateY(-4px); }
-.jp-card.selectable:focus-visible { outline: 2px solid #f3cf63; outline-offset: 2px; }
+.jp-card.selectable::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 11px;
+  box-shadow: 0 0 0 1.5px rgba(255, 217, 110, 0.75), 0 0 16px 3px rgba(255, 190, 80, 0.5);
+  opacity: 0;
+  pointer-events: none;
+  animation: jp-beckon 2.6s ease-in-out infinite;
+  transition: opacity 160ms ease;
+}
+.jp-market .jp-card.selectable:nth-child(2)::after, .jp-hand .jp-card.selectable:nth-child(2)::after { animation-delay: 0.18s; }
+.jp-market .jp-card.selectable:nth-child(3)::after, .jp-hand .jp-card.selectable:nth-child(3)::after { animation-delay: 0.36s; }
+.jp-market .jp-card.selectable:nth-child(4)::after, .jp-hand .jp-card.selectable:nth-child(4)::after { animation-delay: 0.54s; }
+.jp-market .jp-card.selectable:nth-child(5)::after, .jp-hand .jp-card.selectable:nth-child(5)::after { animation-delay: 0.72s; }
+.jp-hand .jp-card.selectable:nth-child(6)::after { animation-delay: 0.9s; }
+.jp-hand .jp-card.selectable:nth-child(7)::after { animation-delay: 1.08s; }
+@keyframes jp-beckon {
+  0%, 100% { opacity: 0.05; }
+  50% { opacity: 0.55; }
+}
+.jp-card.selectable:hover { transform: translateY(-5px); box-shadow: 0 14px 18px -8px rgba(20, 0, 8, 0.8), 0 1px 2px rgba(20, 0, 8, 0.55); }
+.jp-card.selectable:hover::after, .jp-card.selectable:focus-visible::after { animation: none; opacity: 1; }
+.jp-card.selectable:focus-visible { outline: 2px solid var(--jp-gold); outline-offset: 3px; }
 .jp-card.selected {
   transform: translateY(-12px);
-  box-shadow: 0 0 0 3px #ffd75e, 0 10px 20px rgba(0, 0, 0, 0.55);
+  box-shadow: 0 0 0 3px #ffd75e, 0 0 22px 2px rgba(255, 200, 80, 0.55), 0 14px 22px -6px rgba(20, 0, 8, 0.75);
 }
+.jp-card.selected::after { animation: none; opacity: 0; }
 .jp-herd .jp-card.selected { transform: translateY(-10px); }
 .jp-card.disabled { opacity: 0.4; filter: grayscale(0.5); cursor: not-allowed; }
+.jp-card.disabled::after { display: none; }
 .jp-card.fresh { animation: jp-fresh 1.6s ease-out 0.35s; }
 
 @keyframes jp-fresh {
-  0% { box-shadow: 0 0 0 0 rgba(255, 215, 94, 0.9), 0 2px 5px rgba(0, 0, 0, 0.45); }
-  100% { box-shadow: 0 0 0 10px rgba(255, 215, 94, 0), 0 2px 5px rgba(0, 0, 0, 0.45); }
+  0% { box-shadow: 0 0 0 0 rgba(255, 215, 94, 0.95), 0 0 24px 4px rgba(255, 200, 90, 0.6), 0 7px 12px -5px rgba(20, 0, 8, 0.7); }
+  100% { box-shadow: 0 0 0 12px rgba(255, 215, 94, 0), 0 0 24px 4px rgba(255, 200, 90, 0), 0 7px 12px -5px rgba(20, 0, 8, 0.7); }
 }
 
+/* Empty slots: a dashed Mughal arch. */
 .jp-slot-empty {
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 2px dashed rgba(231, 184, 74, 0.35);
-  color: #c7aa98;
-  font-size: 11px;
+  padding: 26px 6px 0;
+  color: rgba(243, 207, 99, 0.6);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
   box-shadow: none;
   text-align: center;
+  background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 140' preserveAspectRatio='none'><path d='M6 134 L6 50 Q6 30 28 22 Q42 17 50 6 Q58 17 72 22 Q94 30 94 50 L94 134 Z' fill='rgba(20,0,10,0.25)' stroke='%23e7b84a' stroke-opacity='0.55' stroke-width='2.2' stroke-dasharray='6 5'/></svg>") center / 100% 100% no-repeat;
 }
 
-/* ---------- market rug ---------- */
+/* ---------- the market stall: awning + rug ---------- */
+
+.jp-stall { position: relative; margin: 10px 0 12px; }
+
+.jp-awning {
+  --scallop: 14px;
+  position: relative;
+  z-index: 2;
+  height: 38px;
+  margin: 0 4px -12px;
+  pointer-events: none;
+}
+.jp-awning-silk {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.34) 0%, rgba(255, 255, 255, 0) 30%, rgba(70, 0, 24, 0) 55%, rgba(70, 0, 24, 0.42) 100%),
+    repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.12) 0 1px, transparent 1px calc(var(--scallop) * 2 - 1px), rgba(255, 255, 255, 0.1) calc(var(--scallop) * 2 - 1px) calc(var(--scallop) * 2)),
+    repeating-linear-gradient(90deg, #c42a47 0 calc(var(--scallop) * 2), #f6c453 calc(var(--scallop) * 2) calc(var(--scallop) * 4));
+  -webkit-mask:
+    linear-gradient(#000 0 0) top / 100% calc(100% - var(--scallop)) no-repeat,
+    radial-gradient(circle var(--scallop) at 50% 0, #000 97%, transparent 100%) bottom left / calc(var(--scallop) * 2) var(--scallop) repeat-x;
+  mask:
+    linear-gradient(#000 0 0) top / 100% calc(100% - var(--scallop)) no-repeat,
+    radial-gradient(circle var(--scallop) at 50% 0, #000 97%, transparent 100%) bottom left / calc(var(--scallop) * 2) var(--scallop) repeat-x;
+}
+/* The brass rod with its finials. */
+.jp-awning::before {
+  content: '';
+  position: absolute;
+  left: -8px;
+  right: -8px;
+  top: -4px;
+  height: 7px;
+  border-radius: 4px;
+  background:
+    radial-gradient(circle 5px at 5px 50%, #fff0b0, #c9952e 60%, #6e4a06) left / 10px 100% no-repeat,
+    radial-gradient(circle 5px at 5px 50%, #fff0b0, #c9952e 60%, #6e4a06) right / 10px 100% no-repeat,
+    linear-gradient(180deg, #fbe39a, #c9952e 55%, #7a5308);
+  box-shadow: 0 2px 4px rgba(30, 0, 10, 0.5);
+}
+/* A tassel under each scallop. */
+.jp-awning::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -6px;
+  height: 7px;
+  background: radial-gradient(circle 2.6px at var(--scallop) 50%, #f3cf63 92%, transparent) 0 0 / calc(var(--scallop) * 2) 7px repeat-x;
+}
+/* Marigold strings hanging from the awning's ends. */
+.jp-stall::before, .jp-stall::after {
+  content: '';
+  position: absolute;
+  z-index: 3;
+  top: 30px;
+  width: 13px;
+  height: min(62%, 112px);
+  background:
+    radial-gradient(circle at 50% 50%, #8a3b06 0 1.4px, #ffc93c 1.6px 3.4px, #e48a12 3.6px 5.4px, transparent 5.9px) top center / 13px 11px repeat-y;
+  -webkit-mask: linear-gradient(180deg, #000 82%, transparent);
+  mask: linear-gradient(180deg, #000 82%, transparent);
+  transform-origin: 50% 0;
+  animation: cc-sway 5.5s ease-in-out infinite;
+  pointer-events: none;
+}
+.jp-stall::before { left: 7px; }
+.jp-stall::after { right: 7px; animation-delay: -2.4s; }
 
 .jp-rug {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 22px;
-  margin: 12px 0;
-  padding: 16px 14px 10px;
-  border-radius: 14px;
+  padding: 24px 22px 10px;
+  border: 9px solid transparent;
+  border-radius: 6px;
   background:
-    repeating-linear-gradient(45deg, rgba(231, 184, 74, 0.06) 0 6px, transparent 6px 12px),
-    #7d1d2c;
-  border: 3px double #e7b84a;
-  box-shadow: inset 0 0 30px rgba(0, 0, 0, 0.45);
+    radial-gradient(ellipse 50% 62% at 50% 52%, rgba(255, 196, 120, 0.2), transparent 72%) padding-box,
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='26' height='26' viewBox='0 0 26 26'><g fill='none' stroke='%23f3cf63' stroke-opacity='0.12' stroke-width='1.2'><path d='M13 3 L23 13 L13 23 L3 13 Z'/><path d='M13 9 L17 13 L13 17 L9 13 Z'/></g></svg>") padding-box,
+    linear-gradient(180deg, #86172d 0%, #6e1026 100%) padding-box,
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M6 1 L11 6 L6 11 L1 6 Z' fill='%23e7b84a' fill-opacity='0.75'/><circle cx='6' cy='6' r='1.4' fill='%23c42a47'/></svg>") border-box,
+    linear-gradient(#221047, #221047) border-box;
+  box-shadow:
+    0 0 0 2px #e7b84a,
+    0 0 0 4px #3a0a1a,
+    0 16px 26px -12px rgba(20, 0, 8, 0.75),
+    inset 0 0 0 1.5px rgba(231, 184, 74, 0.85),
+    inset 0 18px 22px -12px rgba(30, 0, 12, 0.75),
+    inset 0 0 40px rgba(30, 0, 12, 0.35);
 }
 .jp-market {
   display: flex;
@@ -210,7 +539,7 @@
   align-items: flex-end;
   padding-top: 12px;
 }
-.jp-pile { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.jp-pile { display: flex; flex-direction: column; align-items: center; gap: 6px; }
 
 /* A narrow board: the market takes a line of its own (its cards overlapping
  * as needed, --n of them set inline), deck and sold pile below it. */
@@ -222,80 +551,226 @@
   }
 }
 .jp-deck, .jp-discard { position: relative; width: 84px; height: 118px; }
-.jp-pile-label { font-size: 11px; color: #f0d6c0; }
+/* The deck's lower cards sit a little askew. */
+.jp-deck .jp-card:nth-child(2) { rotate: -2deg; }
+.jp-deck .jp-card:nth-child(3) { rotate: 1.5deg; }
+.jp-deck .jp-card:nth-child(4) { rotate: -3deg; }
+.jp-pile-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #f6dcc6;
+  padding: 1px 9px;
+  border-radius: 999px;
+  background: rgba(30, 4, 14, 0.55);
+  border: 1px solid rgba(243, 207, 99, 0.2);
+}
+.jp-pile-label.low { color: var(--jp-coral); border-color: rgba(255, 154, 138, 0.6); animation: jp-tag-breathe 1.4s ease-in-out infinite; }
 
-/* ---------- actions ---------- */
+/* ---------- actions: the merchant's counter ---------- */
 
-.jp-actions { margin-top: 10px; }
+.jp-actions {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.32), rgba(0, 0, 0, 0.16)), var(--jp-wood-grain);
+  border-top: 1px solid rgba(243, 207, 99, 0.3);
+  box-shadow: inset 0 1px 0 rgba(255, 230, 200, 0.06);
+}
 .jp-intent { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .jp-go {
-  background: linear-gradient(180deg, #f3cf63, #d9a43a);
+  position: relative;
+  overflow: hidden;
+  min-width: 140px;
+  padding: 9px 18px;
+  border-radius: 10px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+  background: linear-gradient(180deg, #ffe697 0%, #f3cf63 38%, #cf9532 100%);
   color: #3a1c0c;
   border: 1px solid #8a5d12;
-  min-width: 132px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), inset 0 -2px 0 rgba(120, 70, 10, 0.35), 0 6px 14px -6px rgba(255, 190, 80, 0.6);
+  transition: filter 160ms ease, box-shadow 160ms ease;
+}
+.jp-go:disabled {
+  background: linear-gradient(180deg, rgba(243, 207, 99, 0.2), rgba(207, 149, 50, 0.12));
+  color: rgba(248, 236, 216, 0.6);
+  border-color: rgba(243, 207, 99, 0.3);
+  box-shadow: none;
+  cursor: default;
+}
+.jp-go:hover:not(:disabled) { filter: brightness(1.08); }
+.jp-go-label { display: inline-block; animation: jp-label-in 240ms var(--ease-out) backwards; }
+@keyframes jp-label-in {
+  from { opacity: 0; transform: translateY(5px); }
 }
 .jp-go .muted { color: #6b4413; font-weight: 600; }
-.jp-intent-hint { font-size: 13px; color: #e8cdb8; flex: 1 1 240px; }
-.jp-intent-ready .jp-intent-hint { color: #f6e2a6; }
-.jp-intent-error .jp-intent-hint { color: #ff9a8a; }
-.jp-clear { padding: 6px 10px; }
-.jp-quick { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+/* A legal move: the brass glows and a sheen runs across it. */
+.jp-intent-ready .jp-go:not(:disabled) { animation: jp-go-glow 1.9s ease-in-out infinite; }
+@keyframes jp-go-glow {
+  0%, 100% { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), inset 0 -2px 0 rgba(120, 70, 10, 0.35), 0 0 0 1px rgba(255, 210, 100, 0.5), 0 0 6px rgba(255, 200, 90, 0.4); }
+  50% { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), inset 0 -2px 0 rgba(120, 70, 10, 0.35), 0 0 0 2px rgba(255, 220, 120, 0.85), 0 0 22px 3px rgba(255, 200, 90, 0.55); }
+}
+.jp-intent-ready .jp-go:not(:disabled)::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.65), transparent);
+  animation: cc-sheen 2.8s var(--ease-in-out) 0.3s infinite;
+  pointer-events: none;
+}
+.jp-intent-hint {
+  font-size: 13px;
+  color: #ecd3c0;
+  flex: 1 1 240px;
+  animation: jp-label-in 260ms var(--ease-out) backwards;
+}
+.jp-intent-ready .jp-intent-hint { color: #fbe7ae; }
+.jp-intent-error .jp-intent-hint { color: var(--jp-coral); animation: cc-shake 420ms var(--ease-in-out) backwards; }
+.jp-intent .jp-clear {
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(30, 4, 14, 0.6);
+  color: #f6dcc6;
+  border: 1px solid rgba(243, 207, 99, 0.38);
+}
+.jp-intent .jp-clear:hover { border-color: var(--jp-gold); color: #fff3d6; }
+.jp-quick { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
 .jp-quick button {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 10px;
+  padding: 4px 11px 4px 4px;
   font-size: 13px;
-  background: rgba(0, 0, 0, 0.25);
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(80, 16, 40, 0.75), rgba(40, 6, 20, 0.75));
   color: #f8ecd8;
-  border-color: rgba(231, 184, 74, 0.35);
+  border: 1px solid rgba(243, 207, 99, 0.38);
+  box-shadow: inset 0 1px 0 rgba(255, 230, 200, 0.1);
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+.jp-quick button:hover:not(:disabled) {
+  border-color: var(--jp-gold);
+  box-shadow: inset 0 1px 0 rgba(255, 230, 200, 0.1), 0 0 12px rgba(255, 200, 90, 0.35);
 }
 .jp-type-icon { display: inline-block; vertical-align: middle; flex: none; }
-.jp-waiting { margin: 8px 0 0; font-size: 13px; color: #c7aa98; text-align: center; }
+.jp-waiting {
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: var(--jp-muted);
+  text-align: center;
+  font-style: italic;
+}
+.jp-waiting::before, .jp-waiting::after { content: ' ❋ '; color: rgba(243, 207, 99, 0.55); font-style: normal; }
 
-/* ---------- side: price board + log ---------- */
+/* ---------- side: price board + log (carved rosewood, brass trim) ---------- */
 
-.jp-side { display: flex; flex-direction: column; gap: 12px; }
+.jp-side { display: flex; flex-direction: column; gap: 14px; }
 .jp-prices, .jp-log {
-  background: #2b1519;
-  border: 1px solid #5a2a33;
-  border-radius: 12px;
-  padding: 10px 10px 12px;
-  color: #f8ecd8;
+  position: relative;
+  border-radius: 14px;
+  padding: 12px 12px 13px;
+  color: var(--jp-ink);
+  background:
+    radial-gradient(circle 3px at 9px 9px, #f3cf63 60%, transparent 70%),
+    radial-gradient(circle 3px at calc(100% - 9px) 9px, #f3cf63 60%, transparent 70%),
+    radial-gradient(circle 3px at 9px calc(100% - 9px), #f3cf63 60%, transparent 70%),
+    radial-gradient(circle 3px at calc(100% - 9px) calc(100% - 9px), #f3cf63 60%, transparent 70%),
+    radial-gradient(120% 70% at 50% 0%, rgba(160, 50, 80, 0.28), transparent 60%),
+    var(--jp-wood-grain),
+    linear-gradient(180deg, #34101f 0%, #220914 100%);
+  border: 1px solid var(--jp-brass-line);
+  box-shadow: inset 0 1px 0 rgba(255, 226, 200, 0.12), inset 0 0 0 4px rgba(0, 0, 0, 0.18), 0 14px 28px -14px rgba(10, 0, 6, 0.85);
 }
 .jp-prices h4, .jp-log h4 {
-  margin: 0 0 8px;
-  font-family: Georgia, 'Times New Roman', serif;
-  color: #f3cf63;
-  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 9px;
+  padding: 0 8px;
+  font-family: var(--font-ornate);
+  font-weight: 400;
+  color: var(--jp-gold);
+  font-size: 18px;
+  letter-spacing: 0.3px;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.4);
 }
-.jp-price-row { display: flex; align-items: center; gap: 6px; margin: 5px 0; min-height: 26px; }
-.jp-price-row.soldout { opacity: 0.5; }
+.jp-prices h4::after, .jp-log h4::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(243, 207, 99, 0.5), transparent);
+}
+.jp-price-row {
+  --good: #888;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 3px 0;
+  padding: 3px 6px 3px 4px;
+  min-height: 30px;
+  border-radius: 999px 8px 8px 999px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--good) 30%, transparent), color-mix(in srgb, var(--good) 6%, transparent) 70%, transparent);
+  box-shadow: inset 0 -1px 0 rgba(243, 207, 99, 0.12);
+}
+.jp-price-row > .jp-type-icon { filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5)); }
+.jp-price-row.soldout { opacity: 0.55; }
 .jp-price-tokens { display: flex; gap: 1px; flex-wrap: nowrap; }
 .jp-price-tokens .jp-token-small { width: 22px; height: 22px; }
-.jp-soldout { font-size: 11px; font-style: italic; color: #c7aa98; }
+.jp-soldout {
+  display: inline-block;
+  font-family: var(--font-ornate);
+  font-size: 13px;
+  color: #ffb3a3;
+  padding: 0 7px;
+  border: 1.5px solid rgba(255, 154, 138, 0.6);
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+  animation: cc-stamp 520ms var(--ease-out) both;
+}
 
 .jp-token { flex: none; width: 34px; height: 34px; }
 .jp-token-small { width: 25px; height: 25px; }
 .jp-token svg { display: block; width: 100%; height: 100%; }
-.jp-token { filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.5)); }
+.jp-token { filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.55)); }
 
-.jp-bonus-piles { display: flex; gap: 10px; margin-top: 12px; align-items: flex-end; flex-wrap: wrap; }
-.jp-bonus-pile { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.jp-bonus-piles {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(243, 207, 99, 0.16);
+  align-items: flex-end;
+  justify-content: space-around;
+  flex-wrap: wrap;
+}
+.jp-bonus-pile { display: flex; flex-direction: column; align-items: center; gap: 4px; }
 .jp-bonus-stack { position: relative; width: 25px; min-height: 25px; }
-.jp-bonus-count { font-size: 10px; font-weight: 700; color: #e8cdb8; }
+.jp-bonus-count { font-size: 10px; font-weight: 800; color: #ecd3c0; filter: brightness(1.5); }
 
 .jp-log ol { list-style: none; margin: 0; padding: 0; max-height: 330px; overflow-y: auto; font-size: 12px; }
-.jp-log li { padding: 3px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.05); line-height: 1.35; }
-.jp-log li.jp-log-roundEnd, .jp-log li.jp-log-matchEnd { color: #f3cf63; font-weight: 600; }
+.jp-log li {
+  padding: 4px 6px;
+  border-bottom: 1px solid rgba(243, 207, 99, 0.08);
+  line-height: 1.35;
+  border-radius: 6px;
+}
+.jp-log li:first-child { background: rgba(243, 207, 99, 0.07); animation: jp-log-in 420ms var(--ease-out) backwards; }
+@keyframes jp-log-in {
+  from { opacity: 0; transform: translateX(-10px); background: rgba(243, 207, 99, 0.3); }
+}
+.jp-log li.jp-log-roundEnd, .jp-log li.jp-log-matchEnd { color: var(--jp-gold); font-weight: 600; }
 /* A move as symbols: name, then + / ⇄ / ₹ with card icons (the sentence is the tooltip). */
 .jp-log li:not(.jp-log-roundEnd):not(.jp-log-matchEnd) { display: flex; align-items: center; gap: 5px; }
-.jp-log-who { font-weight: 700; white-space: nowrap; max-width: 7em; overflow: hidden; text-overflow: ellipsis; }
+.jp-log-who { font-weight: 800; white-space: nowrap; max-width: 7em; overflow: hidden; text-overflow: ellipsis; }
 .jp-log-move { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 3px; }
-.jp-log-verb { font-weight: 800; color: #f3cf63; min-width: 0.8em; text-align: center; }
+.jp-log-verb { font-weight: 800; color: var(--jp-gold); min-width: 0.8em; text-align: center; }
 .jp-log-cards { display: inline-flex; align-items: center; gap: 1px; }
 .jp-log-n { font-size: 11px; font-weight: 700; }
-.jp-log-rupees { font-weight: 800; color: #f3cf63; margin-left: 2px; }
+.jp-log-rupees { font-weight: 800; color: var(--jp-gold); margin-left: 2px; }
 .jp-log-bonus { width: 17px; height: 17px; flex: none; }
 .jp-log-refill { display: inline-flex; align-items: center; gap: 2px; margin-left: 4px; opacity: 0.55; font-size: 11px; }
 .jp-log-refill .jp-type-icon { width: 12px; height: 12px; }
@@ -304,7 +779,7 @@
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
 }
 
-/* ---------- round summary / game over ---------- */
+/* ---------- round summary / game over: a ceremony under an arch ---------- */
 
 .jp-overlay {
   position: absolute;
@@ -313,82 +788,198 @@
   display: flex;
   justify-content: center;
   align-items: flex-start;
-  padding: 36px 12px;
-  border-radius: 14px;
-  background: rgba(20, 8, 10, 0.74);
+  padding: 44px 12px 36px;
+  border-radius: 18px;
+  background:
+    radial-gradient(70% 50% at 50% 30%, rgba(120, 30, 60, 0.45), transparent 70%),
+    rgba(18, 4, 10, 0.8);
   /* Late, so the round's last move finishes flying first (an AI's flies slowly). */
-  animation: jp-overlay-in 420ms ease-out 1000ms both;
+  animation: jp-overlay-in 420ms ease-out 1000ms backwards;
 }
 @keyframes jp-overlay-in {
   from { opacity: 0; }
   to { opacity: 1; }
 }
 .jp-overlay-card {
+  position: relative;
   width: 100%;
   max-width: 660px;
-  padding: 18px 22px;
-  border-radius: 14px;
-  background: #2b1519;
+  padding: 26px 22px 18px;
+  border-radius: 170px 170px 16px 16px / 38px 38px 16px 16px;
+  background:
+    radial-gradient(90% 40% at 50% 0%, rgba(243, 207, 99, 0.14), transparent 70%),
+    var(--jp-wood-grain),
+    linear-gradient(180deg, #3a1124 0%, #240a16 60%, #1c0811 100%);
   border: 2px solid #e7b84a;
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
-  animation: jp-card-in 480ms cubic-bezier(0.2, 0.9, 0.3, 1.1) 1050ms both;
+  outline: 1px solid rgba(243, 207, 99, 0.35);
+  outline-offset: 4px;
+  box-shadow: inset 0 0 0 5px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 230, 200, 0.2), 0 24px 60px rgba(0, 0, 0, 0.65);
+  animation: jp-card-in 520ms cubic-bezier(0.2, 0.9, 0.3, 1.1) 1050ms backwards;
 }
 @keyframes jp-card-in {
-  from { opacity: 0; transform: translateY(16px) scale(0.97); }
+  from { opacity: 0; transform: translateY(18px) scale(0.96); }
   to { opacity: 1; transform: none; }
 }
-.jp-overlay-card h3 {
-  margin: 4px 0 14px;
-  font-family: Georgia, 'Times New Roman', serif;
-  color: #f3cf63;
-  font-size: 20px;
+.jp-finial {
+  position: absolute;
+  top: -27px;
+  left: 50%;
+  margin-left: -30px;
+  filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.5));
 }
-.jp-overlay-eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; color: #c7aa98; }
-.jp-decided { display: block; font-size: 12px; font-family: var(--font); color: #e8cdb8; font-weight: 400; margin-top: 4px; }
+.jp-overlay-card h3 {
+  margin: 4px 0 28px;
+  font-family: var(--font-ornate);
+  font-weight: 400;
+  color: var(--jp-gold);
+  font-size: 25px;
+  line-height: 1.2;
+  text-align: center;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.45), 0 0 22px rgba(255, 200, 100, 0.25);
+  animation: cc-rise-in 520ms var(--ease-out) 1180ms backwards;
+}
+.jp-overlay-eyebrow {
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 1.6px;
+  color: #d8b3a0;
+  text-align: center;
+}
+.jp-decided { display: block; font-size: 12px; font-family: var(--font); color: #e8cdb8; font-weight: 400; margin-top: 4px; text-shadow: none; }
 
-.jp-score-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+.jp-score-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px; }
 @media (max-width: 560px) { .jp-score-cols { grid-template-columns: 1fr; } }
 .jp-score-col {
   position: relative;
   padding: 10px 12px;
-  border-radius: 10px;
-  background: rgba(0, 0, 0, 0.22);
-  border: 1px solid rgba(231, 184, 74, 0.2);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.28), rgba(0, 0, 0, 0.16));
+  border: 1px solid rgba(231, 184, 74, 0.22);
+  animation: cc-rise-in 480ms var(--ease-out) 1250ms backwards;
 }
-.jp-score-col.won { border-color: #e7b84a; box-shadow: 0 0 20px -6px #e7b84a; }
-.jp-score-name { font-weight: 800; margin-bottom: 6px; font-size: 15px; }
+.jp-score-col:nth-child(2) { animation-delay: 1350ms; }
+.jp-score-col.won {
+  border-color: #e7b84a;
+  background:
+    radial-gradient(80% 60% at 85% 0%, rgba(243, 207, 99, 0.18), transparent 70%),
+    linear-gradient(180deg, rgba(0, 0, 0, 0.28), rgba(0, 0, 0, 0.16));
+  box-shadow: 0 0 22px -6px #e7b84a;
+}
+.jp-score-name { font-family: var(--font-ornate); font-size: 18px; margin-bottom: 6px; }
 .jp-score-line { display: flex; justify-content: space-between; font-size: 13px; margin-top: 6px; }
 .jp-score-tokens { display: flex; flex-wrap: wrap; gap: 2px; margin-top: 3px; min-height: 4px; }
 .jp-score-total {
   display: flex;
   justify-content: space-between;
+  align-items: baseline;
   margin-top: 10px;
   padding-top: 6px;
   border-top: 1px solid rgba(231, 184, 74, 0.3);
   font-size: 15px;
 }
-.jp-score-total strong { color: #f3cf63; font-size: 18px; }
+.jp-score-total strong { display: inline-block; color: var(--jp-gold); font-size: 20px; animation: jp-tick 620ms var(--ease-spring) 1500ms backwards; }
 .jp-camel-win { color: #ffd75e; }
+
+/* The seal of excellence: a sunburst opens behind it, petals fly off. */
 .jp-seal-pop {
   position: absolute;
+  z-index: 2;
   top: -30px;
   right: 6px;
-  animation: jp-seal-pop 900ms cubic-bezier(0.2, 1.5, 0.4, 1) 1500ms both;
-  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.5));
+  animation: jp-seal-stamp 760ms cubic-bezier(0.2, 1.4, 0.4, 1) 1600ms backwards;
+  filter: drop-shadow(0 5px 8px rgba(0, 0, 0, 0.55));
 }
-@keyframes jp-seal-pop {
-  from { opacity: 0; transform: scale(0.1) rotate(-60deg); }
-  to { opacity: 1; transform: none; }
+@keyframes jp-seal-stamp {
+  0% { opacity: 0; transform: scale(2.6) rotate(-40deg); }
+  55% { opacity: 1; transform: scale(0.9) rotate(4deg); }
+  100% { opacity: 1; transform: none; }
+}
+.jp-seal-burst {
+  position: absolute;
+  z-index: 1;
+  top: -54px;
+  right: -18px;
+  width: 112px;
+  height: 112px;
+  border-radius: 50%;
+  pointer-events: none;
+  background:
+    radial-gradient(circle, rgba(255, 226, 140, 0.55) 0 18%, transparent 62%),
+    repeating-conic-gradient(rgba(255, 214, 110, 0.5) 0 6deg, transparent 6deg 22.5deg);
+  -webkit-mask: radial-gradient(circle, #000 30%, transparent 70%);
+  mask: radial-gradient(circle, #000 30%, transparent 70%);
+  animation: jp-burst-in 700ms var(--ease-out) 1650ms backwards, cc-spin 26s linear 1650ms infinite;
+}
+@keyframes jp-burst-in {
+  from { opacity: 0; transform: scale(0.2); }
+  to { opacity: 1; transform: scale(1); }
+}
+.jp-petals { position: absolute; pointer-events: none; }
+.jp-petals i {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 9px;
+  height: 13px;
+  margin: -6px 0 0 -4px;
+  border-radius: 50% 50% 50% 50% / 70% 70% 30% 30%;
+  background: #f5a524;
+  opacity: 0;
+}
+.jp-petals i:nth-child(3n + 1) { background: #ffc93c; }
+.jp-petals i:nth-child(3n + 2) { background: #e2464f; }
+.jp-seal-petals { z-index: 3; top: 2px; right: 38px; }
+.jp-seal-petals i { animation: jp-petal-burst 1100ms var(--ease-out) calc(1700ms + var(--i) * 18ms) both; }
+@keyframes jp-petal-burst {
+  0% { opacity: 1; transform: rotate(calc(var(--i) * 360deg / var(--n))) translateY(0) scale(0.4); }
+  70% { opacity: 1; }
+  100% { opacity: 0; transform: rotate(calc(var(--i) * 360deg / var(--n) + 40deg)) translateY(calc(-62px - var(--j) * 30px)) scale(1); }
 }
 
-.jp-final-seals { display: flex; gap: 28px; margin-bottom: 14px; flex-wrap: wrap; }
-.jp-final-seal { display: flex; flex-direction: column; gap: 4px; font-weight: 700; }
-.jp-history { width: 100%; font-size: 13px; margin-top: 4px; }
+.jp-final-seals { display: flex; gap: 28px; margin-bottom: 16px; flex-wrap: wrap; justify-content: center; }
+.jp-final-seal {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-ornate);
+  font-size: 17px;
+}
+.jp-final-seal .jp-seals svg.earned { animation: jp-seal-stamp 640ms cubic-bezier(0.2, 1.4, 0.4, 1) 1500ms backwards; }
+.jp-final-seal .jp-seals svg.earned:nth-child(2) { animation-delay: 1700ms; }
+.jp-final-seal .jp-seals svg.earned:nth-child(3) { animation-delay: 1900ms; }
+/* The seal stamped on the winner's column needs room under the seal row. */
+.jp-final .jp-score-cols { margin-top: 40px; }
+.jp-final h3 { margin-bottom: 16px; }
+.jp-history { width: 100%; font-size: 13px; margin-top: 4px; border-collapse: collapse; }
+.jp-history th {
+  color: #e6c27a;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  border-bottom: 1px solid rgba(243, 207, 99, 0.3);
+}
+.jp-history td { border-bottom: 1px solid rgba(243, 207, 99, 0.08); }
+.jp-history td.num { font-variant-numeric: tabular-nums; }
+/* A shower of marigold petals over the game-over arch (one pass). */
+.jp-shower { left: 0; right: 0; top: 0; height: 280px; overflow: hidden; border-radius: inherit; }
+.jp-shower i {
+  left: calc(4% + var(--i) * 92% / var(--n));
+  animation: jp-petal-fall calc(2400ms + var(--j) * 1200ms) cubic-bezier(0.3, 0.2, 0.5, 1) calc(1300ms + var(--j) * 1100ms) both;
+}
+@keyframes jp-petal-fall {
+  0% { opacity: 0; transform: translate(0, -20px) rotate(0deg); }
+  12% { opacity: 1; }
+  75% { opacity: 0.9; }
+  100% { opacity: 0; transform: translate(calc(var(--j) * 50px - 25px), 270px) rotate(calc(var(--j) * 400deg + 160deg)); }
+}
 
 /* ---------- rules ---------- */
 
 .jp-rules-row { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0; }
-.jp-rules-card { width: 58px; height: 81px; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.4)); }
+.jp-rules-card { width: 58px; height: 81px; filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.45)); }
 .jp-rules-token { width: 30px; height: 30px; }
 .jp-rules-steps li { margin: 4px 0; }
 .jp-rules-note { font-size: 13px; color: var(--fg-muted); }
@@ -404,7 +995,8 @@
 .jp-rules-table { width: 100%; }
 
 @media (prefers-reduced-motion: reduce) {
-  .jp-card.fresh, .jp-overlay, .jp-overlay-card, .jp-seal-pop { animation: none; }
+  .jp-card.fresh, .jp-overlay, .jp-overlay-card, .jp-seal-pop, .jp-seal-burst,
+  .jp-card.selectable::after, .jp-stall::before, .jp-stall::after { animation: none; }
 }
 
 /* ---------- phones ---------- */
@@ -412,19 +1004,31 @@
 /* Smaller full-size cards: five market cards then sit side by side instead of
  * hiding each other's labels, and a hand of five fits without overlapping. */
 @media (max-width: 600px) {
-  .jp-board { padding: 10px 8px; }
-  .jp-status { gap: 4px 12px; }
+  .jp-board { padding: 10px 8px; border-radius: 14px; }
+  .jp-status { gap: 4px 6px; }
+  .jp-status-round { font-size: 18px; padding-right: 4px; }
+  .jp-status-goal { margin-left: 0; }
   .jp-player { padding: 8px 8px 10px; }
+  .jp-player-name { font-size: 15px; }
   .jp-card-normal { width: 64px; height: 90px; }
   .jp-hand:not(.jp-hand-small) { --card-w: 64px; --min-gap: -46px; min-height: 102px; }
-  .jp-rug { margin: 10px 0; padding: 10px 6px 8px; }
+  .jp-player-bottom .jp-hand { padding-left: 2px; padding-right: 2px; }
+  .jp-stall { margin: 8px 0 10px; }
+  .jp-awning { --scallop: 11px; height: 30px; margin: 0 2px -10px; }
+  .jp-stall::before, .jp-stall::after { top: 18px; height: min(50%, 70px); }
+  .jp-stall::before { left: 4px; }
+  .jp-stall::after { right: 4px; }
+  .jp-rug { padding: 16px 6px 8px; border-width: 7px; }
   .jp-market { min-height: 100px; }
   .jp-market .jp-card + .jp-card {
     margin-left: clamp(-40px, calc((100% - var(--n) * 64px) / max(var(--n) - 1, 1)), 8px);
   }
   .jp-deck, .jp-discard { width: 64px; height: 90px; }
-  .jp-overlay { padding: 16px 8px; }
-  .jp-overlay-card { padding: 14px 12px; }
+  .jp-slot-empty { padding-top: 18px; font-size: 9px; }
+  .jp-actions { padding: 8px; }
+  .jp-overlay { padding: 34px 6px 16px; }
+  .jp-overlay-card { padding: 22px 12px 14px; border-radius: 90px 90px 14px 14px / 28px 28px 14px 14px; }
+  .jp-overlay-card h3 { font-size: 21px; }
 }
 
 /* ---------- game-over match stats (StatsPanel.tsx; charts in src/ui/MatchCharts.tsx) ---------- */
@@ -447,5 +1051,5 @@
   padding: 12px 14px;
   border: 1px solid rgba(231, 184, 74, 0.2);
 }
-.jp-overlay-card .match-stats h2 { color: #f3cf63; font-family: Georgia, 'Times New Roman', serif; }
+.jp-overlay-card .match-stats h2 { color: var(--jp-gold); font-family: var(--font-ornate); font-weight: 400; }
 .jp-overlay-card .match-stats .swatch { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2); }

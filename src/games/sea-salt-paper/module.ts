@@ -59,6 +59,14 @@ export const seaSaltPaperModule: GameModule<SspState, SspAction, SspConfig> = {
     await Promise.all(aiLevelsOf(seats).map((level) => prepareAiLevel(level)));
   },
 
+  // The shell's look around this game (lobby banner, game bar, page).
+  theme: {
+    accent: '#4fd1c5',
+    accentInk: '#04252a',
+    titleFont: 'var(--font-hand)',
+    backdrop: 'radial-gradient(1000px 560px at 50% -14%, rgba(150, 235, 255, 0.32), transparent 66%), repeating-linear-gradient(105deg, rgba(255, 255, 255, 0.025) 0 40px, transparent 40px 120px), linear-gradient(180deg, #0f4457 0%, #0b2c3d 55%, #071a26 100%)',
+  },
+
   Thumbnail: SeaSaltPaperThumbnail,
 
   ui: async () => {

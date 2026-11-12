@@ -77,6 +77,14 @@ export const sevenWondersDuelModule: GameModule<DuelState, DuelAction, DuelConfi
     return state.subPhase === 'turn' ? 900 : 650;
   },
 
+  // The shell's look around this game (lobby banner, game bar, page).
+  theme: {
+    accent: '#d9a441',
+    accentInk: '#241500',
+    titleFont: 'var(--font-classical)',
+    backdrop: 'radial-gradient(800px 700px at -6% 50%, rgba(220, 70, 60, 0.24), transparent 70%), radial-gradient(800px 700px at 106% 50%, rgba(70, 120, 230, 0.24), transparent 70%), linear-gradient(180deg, #2d2016 0%, #1c140d 100%)',
+  },
+
   Thumbnail: SevenWondersDuelThumbnail,
 
   ui: async () => {

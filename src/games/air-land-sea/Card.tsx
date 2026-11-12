@@ -29,6 +29,9 @@ interface Props {
   effective?: number;
   /** A small corner tag ("Revealed", "Must play face down", "Drawn"). */
   badge?: ReactNode;
+  /** Extra classes / style on the face (entrance animations). */
+  className?: string;
+  style?: CSSProperties;
 }
 
 function clickProps(selectable: boolean | undefined, onClick: (() => void) | undefined) {
@@ -54,7 +57,7 @@ export function cardTitle(card: AlsCardTemplate): string {
   return `${head}\n${card.trigger === 'instant' ? 'Instant' : 'Ongoing'}: ${card.text}`;
 }
 
-export function AlsCardView({ card, size = 'normal', selectable, selected, muted, onClick, faceDown, hideText, effective, badge }: Props) {
+export function AlsCardView({ card, size = 'normal', selectable, selected, muted, onClick, faceDown, hideText, effective, badge, className = '', style: extraStyle }: Props) {
   if (faceDown && hideText) {
     return <FaceDownCard size={size} onClick={onClick} selectable={selectable} selected={selected} effective={effective} />;
   }
@@ -62,13 +65,13 @@ export function AlsCardView({ card, size = 'normal', selectable, selected, muted
     return <PeekCard card={card} size={size} selectable={selectable} selected={selected} onClick={onClick} effective={effective} />;
   }
   const tint = THEATER_TINT[card.theater];
-  const style = { '--als-tint': tint.main, '--als-tint-dark': tint.dark } as CSSProperties;
+  const style = { '--als-tint': tint.main, '--als-tint-dark': tint.dark, ...extraStyle } as CSSProperties;
   const boosted = effective !== undefined && effective !== card.strength;
   const title = `${cardTitle(card)}${boosted ? `\nCounts as ${effective} here.` : ''}`;
 
   if (size === 'small') {
     return (
-      <div className={classes('small', 'als-face', selectable, selected, muted)} style={style} title={title} {...clickProps(selectable, onClick)}>
+      <div className={classes('small', `als-face ${className}`.trim(), selectable, selected, muted)} style={style} title={title} {...clickProps(selectable, onClick)}>
         <div className="als-card-head">
           <span className="als-card-str">{card.strength}</span>
           <span className="als-card-name">{card.name}</span>
@@ -82,7 +85,7 @@ export function AlsCardView({ card, size = 'normal', selectable, selected, muted
   }
 
   return (
-    <div className={classes('normal', 'als-face', selectable, selected, muted)} style={style} title={title} {...clickProps(selectable, onClick)}>
+    <div className={classes('normal', `als-face ${className}`.trim(), selectable, selected, muted)} style={style} title={title} {...clickProps(selectable, onClick)}>
       <div className="als-card-head">
         <span className="als-card-str">{card.strength}</span>
         <span className="als-card-name">{card.name}</span>

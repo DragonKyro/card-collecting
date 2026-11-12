@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import type { GameUiBundle } from '@/core/module';
 import { sharedDeviceHumans } from '@/core/seats';
 import type { PlayerId, Seat } from '@/core/types';
@@ -7,9 +7,11 @@ import type {
   SushiGoPlayer, SushiGoCategory, SushiGoStep,
 } from './types';
 import { CardView, FaceDownCard, variantLabel } from './Card';
+import { CardArt } from './art';
+import { ChipIcon, Confetti } from './decor';
 import {
   ALL_KINDS, KIND_INFO, CATEGORY_REQUIRED, validateMenu, DEFAULT_MENU, randomMenu,
-  kindAllowedAt, playerRangeLabel, variantsOf,
+  kindAllowedAt, playerRangeLabel, variantsOf, cardColor,
 } from './cards';
 import { bonusCard, copyTargets, flipTargets } from './reducer';
 import { URAMAKI_PLACES } from './scoring';
@@ -22,6 +24,11 @@ import type { SushiGoAiLevel } from './types';
 import './sushi-go.css';
 
 const CATEGORIES_ORDERED: SushiGoCategory[] = ['nigiri', 'roll', 'appetizer', 'special', 'dessert'];
+
+/** Which face the lobby's menu tiles draw for kinds that come in variants. */
+const MENU_ART_VARIANT: Partial<Record<SushiGoCardKind, string>> = {
+  nigiri: 'salmon', maki: '2', uramaki: '3', mizuOnigiri: 'triangle', fruit: 'WP',
+};
 
 function LobbyConfig({ config, seats, onChange, readOnly }: { config: SushiGoConfig; seats: Seat[]; onChange: (c: SushiGoConfig) => void; readOnly?: boolean }) {
   const playerCount = seats.length;
@@ -76,32 +83,41 @@ function LobbyConfig({ config, seats, onChange, readOnly }: { config: SushiGoCon
           🎲 Random menu
         </button>
       </div>
-      {CATEGORIES_ORDERED.map((cat) => (
-        <div key={cat} className="sgp-menu-cat">
-          <h4>
-            {categoryHeader(cat)} <span className="req">(pick {CATEGORY_REQUIRED[cat]})</span>
-          </h4>
-          <div className="sgp-menu-grid">
-            {byCat[cat].map((k) => {
-              const sel = isSelected(k);
-              const range = playerRangeLabel(k);
-              return (
-                <button
-                  key={k}
-                  type="button"
-                  className={`sgp-menu-pick ${sel ? 'selected' : ''}`}
-                  onClick={() => togglePick(k)}
-                  disabled={!sel && !kindAllowedAt(k, playerCount)}
-                  title={KIND_INFO[k].rule}
-                >
-                  <strong>{KIND_INFO[k].label}</strong>
-                  {range && <span className="range">{range}</span>}
-                </button>
-              );
-            })}
+      {CATEGORIES_ORDERED.map((cat) => {
+        const done = config.menu.filter((m) => KIND_INFO[m].category === cat).length === CATEGORY_REQUIRED[cat];
+        return (
+          <div key={cat} className={`sgp-menu-cat ${done ? 'done' : ''}`}>
+            <h4>
+              {categoryHeader(cat)} <span className="req">(pick {CATEGORY_REQUIRED[cat]})</span>
+            </h4>
+            <div className="sgp-menu-grid">
+              {byCat[cat].map((k) => {
+                const sel = isSelected(k);
+                const range = playerRangeLabel(k);
+                return (
+                  <button
+                    key={k}
+                    type="button"
+                    className={`sgp-menu-pick ${sel ? 'selected' : ''}`}
+                    style={{ '--kind': cardColor(k) } as CSSProperties}
+                    onClick={() => togglePick(k)}
+                    disabled={!sel && !kindAllowedAt(k, playerCount)}
+                    title={KIND_INFO[k].rule}
+                  >
+                    <svg className="sgp-menu-art" viewBox="0 0 100 100" aria-hidden>
+                      <CardArt card={{ id: -1, kind: k, variant: MENU_ART_VARIANT[k] }} />
+                    </svg>
+                    <span className="sgp-menu-text">
+                      <strong>{KIND_INFO[k].label}</strong>
+                      {range && <span className="range">{range}</span>}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
       {errors.length > 0 && (
         <div className="sgp-menu-errors">
           {errors.map((e, i) => <div key={i}>• {e}</div>)}
@@ -295,7 +311,7 @@ function GameView({
         <div className="sgp">
           <RoundSummary state={state} />
           <div style={{ display: 'flex', justifyContent: 'center', marginTop: 16 }}>
-            <button onClick={() => dispatch({ type: 'nextRound' })}>
+            <button className="sgp-next" onClick={() => dispatch({ type: 'nextRound' })}>
               {state.round >= state.config.rounds ? 'Final scoring →' : 'Next round →'}
             </button>
           </div>
@@ -357,25 +373,44 @@ function GameView({
     : submitted
       ? `Submitted ${me?.pendingPick?.length} card${me?.pendingPick?.length === 1 ? '' : 's'}. Waiting for others…`
       : `Pick ${maxPick === 2 ? 'up to 2 (chopsticks)' : '1'} card${maxPick === 1 ? '' : 's'}.`;
+  // Presentational: the chopsticks a pick can use now, and the card a decision is about.
+  const armedId = selecting && me && !submitted ? bonusCard(me, 'chopsticks')?.id : undefined;
+  const resolvingId = step && 'cardId' in step ? step.cardId : undefined;
+  const tableClass = (id: number) => (id === resolvingId ? 'resolving' : id === armedId ? 'armed' : undefined);
+  const yourPick = selecting && me !== null && !submitted;
 
   return (
     <div className="sgp-layout">
       <div className="sgp">
         <div className="board">
           <div className="target-info">
-            <span>Round {state.round} / {state.config.rounds}</span>
-            <span>Pass: to the left →</span>
-            <span>Deck: {state.deck.length}</span>
+            <span className="sgp-info round"><ChipIcon kind="round" />Round {state.round} / {state.config.rounds}</span>
+            <span className="sgp-info pass"><ChipIcon kind="pass" />Pass: to the left →</span>
+            <span className="sgp-info deck"><ChipIcon kind="deck" />Deck: {state.deck.length}</span>
             {state.config.menu.includes('uramaki') && (
-              <span>
+              <span className="sgp-info uramaki">
+                <ChipIcon kind="uramaki" />
                 Uramaki next: {URAMAKI_PLACES[state.uramakiNextPlace] ?? 'none left'}
               </span>
             )}
-            <span>Submitted: {selecting ? submittedCount : state.players.length} / {state.players.length}</span>
+            <span className={`sgp-info picks ${selecting && submittedCount === state.players.length ? 'all' : ''}`}>
+              <ChipIcon kind="picks" />
+              Submitted: {selecting ? submittedCount : state.players.length} / {state.players.length}
+              <span className="sgp-pips" aria-hidden>
+                {state.players.map((p) => (
+                  <i
+                    key={p.id}
+                    className={!selecting || p.pendingPick !== null ? 'on' : ''}
+                    style={{ '--seat': getSeat(state, p.id)?.color ?? '#888' } as CSSProperties}
+                  />
+                ))}
+              </span>
+            </span>
           </div>
 
           {step && (
             <ResolutionPanel
+              key={`${step.type}-${step.playerId}-${'cardId' in step ? step.cardId : ''}`}
               state={state}
               step={step}
               mine={myStep !== null}
@@ -385,24 +420,30 @@ function GameView({
             />
           )}
 
-          <div className="opponents">
+          <div className={`opponents ${opponents.length === 1 ? 'solo' : ''}`}>
             {opponents.map((p) => (
               <PlayerStrip
                 key={p.id}
                 player={p}
                 seat={getSeat(state, p.id)}
                 submitted={p.pendingPick != null}
+                thinking={selecting && p.pendingPick == null}
+                deciding={step?.playerId === p.id}
+                resolvingId={resolvingId}
               />
             ))}
           </div>
 
           {me ? (
-            <div className="hand-area">
+            <div
+              className={`hand-area ${yourPick ? 'your-pick' : ''} ${myStep ? 'deciding' : ''}`}
+              style={{ '--seat': getSeat(state, me.id)?.color ?? '#888' } as CSSProperties}
+            >
               <h3>
-                <span>{mySeatName}'s table</span>
-                <span style={{ fontSize: 12, opacity: 0.7 }}>
+                <span className="sgp-seat-name">{mySeatName === 'You' ? 'Your table' : `${mySeatName}'s table`}</span>
+                <span className="sgp-totals">
                   Round totals: {me.scoreByRound.map((s, i) => `R${i + 1}:${s}`).join(' · ') || '—'}
-                  {me.uramakiPoints > 0 && ` · uramaki +${me.uramakiPoints} this round`}
+                  {me.uramakiPoints > 0 && <span key={me.uramakiPoints} className="sgp-bump">{` · uramaki +${me.uramakiPoints} this round`}</span>}
                 </span>
               </h3>
               {me.table.length > 0 ? (
@@ -418,12 +459,15 @@ function GameView({
                         selected={flipSel.includes(c.id)}
                         dim={myStep !== null && (myStep.type === 'copy' || myStep.type === 'takeout') && !clickable}
                         onClick={clickable ? () => clickTableCard(c.id) : undefined}
+                        className={tableClass(c.id)}
                       />
                     );
                   })}
                 </div>
               ) : (
-                <p className="help" style={{ textAlign: 'left' }}>You haven't played any cards this round yet.</p>
+                <div className="table-strip sgp-empty-board">
+                  <p className="help" style={{ textAlign: 'left' }}>You haven't played any cards this round yet.</p>
+                </div>
               )}
 
               {me.dessertPile.length > 0 && (
@@ -431,7 +475,7 @@ function GameView({
                   <h3 style={{ marginTop: 14 }}>
                     <span>Dessert pile · {me.dessertPile.length}</span>
                   </h3>
-                  <div className="table-strip">
+                  <div className="table-strip desserts">
                     {me.dessertPile.map((c) => (
                       <CardView key={c.id} card={c} size="small" />
                     ))}
@@ -441,11 +485,16 @@ function GameView({
 
               <h3 style={{ marginTop: 14 }}>
                 <span>Your hand · {me.hand.length} card{me.hand.length === 1 ? '' : 's'}</span>
-                <span style={{ fontSize: 12, opacity: 0.7 }}>{handHint}</span>
+                <span className={`sgp-hint ${yourPick && maxPick === 2 ? 'chopsticks' : ''}`}>
+                  {yourPick && maxPick === 2 && <ChipIcon kind="chopsticks" />}
+                  {handHint}
+                </span>
               </h3>
               <div className="cards">
+                {hideHand && me.hand.map((c, i) => <FaceDownCard key={`h${c.id}`} style={{ '--i': i } as CSSProperties} />)}
                 {hideHand && <p className="help">Your pick is locked in; your hand is hidden while the others pick.</p>}
-                {!hideHand && me.hand.map((c) => {
+                {!hideHand && me.hand.map((c, i) => {
+                  const stagger = { '--i': i } as CSSProperties;
                   if (giveIds.size > 0) {
                     const give = giveIds.has(c.id);
                     return (
@@ -455,6 +504,7 @@ function GameView({
                         selectable={give}
                         dim={!give}
                         onClick={give ? () => dispatch({ type: 'giveSpoon', playerId: me.id, cardId: c.id }) : undefined}
+                        style={stagger}
                       />
                     );
                   }
@@ -467,6 +517,7 @@ function GameView({
                       selected={selected.includes(c.id)}
                       dim={!pickable}
                       onClick={pickable ? () => toggle(c.id) : undefined}
+                      style={stagger}
                     />
                   );
                 })}
@@ -502,7 +553,7 @@ function GameView({
 
               {selecting && (
                 <div className="actions">
-                  <button disabled={!canSubmit} onClick={submit}>
+                  <button className={`sgp-submit ${canSubmit ? 'ready' : ''}`} disabled={!canSubmit} onClick={submit}>
                     Submit pick {selected.length > 0 ? `(${selected.length})` : ''}
                   </button>
                   <button
@@ -547,33 +598,33 @@ function ResolutionPanel({
       menu: 'play a card off their menu',
       takeout: 'flip cards with their takeout box',
     }[step.type];
-    return <div className="sgp-resolve">Waiting for <strong>{who}</strong> to {what}…</div>;
+    return <ResolveFrame step={step} waiting>Waiting for <strong>{who}</strong> to {what}…</ResolveFrame>;
   }
   switch (step.type) {
     case 'copy':
       return (
-        <div className="sgp-resolve mine">
+        <ResolveFrame step={step}>
           <strong>Special Order:</strong> click one of your played cards below to copy it.
-        </div>
+        </ResolveFrame>
       );
     case 'takeout':
       return (
-        <div className="sgp-resolve mine">
+        <ResolveFrame step={step}>
           <strong>Takeout Box:</strong> click cards from earlier turns to flip face-down (2 pts each).
           <div className="actions">
             <button onClick={onFlip}>{flipCount === 0 ? 'Flip nothing' : `Flip ${flipCount} card${flipCount === 1 ? '' : 's'}`}</button>
           </div>
-        </div>
+        </ResolveFrame>
       );
     case 'spoonGive':
       return (
-        <div className="sgp-resolve mine">
+        <ResolveFrame step={step}>
           <strong>{nameOf(state, step.toId)}</strong> used a spoon on you — click which of the highlighted cards to give.
-        </div>
+        </ResolveFrame>
       );
     case 'spoon':
       return (
-        <div className="sgp-resolve mine">
+        <ResolveFrame step={step}>
           <strong>Spoon:</strong> name a card — the first player to your left holding it gives it to you
           and takes the spoon — or keep the spoon for a later turn.
           <div className="actions">
@@ -600,11 +651,11 @@ function ResolutionPanel({
               );
             })}
           </div>
-        </div>
+        </ResolveFrame>
       );
     case 'menu':
       return (
-        <div className="sgp-resolve mine">
+        <ResolveFrame step={step}>
           <strong>Menu:</strong> play one of the cards you drew (not another menu); the rest go back into the deck.
           <div className="cards" style={{ marginTop: 8 }}>
             {(step.drawn ?? []).map((c) => {
@@ -620,42 +671,79 @@ function ResolutionPanel({
               );
             })}
           </div>
-        </div>
+        </ResolveFrame>
       );
   }
 }
 
+/** The card kind a decision is about, drawn beside its prompt. */
+const STEP_KIND: Record<SushiGoStep['type'], SushiGoCardKind> = {
+  copy: 'specialOrder', spoon: 'spoon', spoonGive: 'spoon', menu: 'menu', takeout: 'takeoutBox',
+};
+
+function ResolveFrame({ step, waiting, children }: { step: SushiGoStep; waiting?: boolean; children: ReactNode }) {
+  const kind = STEP_KIND[step.type];
+  return (
+    <div className={`sgp-resolve ${waiting ? 'waiting' : 'mine'}`} style={{ '--kind': cardColor(kind) } as CSSProperties}>
+      <span className="sgp-resolve-art" aria-hidden>
+        <svg viewBox="0 0 100 100"><CardArt card={{ id: -1, kind }} /></svg>
+      </span>
+      <div className="sgp-resolve-body">{children}</div>
+    </div>
+  );
+}
+
 function PlayerStrip({
-  player, seat, submitted,
+  player, seat, submitted, thinking, deciding, resolvingId,
 }: {
   player: SushiGoPlayer; seat: Seat | undefined; submitted: boolean;
+  /** Still choosing this turn's pick (presentational). */
+  thinking: boolean;
+  /** Owes the special-card decision being waited on (presentational). */
+  deciding: boolean;
+  resolvingId: number | undefined;
 }) {
   const roundSum = player.scoreByRound.reduce((s, x) => s + x, 0);
+  const n = player.hand.length;
+  const cls = ['player-strip', submitted ? 'active' : '', thinking ? 'thinking' : '', deciding ? 'deciding' : ''].filter(Boolean).join(' ');
   return (
-    <div className={`player-strip ${submitted ? 'active' : ''}`}>
+    <div className={cls} style={{ '--seat': seat?.color ?? '#888' } as CSSProperties}>
       <header>
-        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ width: 10, height: 10, background: seat?.color ?? '#888', borderRadius: 2 }} />
-          {seat?.name ?? player.id}
-          {seat?.isAI ? <span style={{ fontSize: 10, opacity: 0.6, marginLeft: 4 }}>(AI)</span> : null}
-          {submitted && <span style={{ fontSize: 10, color: '#f4d268', marginLeft: 6 }}>✓ picked</span>}
+        <span className="sgp-plate">
+          <span className="sgp-seat-dot" />
+          <span className="sgp-seat-name">{seat?.name ?? player.id}</span>
+          {seat?.isAI ? <span className="sgp-ai-tag">(AI)</span> : null}
+          {submitted && <span className="sgp-picked">✓ picked</span>}
+          {thinking && <span className="sgp-dots" aria-hidden><i /><i /><i /></span>}
         </span>
         <span className="scores">
           <span>{roundSum} pts</span>
-          {player.uramakiPoints > 0 && <><span>•</span><span>uramaki +{player.uramakiPoints}</span></>}
+          {player.uramakiPoints > 0 && <><span>•</span><span key={player.uramakiPoints} className="sgp-bump">uramaki +{player.uramakiPoints}</span></>}
           <span>•</span>
           <span>{player.hand.length} in hand</span>
         </span>
       </header>
-      <div className="table-strip">
-        <span className="backs">
-          {[...Array(player.hand.length)].map((_, i) => (
-            <FaceDownCard key={`fd-${i}`} size="small" />
+      <div className="sgp-seat-body">
+        {(n > 0 || player.pendingPick) && (
+          <div className="sgp-hand-fan">
+            <span className="backs" style={{ '--n': n } as CSSProperties}>
+              {[...Array(n)].map((_, i) => (
+                <FaceDownCard key={`fd-${i}`} size="small" style={{ '--i': i } as CSSProperties} />
+              ))}
+            </span>
+            {/* Their pick lands here face down; an empty slot while they choose. */}
+            <span className="sgp-pick-stack">
+              {player.pendingPick?.map((c, i) => (
+                <FaceDownCard key={c.id} size="small" style={{ '--i': i } as CSSProperties} />
+              ))}
+            </span>
+          </div>
+        )}
+        <div className="table-strip">
+          {player.table.map((c) => (
+            <CardView key={c.id} card={c} size="small" className={c.id === resolvingId ? 'resolving' : undefined} />
           ))}
-        </span>
-        {player.table.map((c) => (
-          <CardView key={c.id} card={c} size="small" />
-        ))}
+        </div>
       </div>
       {player.dessertPile.length > 0 && (
         <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.7)', marginTop: 4 }}>
@@ -669,9 +757,10 @@ function PlayerStrip({
 function RoundSummary({ state }: { state: SushiGoState }) {
   const summary = state.lastRoundSummary;
   if (!summary) return null;
+  const best = Math.max(...summary.perPlayer.map((r) => r.total));
   return (
     <div className="round-summary">
-      <h2>Round {summary.round} complete</h2>
+      <h2><ChipIcon kind="round" />Round {summary.round} complete</h2>
       <table>
         <thead>
           <tr>
@@ -682,12 +771,13 @@ function RoundSummary({ state }: { state: SushiGoState }) {
           </tr>
         </thead>
         <tbody>
-          {summary.perPlayer.map((row) => {
+          {summary.perPlayer.map((row, idx) => {
             const p = state.players.find((x) => x.id === row.playerId)!;
             const cumulative = p.scoreByRound.reduce((s, x) => s + x, 0);
+            const top = row.total > 0 && row.total === best;
             return (
-              <tr key={row.playerId}>
-                <td>{nameOf(state, row.playerId)}</td>
+              <tr key={row.playerId} className={top ? 'top' : undefined} style={{ '--i': idx } as CSSProperties}>
+                <td><span className="sgp-row-dot" style={{ background: getSeat(state, row.playerId)?.color ?? '#888' }} />{nameOf(state, row.playerId)}</td>
                 <td style={{ fontSize: 11 }}>
                   {row.perKind.length === 0
                     ? <em style={{ opacity: 0.6 }}>no scoring</em>
@@ -698,7 +788,7 @@ function RoundSummary({ state }: { state: SushiGoState }) {
                         </span>
                       ))}
                 </td>
-                <td className="num"><strong>{row.total}</strong></td>
+                <td className="num"><strong className="sgp-score-pop">{row.total}</strong></td>
                 <td className="num">{cumulative}</td>
               </tr>
             );
@@ -723,8 +813,11 @@ function GameOver({ state }: { state: SushiGoState }) {
   const winner = (end?.kind === 'matchEnd' ? end.winnerId : null) ?? sorted[0].id;
   return (
     <div className="sgp">
-      <div className="gameover-banner">{nameOf(state, winner)} wins!</div>
-      <div className="round-summary">
+      <div className="gameover-banner">
+        <Confetti />
+        <span className="sgp-win-text">{nameOf(state, winner) === 'You' ? 'You win!' : `${nameOf(state, winner)} wins!`}</span>
+      </div>
+      <div className="round-summary final">
         <h2>Final scores</h2>
         <table>
           <thead>
@@ -738,14 +831,14 @@ function GameOver({ state }: { state: SushiGoState }) {
             </tr>
           </thead>
           <tbody>
-            {sorted.map((p) => (
-              <tr key={p.id}>
-                <td>{nameOf(state, p.id)}</td>
+            {sorted.map((p, idx) => (
+              <tr key={p.id} className={p.id === winner ? 'top' : undefined} style={{ '--i': idx } as CSSProperties}>
+                <td><span className="sgp-row-dot" style={{ background: getSeat(state, p.id)?.color ?? '#888' }} />{nameOf(state, p.id)}</td>
                 {Array.from({ length: state.config.rounds }, (_, i) => (
                   <td key={i} className="num">{p.scoreByRound[i] ?? 0}</td>
                 ))}
                 <td className="num">{p.dessertScore}</td>
-                <td className="num"><strong>{state.finalScores?.[p.id] ?? 0}</strong></td>
+                <td className="num"><strong className="sgp-score-pop">{state.finalScores?.[p.id] ?? 0}</strong></td>
               </tr>
             ))}
           </tbody>

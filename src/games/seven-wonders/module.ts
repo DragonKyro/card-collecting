@@ -74,6 +74,16 @@ export const sevenWondersModule: GameModule<SwState, SwAction, SwConfig> = {
     return chooseAIAction(state, playerId);
   },
 
+  // The shell's look around this game (lobby banner, game bar, page).
+  theme: {
+    accent: '#e8b04b',
+    accentInk: '#2a1800',
+    titleFont: 'var(--font-classical)',
+    // Dusk over the desert: a low sun top-right, warm sand glowing bottom-left,
+    // the sky going from violet to umber.
+    backdrop: 'radial-gradient(1000px 520px at 82% -10%, rgba(255, 186, 96, 0.34), transparent 66%), radial-gradient(900px 600px at 0% 108%, rgba(186, 98, 46, 0.3), transparent 70%), linear-gradient(180deg, #2e1d30 0%, #3a2417 32%, #26170c 64%, #150c07 100%)',
+  },
+
   Thumbnail: SevenWondersThumbnail,
 
   ui: async () => {

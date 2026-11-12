@@ -406,7 +406,7 @@ const POWERS = new Set<SwCardEffect['kind']>(['buildFromDiscard', 'playLastCard'
 /** `fresh`: the last built stage went up on the last turn (it glows). */
 export function WonderBoard({ wonder, built, highlightNext = false, fresh = false }: { wonder: SwWonder; built: number; highlightNext?: boolean; fresh?: boolean }) {
   return (
-    <div className="sw-wboard">
+    <div className={`sw-wboard sw-side-${wonder.side.toLowerCase()}`}>
       <div className="sw-wboard-art">
         <WonderArt wonder={wonder} />
         <div className="sw-wboard-title">
@@ -447,7 +447,7 @@ export function WonderBoard({ wonder, built, highlightNext = false, fresh = fals
 /** A small strip of a neighbour's wonder with built-stage pips. */
 export function WonderMini({ wonder, built, fresh = false }: { wonder: SwWonder; built: number; fresh?: boolean }) {
   return (
-    <div className="sw-wmini" title={`${wonder.name} (${wonder.side}) — ${built}/${wonder.stages.length} stages built`}>
+    <div className={`sw-wmini${fresh ? ' sw-wmini-fresh' : ''}`} title={`${wonder.name} (${wonder.side}) — ${built}/${wonder.stages.length} stages built`}>
       <WonderArt wonder={wonder} />
       <div className="sw-wmini-bar">
         <span className="sw-wmini-name">{wonder.name.replace(/^(Pyramids|Colossus|Lighthouse|Temple|Statue of Zeus|Mausoleum|Hanging Gardens) (of|at) /, '')}</span>

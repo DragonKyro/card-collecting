@@ -43,9 +43,10 @@ export function ColorSwatchPicker({ value, takenBy, disabled, onChange }: {
               position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 11,
               background: 'var(--bg-elevated, #1e1c2e)',
               border: '1px solid rgba(255,255,255,0.15)',
-              borderRadius: 6,
-              padding: 6,
-              boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+              borderRadius: 10,
+              padding: 8,
+              boxShadow: '0 12px 28px rgba(0,0,0,0.55)',
+              animation: 'cc-zoom-in 180ms var(--ease-out) both',
               display: 'grid',
               gridTemplateColumns: 'repeat(7, 22px)',
               gap: 4,
@@ -62,9 +63,10 @@ export function ColorSwatchPicker({ value, takenBy, disabled, onChange }: {
                   title={taken ? `${SEAT_COLOR_LABELS[c]} — taken by ${taken}` : SEAT_COLOR_LABELS[c]}
                   disabled={!!taken}
                   style={{
-                    width: 22, height: 22, borderRadius: 3, padding: 0,
+                    width: 22, height: 22, borderRadius: '50%', padding: 0,
                     background: c,
                     border: c === value ? '2px solid #fff' : '1px solid rgba(0,0,0,0.25)',
+                    boxShadow: c === value ? `0 0 10px ${c}` : 'none',
                     cursor: taken ? 'not-allowed' : 'pointer',
                     opacity: taken ? 0.3 : 1,
                   }}
@@ -141,7 +143,7 @@ export function RulesModal({ title, Rules, onClose }: { title: string; Rules: Re
   return (
     <div className="rules-modal-backdrop" onClick={onClose}>
       <div className="rules-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="rules-modal-header">
+        <div className="rules-modal-header cc-chrome">
           <h3>{title} — Rules</h3>
           <button className="secondary" onClick={onClose}>Close</button>
         </div>

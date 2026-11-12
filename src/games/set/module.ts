@@ -45,6 +45,14 @@ export const setModule: GameModule<SetState, SetAction, SetConfig> = {
     return applyAction(state, action);
   },
 
+  // The shell's look around this game (lobby banner, game bar, page).
+  theme: {
+    accent: '#a66cff',
+    accentInk: '#ffffff',
+    titleFont: 'var(--font-round)',
+    backdrop: 'radial-gradient(700px 500px at 10% 10%, rgba(232, 60, 80, 0.2), transparent 70%), radial-gradient(700px 500px at 90% 20%, rgba(40, 180, 100, 0.18), transparent 70%), radial-gradient(800px 600px at 50% 110%, rgba(140, 80, 230, 0.26), transparent 70%), linear-gradient(180deg, #17122c 0%, #100c20 100%)',
+  },
+
   Thumbnail: SetThumbnail,
 
   ui: async () => {

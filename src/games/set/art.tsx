@@ -10,6 +10,8 @@
 // plain `fill` — masks are colour-agnostic, which keeps striped and checkered
 // symbols exactly the same hue as solid ones.
 
+import { SHAPE_PATHS, SHAPE_STROKE } from './shapes';
+
 /** Ink per colour variant. Tuned to read against the light card face. */
 export const SET_INKS = ['#8a4fd6', '#17a05e', '#d63b48', '#e07b1f'] as const;
 
@@ -19,39 +21,15 @@ const SHADE_MASK = [null, null, 'url(#set-mask-stripes)', 'url(#set-mask-checker
 /** Border variants (MegaSet's fifth feature). */
 export const SET_BORDER_STYLES = ['solid', 'dashed', 'double'] as const;
 
-const SHAPE_COUNT = 4;
+const SHAPE_COUNT = SHAPE_PATHS.length;
 
 export function SetArtDefs() {
   return (
     <svg className="set-art-defs" aria-hidden="true" focusable="false">
       <defs>
-        {/* 0 — squiggle: a band of constant width snaking down the card. Both
-            edges shift together, which is what makes it read as an S rather
-            than an hourglass. */}
-        <path
-          id="set-shape-0"
-          d="M25,32 C52,10 90,8 116,30
-             C148,56 182,96 180,142 C178,192 110,214 110,268
-             C110,310 146,340 174,368
-             C150,390 108,392 84,370
-             C56,344 20,310 20,266 C20,214 90,192 90,142
-             C90,96 54,58 25,32 Z"
-        />
-        {/* 1 — oval: a capsule. */}
-        <path
-          id="set-shape-1"
-          d="M100,14 C147,14 186,53 186,100 L186,300
-             C186,347 147,386 100,386 C53,386 14,347 14,300 L14,100
-             C14,53 53,14 100,14 Z"
-        />
-        {/* 2 — diamond. */}
-        <path id="set-shape-2" d="M100,12 L188,200 L100,388 L12,200 Z" />
-        {/* 3 — hourglass (4Set only). */}
-        <path
-          id="set-shape-3"
-          d="M22,16 L178,16 C178,90 130,160 112,200 C130,240 178,310 178,384
-             L22,384 C22,310 70,240 88,200 C70,160 22,90 22,16 Z"
-        />
+        {SHAPE_PATHS.map((d, i) => (
+          <path key={i} id={`set-shape-${i}`} d={d} />
+        ))}
 
         {/* Stripes: vertical bars along the symbol's long axis. */}
         <pattern id="set-pattern-stripes" width="34" height="34" patternUnits="userSpaceOnUse">
@@ -87,7 +65,7 @@ export function SetSymbol({
       {shade !== 1 && (
         <use href={href} fill={ink} {...(mask ? { mask } : {})} />
       )}
-      <use href={href} fill="none" stroke={ink} strokeWidth={17} strokeLinejoin="round" />
+      <use href={href} fill="none" stroke={ink} strokeWidth={SHAPE_STROKE} strokeLinejoin="round" />
     </svg>
   );
 }

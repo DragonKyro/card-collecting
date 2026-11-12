@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { GameUiBundle } from '@/core/module';
 import type { PlayerId, Seat } from '@/core/types';
 import type {
-  SspState, SspAction, SspConfig, SspCard, SspCardFamily, SspPlayer, SspColor,
+  SspState, SspAction, SspConfig, SspCard, SspCardFamily, SspPlayer, SspColor, SspLogEntry,
 } from './types';
 import { CardView, FaceDownCard, TrackedFaceDownCard } from './Card';
+import { Confetti, RoundStamp, SeaDecor, WinnerCrest } from './Decor';
 import { isValidDuoPair, isValidStarfishTrio, tentativeScore, totalScore } from './scoring';
 import { FAMILY, FAMILY_COLORS, FAMILY_ORDER } from './cards';
 import { EVENT_BY_ID, ALL_EVENT_IDS, eventAppliesTo } from './events';
@@ -33,8 +34,8 @@ function LobbyConfig({ config, seats, onChange, readOnly }: { config: SspConfig;
     for (const level of levels.split(',')) prepareAiLevel(level as SspAiLevel).catch(() => {});
   }, [levels, readOnly]);
   return (
-    <div className="game-config">
-      <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+    <div className="game-config ssp-lobby">
+      <label className="ssp-lobby-target">
         <span>Target score:</span>
         <input
           type="number"
@@ -46,25 +47,31 @@ function LobbyConfig({ config, seats, onChange, readOnly }: { config: SspConfig;
         />
       </label>
 
-      <h4 style={{ margin: '14px 0 6px', fontSize: 13, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--fg-muted)' }}>
-        Expansions
-      </h4>
-      <label style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '4px 0' }}>
-        <input
-          type="checkbox"
-          checked={!!exp.extraSalt}
-          onChange={(e) => setExp({ extraSalt: e.target.checked })}
-        />
-        <strong>Extra Salt</strong>
-      </label>
-      <label style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '4px 0' }}>
-        <input
-          type="checkbox"
-          checked={!!exp.extraPepper}
-          onChange={(e) => setExp({ extraPepper: e.target.checked })}
-        />
-        <strong>Extra Pepper</strong>
-      </label>
+      <h4 className="ssp-lobby-heading">Expansions</h4>
+      <div className="ssp-lobby-exps">
+        <label className={`ssp-lobby-exp salt${exp.extraSalt ? ' on' : ''}`}>
+          <input
+            type="checkbox"
+            checked={!!exp.extraSalt}
+            onChange={(e) => setExp({ extraSalt: e.target.checked })}
+          />
+          <span className="ssp-lobby-exp-text">
+            <strong>Extra Salt</strong>
+            <small>Jellyfish, lobster, starfish, seahorse and the cast of crabs join the deck.</small>
+          </span>
+        </label>
+        <label className={`ssp-lobby-exp pepper${exp.extraPepper ? ' on' : ''}`}>
+          <input
+            type="checkbox"
+            checked={!!exp.extraPepper}
+            onChange={(e) => setExp({ extraPepper: e.target.checked })}
+          />
+          <span className="ssp-lobby-exp-text">
+            <strong>Extra Pepper</strong>
+            <small>An event card each round, kept by the leader or the player trailing.</small>
+          </span>
+        </label>
+      </div>
     </div>
   );
 }
@@ -400,6 +407,9 @@ function GameView({
   const flipOrigins = useMemo(() => cardOrigins(state), [state]);
   const onSummary = state.subPhase === 'roundEnd' || state.subPhase === 'awaitingEventChoice';
   const flipScene = `${state.round}:${state.phase === 'gameOver' ? 'over' : onSummary ? 'summary' : 'board'}`;
+  // Short-lived stickers over a player's zone ("Crab duo!", "Steal!"). The
+  // own-hand mermaid sticker only where that hand is shown face up.
+  const moments = useMoments(state, state.seats.every((s) => s.isAI) ? null : me);
 
   // ----- Auto-end-turn: if active human has no plays AND can't stop, just pass.
   // We let the AI driver in GameHost handle AI seats; for humans we only auto
@@ -525,20 +535,21 @@ function GameView({
     <div className="ssp-layout">
       <div className="ssp">
         <div className="board">
+          <SeaDecor />
           <LastChanceBanner state={state} />
           <div className="target-info">
-            <span>Round {state.round}</span>
-            <span>{state.deck.length} cards left in deck</span>
+            <span className="ssp-round-tag">Round {state.round}</span>
+            <span className="ssp-deck-count">{state.deck.length} cards left in deck</span>
             <GameClock isOver={false} />
             <span className="match-progress">
               {state.players.map((p) => {
                 const seat = getSeat(state, p.id);
                 return (
-                  <span key={p.id} className="match-progress-pill">
+                  <span key={p.id} className={`match-progress-pill${state.activePlayerId === p.id ? ' active' : ''}`}>
                     <span className="dot" style={{ background: seat?.color ?? '#888' }} />
                     {seat?.name ?? p.id}
                     {' '}
-                    <strong>{p.matchScore}</strong>
+                    <strong key={p.matchScore} className="ssp-pop">{p.matchScore}</strong>
                     <span className="muted">/{state.config.targetScore}</span>
                   </span>
                 );
@@ -547,7 +558,11 @@ function GameView({
           </div>
 
           {state.event?.current && (
-            <div className="ssp-event-banner" title={EVENT_BY_ID[state.event.current].rule}>
+            <div
+              key={`${state.round}:${state.event.current}`}
+              className={`ssp-event-banner sign-${EVENT_BY_ID[state.event.current].sign === '+' ? 'plus' : 'minus'}`}
+              title={EVENT_BY_ID[state.event.current].rule}
+            >
               <span className="ssp-event-tag">Event</span>
               <strong>{EVENT_BY_ID[state.event.current].name}</strong>
               <span className="ssp-event-rule">{EVENT_BY_ID[state.event.current].rule}</span>
@@ -556,7 +571,15 @@ function GameView({
 
           <div className="opponents">
             {opponents.map((p) => (
-              <PlayerStrip key={p.id} player={p} seat={getSeat(state, p.id)} isActive={state.activePlayerId === p.id} reveal={false} />
+              <PlayerStrip
+                key={p.id}
+                player={p}
+                seat={getSeat(state, p.id)}
+                isActive={state.activePlayerId === p.id}
+                reveal={false}
+                moment={moments.get(p.id)}
+                lastChance={state.lastChanceFrom === p.id}
+              />
             ))}
           </div>
 
@@ -604,11 +627,13 @@ function GameView({
           )}
 
           {isAllAI ? null : me ? (
-            <div className="hand-area">
+            <div className={`hand-area${isLocalActive ? ' my-turn' : ''}`}>
+              <MomentSticker moment={moments.get(me.id)} />
               <h3>
-                <span>
-                  {getSeat(state, me.id)?.name ?? 'You'} — {myTentative} pt{myTentative === 1 ? '' : 's'}
+                <span className="ssp-hand-title">
+                  <span className="ssp-hand-name">{getSeat(state, me.id)?.name ?? 'You'}</span> — <span key={myTentative} className="ssp-pts ssp-pop">{myTentative} pt{myTentative === 1 ? '' : 's'}</span>
                   <HeldEventBadge player={me} />
+                  {state.lastChanceFrom === me.id && <span className="ssp-lc-badge">Last chance</span>}
                 </span>
                 <ColorCountStrip cards={[...me.hand, ...me.table]} />
               </h3>
@@ -644,7 +669,7 @@ function GameView({
               {/* "On the table" strip is always rendered (with a reserved min
                *  height) so it doesn't push the action row down the moment
                *  the first table card lands. */}
-              <h3 style={{ marginTop: 14, opacity: me.table.length === 0 ? 0.4 : 1 }}>
+              <h3 className="ssp-table-title" style={{ marginTop: 14, opacity: me.table.length === 0 ? 0.4 : 1 }}>
                 <span>On the table</span>
               </h3>
               <div className="table-strip">
@@ -745,7 +770,7 @@ function GameView({
          *  all-AI mode since there's no human to wait for. */}
         {!isAllAI && (
           <p
-            className="help center"
+            className="help center ssp-waiting"
             style={{ marginTop: 12, visibility: isLocalActive ? 'hidden' : 'visible' }}
           >
             Waiting for {getSeat(state, state.activePlayerId ?? '')?.name ?? 'opponent'}…
@@ -789,7 +814,7 @@ function CenterStrip({
         onClick={canDraw && state.deck.length >= 2 ? onDeckClick : undefined}
         title={canDraw ? 'Click to draw two from the deck' : ''}
       >
-        <div className="card-slot" ref={deckAnchorRef}><FaceDownCard /></div>
+        <div className="card-slot" ref={deckAnchorRef} data-depth={stackDepth(state.deck.length, 10)}><FaceDownCard /></div>
         <div className="label">Deck · {state.deck.length}</div>
         <div className="label hint">{deckHint}</div>
       </div>
@@ -865,7 +890,7 @@ function PileSlot({
       onClick={clickable ? () => onPileClick(i) : undefined}
       title={titleText}
     >
-      <div className="card-slot stacked" ref={anchorRef}>
+      <div className="card-slot stacked" ref={anchorRef} data-depth={stackDepth(pile.length - 1, 3)}>
         {under && <CardView key={under.id} card={under} zone={`pile-${i}`} />}
         {top ? <CardView key={top.id} card={top} zone={`pile-${i}`} /> : <div className="empty-slot">empty</div>}
       </div>
@@ -1008,14 +1033,14 @@ function StealPicker({ state, dispatch }: { state: SspState; dispatch: (a: SspAc
   if (targets.length === 0) return <p className="help">No valid steal target — pass to skip.</p>;
   if (targets.length === 1) {
     return (
-      <span style={{ color: 'rgba(255,255,255,0.85)', fontSize: 13, alignSelf: 'center' }}>
+      <span className="ssp-prompt">
         Stealing from {getSeat(state, targets[0].id)?.name ?? targets[0].id}…
       </span>
     );
   }
   return (
     <>
-      <span style={{ color: 'rgba(255,255,255,0.85)', fontSize: 13, alignSelf: 'center' }}>
+      <span className="ssp-prompt">
         Steal from:
       </span>
       {targets.map((p) => (
@@ -1235,22 +1260,26 @@ function LobsterPicker({ state, dispatch }: { state: SspState; dispatch: (a: Ssp
   );
 }
 
-function PlayerStrip({ player, seat, isActive, reveal }: {
+function PlayerStrip({ player, seat, isActive, reveal, moment, lastChance }: {
   player: SspPlayer; seat: Seat | undefined; isActive: boolean; reveal: boolean;
+  moment?: Moment; lastChance?: boolean;
 }) {
   const total = totalScore([...player.hand, ...player.table], {
     trioCancelledIds: new Set<number>((player.trios ?? []).flat()),
     trios: player.trios?.length ?? 0,
   });
   return (
-    <div className={`player-strip ${isActive ? 'active' : ''}`}>
+    <div className={`player-strip ${isActive ? 'active' : ''}`} style={{ '--seat': seat?.color ?? '#888' } as CSSProperties}>
+      <MomentSticker moment={moment} />
       <header>
-        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ width: 10, height: 10, background: seat?.color ?? '#888', borderRadius: 2 }} />
+        <span className="ssp-strip-name">
+          <span className="ssp-seat-flag" style={{ background: seat?.color ?? '#888' }} />
           {seat?.name ?? player.id}
-          {seat?.isAI ? <span style={{ fontSize: 10, opacity: 0.6, marginLeft: 4 }}>(AI)</span> : null}
+          {seat?.isAI ? <span className="ssp-ai-tag">(AI)</span> : null}
           <HeldEventBadge player={player} />
+          {lastChance && <span className="ssp-lc-badge">Last chance</span>}
         </span>
+        {isActive && <span className="ssp-turn-tag" aria-hidden><i /><i /><i /></span>}
       </header>
       <div className="table-strip">
         {/* Opponent hand cards: face-down placeholders KEYED BY CARD ID so
@@ -1290,8 +1319,9 @@ function RoundSummary({ state, dispatch, localPlayerId }: {
   if (!s) return null;
   const tied = state.tieBreakerPlayers ?? [];
   const isTieBreak = tied.length >= 2;
+  const best = Math.max(0, ...s.perPlayer.map((r) => r.total));
   return (
-    <div className="round-summary">
+    <div className="round-summary ssp-paper">
       <div className="round-summary-header">
         <h2>Round {s.round} complete</h2>
         <button disabled={state.subPhase !== 'roundEnd'} onClick={() => dispatch({ type: 'nextRound' })}>
@@ -1300,12 +1330,15 @@ function RoundSummary({ state, dispatch, localPlayerId }: {
       </div>
       <EventOutcome state={state} />
       <EventChoicePanel state={state} dispatch={dispatch} localPlayerId={localPlayerId} />
-      <p style={{ margin: '6px 0', fontStyle: 'italic' }}>
-        {s.endedBy === 'stop' && `${nameOf(state, s.endedByPlayerId)} called STOP.`}
-        {s.endedBy === 'lastChance' && `${nameOf(state, s.endedByPlayerId)} called LAST CHANCE — ${s.lastChanceWon ? 'bet won!' : 'bet lost.'}`}
-        {s.endedBy === 'deckEmpty' && `The deck ran out — round ends with no penalty.`}
-        {s.endedBy === 'mermaid' && `${nameOf(state, s.endedByPlayerId)} collected 4 mermaids!`}
-      </p>
+      <div className="ssp-round-ending">
+        <RoundStamp endedBy={s.endedBy} won={s.lastChanceWon} />
+        <p style={{ margin: '6px 0', fontStyle: 'italic' }}>
+          {s.endedBy === 'stop' && `${nameOf(state, s.endedByPlayerId)} called STOP.`}
+          {s.endedBy === 'lastChance' && `${nameOf(state, s.endedByPlayerId)} called LAST CHANCE — ${s.lastChanceWon ? 'bet won!' : 'bet lost.'}`}
+          {s.endedBy === 'deckEmpty' && `The deck ran out — round ends with no penalty.`}
+          {s.endedBy === 'mermaid' && `${nameOf(state, s.endedByPlayerId)} collected 4 mermaids!`}
+        </p>
+      </div>
       {isTieBreak && (
         <p style={{ margin: '6px 0', fontWeight: 600, color: 'var(--danger, #c0392b)' }}>
           Tied at the target: {tied.map((id) => nameOf(state, id)).join(' & ')}. Play another round to break it.
@@ -1319,7 +1352,7 @@ function RoundSummary({ state, dispatch, localPlayerId }: {
           {s.perPlayer.map((row) => {
             const p = state.players.find((x) => x.id === row.playerId)!;
             return (
-              <tr key={row.playerId} className={row.forfeitCards ? 'forfeit' : ''}>
+              <tr key={row.playerId} className={[row.forfeitCards ? 'forfeit' : '', best > 0 && row.total === best ? 'round-best' : ''].filter(Boolean).join(' ')}>
                 <td>{nameOf(state, row.playerId)}</td>
                 <td className={`num ${row.forfeitCards ? 'forfeit-cell' : ''}`}>{row.cardPoints}</td>
                 <td className={`num ${row.forfeitBonus ? 'forfeit-cell' : ''}`}>{row.colorBonus}</td>
@@ -1339,7 +1372,7 @@ function RoundSummary({ state, dispatch, localPlayerId }: {
           return (
             <div key={p.id} className="round-summary-player">
               <h3 style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '8px 0 4px' }}>
-                <span style={{ width: 10, height: 10, background: seat?.color ?? '#888', borderRadius: 2 }} />
+                <span className="ssp-seat-flag" style={{ background: seat?.color ?? '#888' }} />
                 {seat?.name ?? p.id}
               </h3>
               <div className="table-strip">
@@ -1363,9 +1396,24 @@ function GameOver({ state }: { state: SspState }) {
   // matchScore for any legacy state without a matchEnd log.
   const matchEnd = (state.log ?? []).filter((e) => e.kind === 'matchEnd').slice(-1)[0];
   const winnerId = (matchEnd && matchEnd.kind === 'matchEnd') ? matchEnd.winnerId : sorted[0]?.id ?? null;
+  const winner = state.players.find((p) => p.id === winnerId);
+  const byMermaids = state.lastRoundSummary?.endedBy === 'mermaid' && state.lastRoundSummary.endedByPlayerId === winnerId;
   return (
     <div className="ssp">
-      <div className="round-summary">
+      <div className="ssp-winner-banner">
+        <Confetti />
+        <div className="ssp-winner-trophy"><WinnerCrest /></div>
+        <div className="ssp-winner-eyebrow">{winner ? 'Winner of the match' : 'Match over'}</div>
+        <div className="ssp-winner-name" style={{ '--seat': getSeat(state, winnerId ?? '')?.color ?? '#888' } as CSSProperties}>
+          {winner ? nameOf(state, winner.id) : 'A shared tide'}
+        </div>
+        <div className="ssp-winner-sub">
+          {winner
+            ? (byMermaids ? 'Four mermaids — an instant win!' : `${winner.matchScore} points after ${state.round} round${state.round === 1 ? '' : 's'}`)
+            : 'Nobody could be split apart.'}
+        </div>
+      </div>
+      <div className="round-summary ssp-paper">
         <h2>Final scores</h2>
         <table>
           <thead><tr><th>Player</th><th className="num">Score</th></tr></thead>
@@ -1377,9 +1425,7 @@ function GameOver({ state }: { state: SspState }) {
                 <tr key={p.id} className={isWinner ? 'ssp-winner-row' : ''}>
                   <td>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                      <span style={{
-                        width: 10, height: 10, background: seat?.color ?? '#888', borderRadius: 2,
-                      }} />
+                      <span className="ssp-seat-flag" style={{ background: seat?.color ?? '#888' }} />
                       {nameOf(state, p.id)}
                       {isWinner && <span className="ssp-winner-pip">🏆 winner</span>}
                       {!isWinner && idx === 1 && <span style={{ fontSize: 11, opacity: 0.6 }}>runner-up</span>}
@@ -1893,6 +1939,90 @@ function cardOrigins(state: SspState): Map<number, string> {
     for (const c of pile) origins.set(c.id, `pile-${i}`);
   });
   return origins;
+}
+
+/** How many card edges a stack shows under its top card (0–5): one per
+ *  `per` cards beneath it. Read by `.card-slot[data-depth]` in ssp.css. */
+function stackDepth(beneath: number, per: number): number {
+  return beneath <= 0 ? 0 : Math.min(5, Math.ceil(beneath / per));
+}
+
+/** A short-lived sticker over a player's zone, naming what they just did. */
+interface Moment { key: string; text: string; tone: 'duo' | 'trio' | 'steal' | 'mermaid' | 'shield' }
+
+/** Whose ability a duo uses, by the card that names it (lobster over crab,
+ *  jellyfish over swimmer, shark over swimmer). */
+const DUO_LEADS: SspCardFamily[] = ['lobster', 'jellyfish', 'shark', 'crab', 'boat', 'fish', 'swimmer'];
+const DUO_HINT: Partial<Record<SspCardFamily, string>> = {
+  crab: 'dig a pile', boat: 'extra turn', fish: 'free draw', shark: 'steal', jellyfish: 'sting', lobster: 'peek at 5',
+};
+/** The Water Rodeo's same-family duos. */
+const RODEO_HINT: Partial<Record<SspCardFamily, string>> = { swimmer: 'swap a card', shark: 'steal a pair' };
+
+/** Public things a log entry did, as a sticker for the acting player. Only
+ *  what everyone at the table saw: played pairs, a steal (not what was
+ *  taken), a mermaid taken off a pile's face-up top. */
+function momentOf(e: SspLogEntry): { playerId: PlayerId; text: string; tone: Moment['tone'] } | null {
+  switch (e.kind) {
+    case 'playPair': {
+      const [a, b] = e.families;
+      const lead = DUO_LEADS.find((f) => f === a || f === b) ?? a;
+      const name = a === b ? `${FAMILY[a].label} duo` : `${FAMILY[a].label} + ${FAMILY[b].label}`;
+      const hint = (a === b ? RODEO_HINT[a] : undefined) ?? DUO_HINT[lead];
+      return { playerId: e.playerId, text: hint ? `${name} · ${hint}` : `${name}!`, tone: 'duo' };
+    }
+    case 'playTrio': return { playerId: e.playerId, text: 'Starfish trio!', tone: 'trio' };
+    case 'sharkSteal': return { playerId: e.playerId, text: 'Steal!', tone: 'steal' };
+    case 'pairSteal': return { playerId: e.playerId, text: 'Pair stolen!', tone: 'steal' };
+    case 'jellyfishLock': return { playerId: e.playerId, text: 'Jellyfish sting!', tone: 'steal' };
+    case 'coralShell': return { playerId: e.playerId, text: 'Coral shield', tone: 'shield' };
+    case 'drawDiscard': return e.family === 'mermaid' ? { playerId: e.playerId, text: 'A mermaid!', tone: 'mermaid' } : null;
+    default: return null;
+  }
+}
+
+/** The latest sticker per player this round, from log entries that arrived
+ *  while the view was up (a reload doesn't replay old ones). The local
+ *  player also gets one whenever a mermaid lands in their own hand. */
+function useMoments(state: SspState, me: SspPlayer | null): ReadonlyMap<PlayerId, Moment> {
+  const log = state.log ?? [];
+  const lastSeq = log.length ? log[log.length - 1].seq : 0;
+  const since = useRef(lastSeq);
+  if (lastSeq < since.current) since.current = -1; // a new match: its log starts over
+  const mermaids = me ? me.hand.filter((c) => c.family === 'mermaid').length : 0;
+  // Keyed by player: in hot-seat the local seat changes hands between turns.
+  const prevMermaids = useRef({ id: me?.id ?? null, n: mermaids });
+  const [mermaidSeq, setMermaidSeq] = useState<number | null>(null);
+  useEffect(() => {
+    const prev = prevMermaids.current;
+    if (prev.id !== (me?.id ?? null)) setMermaidSeq(null);
+    else if (mermaids > prev.n) setMermaidSeq(lastSeq);
+    prevMermaids.current = { id: me?.id ?? null, n: mermaids };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mermaids, me?.id]);
+  return useMemo(() => {
+    const out = new Map<PlayerId, Moment>();
+    const seqOf = new Map<PlayerId, number>();
+    for (let i = log.length - 1; i >= 0; i--) {
+      const e = log[i];
+      if (e.seq <= since.current || e.round !== state.round) break;
+      const m = momentOf(e);
+      if (m && !out.has(m.playerId)) {
+        out.set(m.playerId, { key: `${e.seq}`, text: m.text, tone: m.tone });
+        seqOf.set(m.playerId, e.seq);
+      }
+    }
+    if (me && mermaidSeq !== null && mermaidSeq >= (seqOf.get(me.id) ?? -1) && mermaids > 0) {
+      out.set(me.id, { key: `m${mermaidSeq}:${mermaids}`, text: mermaids === 3 ? 'Mermaid! One more…' : 'Mermaid!', tone: 'mermaid' });
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastSeq, state.round, mermaidSeq, mermaids, me?.id]);
+}
+
+function MomentSticker({ moment }: { moment: Moment | undefined }) {
+  if (!moment) return null;
+  return <span key={moment.key} className={`ssp-moment tone-${moment.tone}`} aria-hidden>{moment.text}</span>;
 }
 
 function getSeat(state: SspState, id: PlayerId): Seat | undefined {

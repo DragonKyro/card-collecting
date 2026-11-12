@@ -449,16 +449,40 @@ function TurnBar({ state, me, myTurn, nameOf, selected, give, take, invest, setI
     <div className={`mk-turnbar ${myTurn ? 'mine' : ''} ${state.phase === 'gameOver' ? 'over' : ''}`}>
       <span className="mk-phase">{phaseLabel}</span>
       {state.phase === 'playing' && (
-        <span className="mk-whose">
+        // Keyed by turn, so the line springs in for each new player.
+        <span className="mk-whose" key={`${state.turnNumber}:${state.currentIdx}`}>
           <span className="mk-dot" style={{ background: state.seats[state.currentIdx]?.color }} />
           {myTurn ? 'Your turn' : `${who}’s turn`}
           {state.turn.extraTurn && <span className="mk-tag">extra turn next</span>}
         </span>
       )}
       <div className="mk-prompt">{prompt}</div>
+      {state.phase === 'gameOver' && state.winnerId && (
+        <div className="mk-over-note">
+          <PrizeRosette />
+          <span>The town prize goes to</span>
+          <b>{nameOf(state.winnerId)}</b>
+        </div>
+      )}
       {buttons && <div className="mk-actions">{buttons}</div>}
       <div className="mk-turnbar-dice">{dice}</div>
     </div>
+  );
+}
+
+/** A county-fair prize rosette (flat art, no ids). */
+function PrizeRosette() {
+  const petals = Array.from({ length: 12 }, (_, i) => (Math.PI * 2 * i) / 12);
+  return (
+    <svg viewBox="0 0 58 64" className="mk-over-rosette" aria-hidden="true">
+      <path d="M18 36 L10 62 L19 56 L24 63 L29 40 Z" fill="#d2433b" stroke="#3b2a20" strokeWidth={1.4} strokeLinejoin="round" />
+      <path d="M40 36 L48 62 L39 56 L34 63 L29 40 Z" fill="#2f7fd1" stroke="#3b2a20" strokeWidth={1.4} strokeLinejoin="round" />
+      {petals.map((a, i) => (
+        <circle key={i} cx={29 + Math.cos(a) * 20} cy={26 + Math.sin(a) * 20} r={7} fill={i % 2 ? '#ffd23f' : '#f59e1b'} stroke="#3b2a20" strokeWidth={1.2} />
+      ))}
+      <circle cx={29} cy={26} r={15} fill="#fff3dc" stroke="#3b2a20" strokeWidth={1.4} />
+      <path d="M29 15.5 L32 23 L40 23.4 L33.8 28.3 L36 36 L29 31.6 L22 36 L24.2 28.3 L18 23.4 L26 23 Z" fill="#ffc93c" stroke="#8a5a00" strokeWidth={1.1} strokeLinejoin="round" />
+    </svg>
   );
 }
 
@@ -582,7 +606,7 @@ function Market({ state, me, building, selected, canBuy, onPick, dice }: {
               {R.market !== 'open' && <DeckBack label="deck" count={r.deck.length} size="sm" />}
             </div>
             <div className="mk-row-cards">
-              {r.slots.map((slot) => {
+              {r.slots.map((slot, i) => {
                 const why = building && me ? buildBlocker(state, me, slot.cardId) : null;
                 const buyable = canBuy(slot.cardId);
                 const isLm = !isEstablishment(ed, slot.cardId);
@@ -591,6 +615,7 @@ function Market({ state, me, building, selected, canBuy, onPick, dice }: {
                     key={slot.cardId}
                     ref={fx.anchor(`market:${slot.cardId}`)}
                     className={`mk-slot ${slot.count === 0 ? 'soldout' : ''} ${buyable ? 'buyable' : ''} ${selected === slot.cardId ? 'selected' : ''} ${building && !buyable ? 'dim' : ''}`}
+                    style={{ ['--i' as string]: i }}
                   >
                     <CardFace
                       edition={ed}
@@ -721,6 +746,15 @@ function Town({
 
 // ---------- Game over ----------
 
+/** Festival fireworks over the game-over panel: left, top, colour, delay. */
+const FIREWORKS: [string, string, string, string][] = [
+  ['12%', '38%', '#ffd23f', '0.3s'],
+  ['88%', '34%', '#ff7a6b', '0.8s'],
+  ['26%', '70%', '#7fd4ff', '1.4s'],
+  ['74%', '68%', '#9be36b', '1.1s'],
+  ['50%', '22%', '#f3a6ff', '1.8s'],
+];
+
 function GameOver({ state, nameOf }: { state: MkState; nameOf: (id: PlayerId | null) => string }) {
   const R = rulesOf(state);
   const standings = state.players
@@ -732,6 +766,11 @@ function GameOver({ state, nameOf }: { state: MkState; nameOf: (id: PlayerId | n
     : `${R.landmarksToWin}`;
   return (
     <div className="mk-gameover">
+      <div className="mk-fireworks" aria-hidden="true">
+        {FIREWORKS.map(([x, y, c, d], i) => (
+          <i key={i} className="mk-firework" style={{ ['--x' as string]: x, ['--y' as string]: y, ['--c' as string]: c, ['--d' as string]: d }} />
+        ))}
+      </div>
       <div className="mk-confetti" aria-hidden="true">
         {Array.from({ length: 24 }, (_, i) => <i key={i} style={{ ['--i' as string]: i }} />)}
       </div>

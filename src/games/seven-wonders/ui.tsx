@@ -1,6 +1,6 @@
 // 7 Wonders UI — LobbyConfig + GameView.
 
-import { Suspense, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { sharedDeviceHumans } from '@/core/seats';
 import type { GameUiBundle } from '@/core/module';
 import type { PlayerId, Seat } from '@/core/types';
@@ -20,7 +20,7 @@ import {
   ParticipationIcon, PenaltyIcon, ResourceIcon, ScienceIcon, ShieldIcon, TileIcon, VpIcon, WonderPowerIcon, WonderStageIcon,
 } from './art';
 import {
-  CardFace, CostIcons, EffectIcons, TableauColumns, WonderBoard, WonderMini, type CardStatus,
+  CardFace, CostIcons, EffectIcons, TABLEAU_ORDER, TableauColumns, WonderBoard, WonderMini, cardStyle, type CardStatus,
 } from './Card';
 import { RulesBook, RulesHero, RulesGrid, RulesTile } from '@/ui/RulesBook';
 import './seven-wonders.css';
@@ -63,35 +63,35 @@ function LobbyConfig({ config, seats, onChange }: { config: SwConfig; seats: Sea
     return id ? wonderGroups.find((g) => g.a.id === id || g.b.id === id)?.name ?? null : null;
   };
 
+  const radio = (on: boolean, label: ReactNode, pick: () => void) => (
+    <label className={`sw-seg-opt ${on ? 'on' : ''}`}>
+      <input type="radio" checked={on} onChange={pick} />
+      <span>{label}</span>
+    </label>
+  );
+
   return (
     <div className="game-config sw-lobby">
-      <h4 style={{ margin: '0 0 4px' }}>Wonders</h4>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
-        <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <input type="radio" checked={config.wonderAssignment === 'random'} onChange={() => setAssignment('random')} />
-          Random assignment
-        </label>
-        <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <input type="radio" checked={config.wonderAssignment === 'preset'} onChange={() => setAssignment('preset')} />
-          Manual per-seat
-        </label>
+      <h4 className="sw-lobby-h"><WonderStageIcon size={18} /> Wonders</h4>
+      <div className="sw-lobby-line">
+        <div className="sw-seg">
+          {radio(config.wonderAssignment === 'random', 'Random assignment', () => setAssignment('random'))}
+          {radio(config.wonderAssignment === 'preset', 'Manual per-seat', () => setAssignment('preset'))}
+        </div>
       </div>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 12, color: 'var(--fg-muted)', alignSelf: 'center' }}>Side:</span>
-        <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <input type="radio" checked={config.wonderSide === 'A'} onChange={() => setSide('A')} />A
-        </label>
-        <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <input type="radio" checked={config.wonderSide === 'B'} onChange={() => setSide('B')} />B
-        </label>
-        <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <input type="radio" checked={config.wonderSide === 'random'} onChange={() => setSide('random')} />random
-        </label>
+      <div className="sw-lobby-line">
+        <span className="sw-seg-label">Side</span>
+        <div className="sw-seg">
+          {radio(config.wonderSide === 'A', 'A', () => setSide('A'))}
+          {radio(config.wonderSide === 'B', 'B', () => setSide('B'))}
+          {radio(config.wonderSide === 'random', 'random', () => setSide('random'))}
+        </div>
+        <span className="sw-seg-note">{config.wonderSide === 'B' ? 'B: the advanced boards, drawn at dusk' : config.wonderSide === 'A' ? 'A: the classic boards' : 'Each seat flips a coin'}</span>
       </div>
 
       {config.wonderAssignment === 'preset' && (
-        <div>
-          <p style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
+        <div className="sw-preset">
+          <p className="sw-lobby-note">
             Pick a wonder for each seat. Seats left on random get a wonder nobody picked, on the side chosen above.
           </p>
           {seats.map((s, i) => {
@@ -99,8 +99,8 @@ function LobbyConfig({ config, seats, onChange }: { config: SwConfig; seats: Sea
             const valid = !current || wonderGroups.some((g) => g.a.id === current || g.b.id === current);
             const takenElsewhere = new Set(seats.map((_, k) => (k === i ? null : presetName(k))).filter(Boolean));
             return (
-              <div key={s.id} className="sw-expansion-row">
-                <span className="sw-preset-name">{s.name}</span>
+              <div key={s.id} className="sw-expansion-row sw-preset-row">
+                <span className="sw-preset-name"><span className="sw-dot" style={{ background: s.color }} />{s.name}</span>
                 <select
                   value={valid ? current : ''}
                   onChange={(e) => setPresetFor(i, e.target.value)}
@@ -119,27 +119,38 @@ function LobbyConfig({ config, seats, onChange }: { config: SwConfig; seats: Sea
         </div>
       )}
 
-      <h4 style={{ margin: '14px 0 4px' }}>Expansions</h4>
-      {EXPANSION_INFO.map((e) => {
-        const ext = getAllExpansions().find((x) => x.id === e.id);
-        const Section = config.expansions.includes(e.id) ? ext?.LobbySection : undefined;
-        return (
-          <div key={e.id} className="sw-expansion-row sw-expansion-block">
-            <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <input type="checkbox" checked={config.expansions.includes(e.id)} onChange={() => toggleExpansion(e.id)} />
-              <strong>{e.label}</strong>
-            </label>
-            <span className="sw-expansion-desc" style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{e.desc}</span>
-            {Section && <Section config={config} onChange={onChange} />}
-          </div>
-        );
-      })}
+      <h4 className="sw-lobby-h sw-lobby-h2"><AgeIcon age={3} size={18} /> Expansions</h4>
+      <div className="sw-exp-grid">
+        {EXPANSION_INFO.map((e) => {
+          const ext = getAllExpansions().find((x) => x.id === e.id);
+          const on = config.expansions.includes(e.id);
+          const Section = on ? ext?.LobbySection : undefined;
+          return (
+            <div key={e.id} className={`sw-expansion-row sw-expansion-block sw-exp ${on ? 'on' : ''}`}>
+              <label className="sw-exp-head">
+                <input type="checkbox" checked={on} onChange={() => toggleExpansion(e.id)} />
+                <span className="sw-exp-emblem">{EXPANSION_EMBLEM[e.id]()}</span>
+                <strong>{e.label}</strong>
+              </label>
+              <span className="sw-expansion-desc">{e.desc}</span>
+              {Section && <Section config={config} onChange={onChange} />}
+            </div>
+          );
+        })}
+      </div>
       {seats.length > 7 && !config.expansions.includes('cities') && (
         <p className="sw-plan-bad" style={{ fontSize: 12 }}>8 players need the Cities expansion.</p>
       )}
     </div>
   );
 }
+
+const EXPANSION_EMBLEM: Record<SwExpansionId, () => ReactNode> = {
+  leaders: () => <ColorChip color="leader" size={22} />,
+  cities: () => <ColorChip color="black" size={22} />,
+  babelTower: () => <TileIcon size={22} />,
+  babelProjects: () => <ParticipationIcon size={22} />,
+};
 
 function Rules() {
   return (
@@ -371,6 +382,11 @@ function seatName(state: SwState, id: PlayerId | null | undefined): string {
   return state.seats.find((s) => s.id === id)?.name ?? id ?? '?';
 }
 
+/** The view's root: the board's light shifts with the Age (dawn, noon, dusk). */
+function rootClass(state: SwState): string {
+  return `sw sw-age-${state.age}`;
+}
+
 /** The expansions' table panels (the tower, the current project). */
 function TablePanels({ state, localPlayerId }: { state: SwState; localPlayerId: PlayerId | null }) {
   const panels = getActiveExpansions(state.config).filter((e) => e.TablePanel);
@@ -416,10 +432,10 @@ function GameView({
 
   if (state.subPhase === 'militaryEnd') {
     return (
-      <div className="sw">
+      <div className={rootClass(state)}>
         <div className="sw-board">
           <MilitaryBanner state={state} />
-          <div style={{ textAlign: 'center' }}>
+          <div className="sw-continue">
             <button onClick={() => dispatch({ type: 'continue' })}>
               {state.age < 3 ? `Continue to Age ${ROMAN[state.age + 1]} →` : 'Final scoring →'}
             </button>
@@ -448,7 +464,7 @@ function GameView({
     if (ext.ownsSubPhase?.(state.subPhase) && ext.GameOverlay) {
       const Overlay = ext.GameOverlay;
       return (
-        <div className="sw">
+        <div className={rootClass(state)}>
           <div className="sw-board">
             {header}
             {/* Overlays may be lazy (their art ships with this chunk, not the module). */}
@@ -463,7 +479,7 @@ function GameView({
 
   if (state.subPhase === 'discardBuild') {
     return (
-      <div className="sw">
+      <div className={rootClass(state)}>
         <div className="sw-board">
           {header}
           <DiscardBuildPanel state={state} me={me} dispatch={dispatch} />
@@ -473,8 +489,9 @@ function GameView({
   }
 
   return (
-    <div className="sw">
+    <div className={rootClass(state)}>
       <div className="sw-board">
+        {state.subPhase === 'picking' && state.ageRound === 1 && <AgeTitle key={state.age} age={state.age} />}
         {header}
         {me ? (
           <HandPanel
@@ -496,6 +513,17 @@ function GameView({
   );
 }
 
+/** A new Age's title card: it rises over the table and fades by itself. */
+function AgeTitle({ age }: { age: 1 | 2 | 3 }) {
+  return (
+    <div className="sw-age-title" aria-hidden="true">
+      <span className="sw-age-title-card"><AgeIcon age={age} size={58} /></span>
+      <span className="sw-age-title-text">Age {ROMAN[age]}</span>
+      <span className="sw-age-title-sub">{age === 2 ? 'Hands pass right' : 'Hands pass left'}</span>
+    </div>
+  );
+}
+
 function StatusBar({ state, me }: { state: SwState; me: SwPlayer | null }) {
   const picking = state.subPhase === 'picking';
   const waiting = state.players.filter((p) => p.hand.length > 0 || p.pendingPick !== null);
@@ -513,16 +541,28 @@ function StatusBar({ state, me }: { state: SwState; me: SwPlayer | null }) {
         {picking && (state.ageRound <= per ? <> · pick {state.ageRound} of {per}</> : <> · the last card</>)}
       </span>
       {picking && state.ageRound <= per && (
-        <span className="sw-pill" title="Hands pass this way after every pick">
+        <span className={`sw-pill sw-pill-pass ${toWest ? 'sw-pass-west' : 'sw-pass-east'}`} title="Hands pass this way after every pick">
+          {toWest && <span className="sw-pass-flow" aria-hidden="true"><i /><i /><i /></span>}
           {toWest && <ArrowIcon dir="west" size={12} light />}
           {target
             ? <>Pass {toWest ? 'left' : 'right'} to <strong>{seatName(state, target.id)}</strong></>
             : <>Pass {toWest ? 'left (west)' : 'right (east)'}</>}
           {!toWest && <ArrowIcon dir="east" size={12} light />}
+          {!toWest && <span className="sw-pass-flow" aria-hidden="true"><i /><i /><i /></span>}
         </span>
       )}
-      {picking && <span className="sw-pill">Picked {submittedCount} / {waiting.length}</span>}
-      <span className="sw-pill" title="Discarded cards (face down)">Discard pile · {state.discard.length}</span>
+      {picking && (
+        <span className="sw-pill sw-pill-picked">
+          Picked {submittedCount} / {waiting.length}
+          <span className="sw-pips" aria-hidden="true">
+            {waiting.map((p) => <i key={p.id} className={p.pendingPick !== null ? 'on' : ''} />)}
+          </span>
+        </span>
+      )}
+      <span className="sw-pill sw-pill-discard" title="Discarded cards (face down)">
+        <span className="sw-mini-stack" aria-hidden="true"><i /><i /><i /></span>
+        Discard pile · {state.discard.length}
+      </span>
     </div>
   );
 }
@@ -539,7 +579,7 @@ function Opponents({ state, localPlayerId, last }: { state: SwState; localPlayer
     }));
   return (
     <div className="sw-opponents">
-      {order.map(({ player, side }) => <OpponentStrip key={player.id} player={player} side={side} state={state} last={last} />)}
+      {order.map(({ player, side }, k) => <OpponentStrip key={player.id} player={player} side={side} state={state} last={last} index={k} />)}
     </div>
   );
 }
@@ -551,22 +591,32 @@ function moveText(m: LastMove): string {
   return 'sold a card for 3 coins';
 }
 
-function OpponentStrip({ player, side, state, last }: { player: SwPlayer; side: 'west' | 'east' | null; state: SwState; last: LastTurn }) {
+function OpponentStrip({ player, side, state, last, index }: {
+  player: SwPlayer; side: 'west' | 'east' | null; state: SwState; last: LastTurn; index: number;
+}) {
   const seat = state.seats.find((s) => s.id === player.id);
   const submitted = player.pendingPick != null;
   const owes = player.hand.length > 0 && !submitted;
   const cards = [...player.tableau, ...(player.leaderTableau ?? [])];
   const moves = last.moves.get(player.id) ?? [];
   return (
-    <div className={`sw-opp ${side ? `sw-opp-${side}` : ''} ${submitted ? 'done' : ''}`}>
+    <div
+      className={`sw-opp ${side ? `sw-opp-${side}` : ''} ${submitted ? 'done' : ''}`}
+      // The turn's builds pop in city by city, round the table.
+      style={{ ['--sw-delay' as string]: `${index * 140}ms`, ['--sw-seat' as string]: seat?.color ?? '#888' }}
+    >
       <header>
         <span className="sw-dot" style={{ background: seat?.color ?? '#888' }} />
-        <strong>{seat?.name ?? player.id}</strong>
+        <strong className="sw-opp-name">{seat?.name ?? player.id}</strong>
         {seat?.isAI && <span className="sw-tag">AI</span>}
         {side === 'west' && <span className="sw-tag sw-tag-side"><ArrowIcon dir="west" size={10} light /> West neighbour</span>}
         {side === 'east' && <span className="sw-tag sw-tag-side">East neighbour <ArrowIcon dir="east" size={10} light /></span>}
         {state.subPhase === 'picking' && (submitted || owes) && (
-          <span className={`sw-opp-state ${submitted ? 'on' : ''}`}>{submitted ? '✓ picked' : 'choosing…'}</span>
+          <span className={`sw-opp-state ${submitted ? 'on' : ''}`}>
+            {submitted
+              ? <><span className="sw-sealed" aria-hidden="true"><AgeIcon age={state.age} size={16} /></span>✓ picked</>
+              : <>choosing<span className="sw-dots" aria-hidden="true"><i /><i /><i /></span></>}
+          </span>
         )}
       </header>
       {moves.length > 0 && (
@@ -598,7 +648,7 @@ function CityStats({ player, state }: { player: SwPlayer; state: SwState }) {
   const t = player.projectTokens;
   return (
     <div className="sw-stats">
-      <span className="sw-stat" title="Coins"><CoinIcon size={18} />{player.coins}</span>
+      <CoinStat key={player.id} coins={player.coins} />
       <span className="sw-stat" title="Shields"><ShieldIcon size={18} />{shieldsFor(player)}</span>
       {(Object.keys(sci) as SwScience[]).filter((s) => sci[s] > 0).map((s) => (
         <span key={s} className="sw-stat"><ScienceIcon s={s} size={18} />{sci[s]}</span>
@@ -625,6 +675,28 @@ function CityStats({ player, state }: { player: SwPlayer; state: SwState }) {
   );
 }
 
+/** A city's treasury; a change floats up off it (+3 for a sale, −2 for a trade…). */
+function CoinStat({ coins }: { coins: number }) {
+  const prev = useRef(coins);
+  const [delta, setDelta] = useState<{ n: number; seq: number } | null>(null);
+  useEffect(() => {
+    if (coins === prev.current) return;
+    const n = coins - prev.current;
+    prev.current = coins;
+    setDelta((d) => ({ n, seq: (d?.seq ?? 0) + 1 }));
+  }, [coins]);
+  return (
+    <span className="sw-stat sw-stat-coins" title="Coins">
+      <CoinIcon size={18} />{coins}
+      {delta && (
+        <span key={delta.seq} className={`sw-float ${delta.n > 0 ? 'up' : 'down'}`} aria-hidden="true">
+          {delta.n > 0 ? `+${delta.n}` : `−${-delta.n}`}
+        </span>
+      )}
+    </span>
+  );
+}
+
 function SelfCity({ player, state, fresh }: { player: SwPlayer; state: SwState; fresh: ReadonlySet<number> }) {
   const cards = [...player.tableau, ...(player.leaderTableau ?? [])];
   return (
@@ -634,7 +706,14 @@ function SelfCity({ player, state, fresh }: { player: SwPlayer; state: SwState; 
         <CityStats player={player} state={state} />
       </h3>
       {cards.length === 0
-        ? <p className="sw-empty">You haven't built anything yet. Built cards tuck in here by colour.</p>
+        ? (
+          <div className="sw-city-empty">
+            <div className="sw-slots" aria-hidden="true">
+              {TABLEAU_ORDER.slice(0, 7).map((c) => <span key={c} className="sw-slot" style={cardStyle(c)} />)}
+            </div>
+            <p className="sw-empty">You haven't built anything yet. Built cards tuck in here by colour.</p>
+          </div>
+        )
         : <TableauColumns cards={cards} size="md" fresh={fresh} />}
     </div>
   );
@@ -734,8 +813,12 @@ function HandPanel({
   const stageTokens = me.projectTokens?.freeStage ?? 0;
   const project = state.project && state.project.outcome === null ? greatProjectById(state.project.projectId) : null;
 
+  // Where this hand came from: the deck on an Age's first pick, else the
+  // neighbour who passed it (Ages I / III pass west, so it comes from the east).
+  const from = state.ageRound === 1 ? 'deck' : state.passDirection === 'cw' ? 'east' : 'west';
+
   return (
-    <div className="sw-panel sw-hand-area">
+    <div className={`sw-panel sw-hand-area ${submitted ? 'sw-locked-in' : 'sw-your-turn'}`}>
       <h3>
         <span>{mySeatName} hand · {me.hand.length} card{me.hand.length === 1 ? '' : 's'}</span>
         <span className="sw-hint">
@@ -748,15 +831,21 @@ function HandPanel({
       </h3>
 
       {hideHand
-        ? <p className="sw-empty">Your hand is hidden until the turn is revealed.</p>
+        ? (
+          <div className="sw-hand-hidden">
+            <HiddenHand age={state.age} />
+            <p className="sw-empty">Your hand is hidden until the turn is revealed.</p>
+          </div>
+        )
         : (
-          <div className="sw-hand">
+          <div className={`sw-hand sw-from-${from}`}>
             {me.hand.map((c) => (
               <CardFace
                 key={c.id}
                 card={c}
                 selected={c.id === selectedCardId || pending?.cardId === c.id}
                 disabled={submitted && pending?.cardId !== c.id}
+                className={pending?.cardId === c.id ? 'sw-sealed-pick' : undefined}
                 status={statuses.get(c.id)}
                 onClick={submitted ? undefined : () => {
                   setSelectedCardId(c.id);
@@ -862,6 +951,16 @@ function HandPanel({
         </div>
       )}
     </div>
+  );
+}
+
+/** A locked-in hand on a shared device: the cards face down, the pick sealed. */
+function HiddenHand({ age }: { age: 1 | 2 | 3 }) {
+  return (
+    <span className="sw-backs" aria-hidden="true">
+      {[0, 1, 2].map((i) => <span key={i} className="sw-back" style={{ ['--i' as string]: i }}><AgeIcon age={age} size={54} /></span>)}
+      <span className="sw-seal">✓</span>
+    </span>
   );
 }
 
@@ -1030,6 +1129,12 @@ function MilitaryBanner({ state }: { state: SwState }) {
   if (!summary) return <p>Resolving military…</p>;
   return (
     <div className="sw-panel sw-military-banner">
+      {/* Two shields clash, then each city's tokens are stamped in turn. */}
+      <div className="sw-clash" aria-hidden="true">
+        <span className="sw-clash-shield sw-clash-l"><ShieldIcon size={58} /></span>
+        <span className="sw-clash-spark" />
+        <span className="sw-clash-shield sw-clash-r"><ShieldIcon size={58} /></span>
+      </div>
       <h3><span className="sw-h-icon"><ShieldIcon size={22} /> Age {ROMAN[summary.age]} — military conflicts</span></h3>
       <p className="sw-hint">Every city compares shields with both neighbours: the stronger side takes a victory token, the weaker one a defeat token.</p>
       <div className="sw-table-scroll">
@@ -1038,23 +1143,23 @@ function MilitaryBanner({ state }: { state: SwState }) {
             <tr><th>City</th><th><ShieldIcon size={16} /></th><th>vs west</th><th>vs east</th><th>This age</th></tr>
           </thead>
           <tbody>
-            {summary.perPlayer.map((row) => {
+            {summary.perPlayer.map((row, i) => {
               const p = state.players.find((x) => x.id === row.playerId);
               const seat = state.seats.find((s) => s.id === row.playerId);
               return (
-                <tr key={row.playerId}>
+                <tr key={row.playerId} style={{ ['--i' as string]: i }}>
                   <td><span className="sw-dot" style={{ background: seat?.color ?? '#888' }} /> {seat?.name ?? row.playerId}</td>
-                  <td>{row.shields ?? (p ? shieldsFor(p) : '—')}</td>
+                  <td><span className="sw-shields"><ShieldIcon size={15} />{row.shields ?? (p ? shieldsFor(p) : '—')}</span></td>
                   {row.diplomacy
                     ? <td colSpan={2}><DiplomacyIcon size={16} /> sat out (diplomacy)</td>
                     : (
                       <>
-                        <td><ResultCell result={row.vsWest} age={summary.age} /></td>
-                        <td><ResultCell result={row.vsEast} age={summary.age} /></td>
+                        <td><span className="sw-stamp"><ResultCell result={row.vsWest} age={summary.age} /></span></td>
+                        <td><span className="sw-stamp sw-stamp-2"><ResultCell result={row.vsEast} age={summary.age} /></span></td>
                       </>
                     )}
-                  <td className={row.tokenGained > 0 ? 'sw-good' : row.tokenGained < 0 ? 'sw-bad' : ''}>
-                    {row.tokenGained > 0 ? `+${row.tokenGained}` : row.tokenGained}
+                  <td className={`sw-mil-total ${row.tokenGained > 0 ? 'sw-good' : row.tokenGained < 0 ? 'sw-bad' : ''}`}>
+                    <span className="sw-pop-num">{row.tokenGained > 0 ? `+${row.tokenGained}` : row.tokenGained}</span>
                   </td>
                 </tr>
               );
@@ -1091,13 +1196,14 @@ function GameOver({ state }: { state: SwState }) {
     getActiveExpansions(state.config).flatMap((e) => e.scoreCategories ?? []),
   ));
   return (
-    <div className="sw">
+    <div className={rootClass(state)}>
       <div className="sw-board">
         <div className="sw-panel sw-gameover">
+          <Confetti />
           <div className="sw-gameover-title">
-            <VpIcon size={46} />
+            <span className="sw-wreath"><VpIcon size={52} /></span>
             <div>
-              <h2>
+              <h2 className="sw-victory">
                 {winners.length === 1
                   ? `${seatName(state, winners[0].id)} wins!`
                   : winners.length > 1 ? `${winners.map((w) => seatName(state, w.id)).join(' & ')} share the victory` : 'Match complete'}
@@ -1130,11 +1236,16 @@ function GameOver({ state }: { state: SwState }) {
                 </tr>
               </thead>
               <tbody>
-                {sorted.map((row) => {
+                {sorted.map((row, rank) => {
                   const seat = state.seats.find((s) => s.id === row.playerId);
+                  const won = winnerIds.includes(row.playerId);
                   return (
-                    <tr key={row.playerId} className={winnerIds.includes(row.playerId) ? 'sw-winner' : ''}>
-                      <td><span className="sw-dot" style={{ background: seat?.color ?? '#888' }} /> {seat?.name ?? row.playerId}</td>
+                    // Revealed from last place up, the winner last.
+                    <tr key={row.playerId} className={won ? 'sw-winner' : ''} style={{ ['--i' as string]: sorted.length - 1 - rank }}>
+                      <td>
+                        <span className="sw-dot" style={{ background: seat?.color ?? '#888' }} /> {seat?.name ?? row.playerId}
+                        {won && <span className="sw-laurel-mark" aria-hidden="true"><VpIcon size={16} /></span>}
+                      </td>
                       <td>{row.military}</td>
                       <td>{row.treasury}</td>
                       <td>{row.wonder}</td>
@@ -1145,7 +1256,7 @@ function GameOver({ state }: { state: SwState }) {
                       {extraCategories.map((c) => (
                         <td key={c}>{row.extras?.[c] ?? 0}</td>
                       ))}
-                      <td><strong>{row.total}</strong></td>
+                      <td className="sw-final-total"><strong>{row.total}</strong></td>
                     </tr>
                   );
                 })}
@@ -1164,8 +1275,8 @@ function GameOver({ state }: { state: SwState }) {
             const seat = state.seats.find((s) => s.id === row.playerId);
             if (!p) return null;
             return (
-              <div key={row.playerId} className="sw-opp">
-                <header><span className="sw-dot" style={{ background: seat?.color ?? '#888' }} /><strong>{seat?.name ?? p.id}</strong></header>
+              <div key={row.playerId} className={`sw-opp ${winnerIds.includes(row.playerId) ? 'sw-opp-winner' : ''}`}>
+                <header><span className="sw-dot" style={{ background: seat?.color ?? '#888' }} /><strong className="sw-opp-name">{seat?.name ?? p.id}</strong></header>
                 <div className="sw-opp-row">
                   <WonderMini wonder={wonderById(p.wonderId)} built={p.wonderStagesBuilt} />
                   <CityStats player={p} state={state} />
@@ -1176,6 +1287,28 @@ function GameOver({ state }: { state: SwState }) {
           })}
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Cards of the seven Age colours raining over the final score (CSS only, once). */
+const CONFETTI_COLORS = ['#8b5a2b', '#8f949e', '#2f6fae', '#e2a92b', '#c03b32', '#3f9a4c', '#7c55b0', '#f3c33b'];
+
+function Confetti() {
+  return (
+    <div className="sw-confetti" aria-hidden="true">
+      {Array.from({ length: 30 }, (_, i) => (
+        <i
+          key={i}
+          style={{
+            ['--x' as string]: `${(i * 37 + 11) % 100}%`,
+            ['--d' as string]: `${((i * 53) % 140) / 100}s`,
+            ['--r' as string]: `${((i * 71) % 360) - 180}deg`,
+            ['--s' as string]: `${0.75 + ((i * 29) % 50) / 100}`,
+            ['--c' as string]: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
+          }}
+        />
+      ))}
     </div>
   );
 }

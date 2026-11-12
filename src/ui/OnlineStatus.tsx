@@ -33,7 +33,7 @@ export function JoinRoomBox({ initialCode }: { initialCode?: string | null }) {
   const canJoin = clean.length >= 4 && name.trim().length > 0;
   return (
     <form
-      className="online-join join-room-box"
+      className="join-room-box"
       onPointerEnter={warmUpNetwork}
       onFocus={warmUpNetwork}
       onSubmit={(e) => {
@@ -54,7 +54,7 @@ export function JoinRoomBox({ initialCode }: { initialCode?: string | null }) {
         />
         <button className="secondary" type="submit" disabled={!canJoin}>Join</button>
       </div>
-      <p className="lobby-hint" style={{ margin: '8px 0 0' }}>To host, pick a game below and choose “Host online”.</p>
+      <p className="lobby-hint">To host, pick a game below and choose “Host online”.</p>
     </form>
   );
 }
@@ -70,7 +70,7 @@ export function OnlineStatusCard() {
   if (connection === 'error') {
     return (
       <div className="lobby-single">
-        <section className="lobby-panel online-status">
+        <section className="lobby-panel online-status cc-chrome">
           <h3>Couldn't {joinFailure ? `join room ${joinFailure.code}` : 'open the room'}</h3>
           <p>{errorMessage}</p>
           <div style={{ display: 'flex', gap: 8 }}>
@@ -83,7 +83,8 @@ export function OnlineStatusCard() {
   }
   return (
     <div className="lobby-single">
-      <section className="lobby-panel online-status">
+      <section className="lobby-panel online-status cc-chrome">
+        <div className="cc-loading-cards" aria-hidden="true"><span /><span /><span /></div>
         <h3>{role === 'host' && !roomCode ? 'Opening a room…' : `Joining room ${roomCode ?? ''}…`}</h3>
         <p className="lobby-hint">Connecting to the game server.</p>
         <button className="secondary" onClick={() => net().leaveRoom()}>Cancel</button>

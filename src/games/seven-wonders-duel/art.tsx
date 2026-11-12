@@ -11,7 +11,7 @@
 //   - wonder illustrations: 160 × 90, ground below y ≈ 72;
 //   - progress tokens: 40 × 40 — a green disc with a gold emblem;
 //   - card backs: 80 × 120;
-//   - military track: 760 × 92 (19 spaces, −9 … +9).
+//   - military track: 760 × 104 (19 spaces, −9 … +9).
 
 import type { ReactNode } from 'react';
 import type { DuelCardColor, DuelChainSymbol, DuelProgressTokenId, DuelResource, DuelScience } from './types';
@@ -2738,8 +2738,13 @@ export function ProgressTokenArt({ id, size = 48 }: { id: DuelProgressTokenId; s
   return (
     <svg viewBox="0 0 40 40" width={size} height={size} aria-hidden="true">
       <circle cx={20} cy={20} r={19} fill="#2f8752" stroke={TOKEN_INK} strokeWidth={1.4} />
+      {/* Struck-coin depth: a lit upper rim, a shaded lower one. */}
+      <path d="M5.2 14.6 A15.6 15.6 0 0 1 34.8 14.6" {...tline('#7fd09a', 1.6)} opacity={0.55} />
+      <path d="M34.6 26.4 A15.6 15.6 0 0 1 5.4 26.4" {...tline('#174a2c', 1.8)} opacity={0.6} />
       <circle cx={20} cy={20} r={16.4} fill="none" stroke="#e5c368" strokeWidth={1.2} />
       {tokenEmblem(id)}
+      {/* A glint: invisible unless a stylesheet animates it (the token offer). */}
+      <path className="swd-glint" d="M11 3.6 L12.1 7.9 L16.4 9 L12.1 10.1 L11 14.4 L9.9 10.1 L5.6 9 L9.9 7.9 Z" fill="#fffbe6" opacity={0} />
     </svg>
   );
 }
@@ -3004,39 +3009,68 @@ function SpecialBackArt({ kind }: { kind: 'temple' | 'senator' }) {
 }
 
 // ===========================================================================
-// Military track (760 × 92)
+// Military track (760 × 104)
 
 /** The conflict track. Seat 0's capital is on the left (−9), seat 1's on the
  *  right (+9); positive pawn positions push toward seat 1. Laurels above each
  *  zone give its end-game VP; the military tokens below sit there until
  *  claimed (with Agora they give Senate actions: a cube, not coins).
- *  Pantheon's Minerva pawn, when placed, stands on its space. */
-export function MilitaryTrackArt({ pawn, awards, leftColor, rightColor, minerva = null, agora = false }: {
+ *  Pantheon's Minerva pawn, when placed, stands on its space.
+ *
+ *  Each half is washed in its owner's colour, deeper toward the capital, and
+ *  the capitals glow. `trailFrom` (with a fresh `trailKey` per move) draws a
+ *  streak in the pusher's colour from where the pawn was, and a ring where it
+ *  lands; the zone the pawn stands in lights its laurel. Still flat (glows
+ *  are stacked translucent fills); the motion is CSS (swd-pawn-*). */
+export function MilitaryTrackArt({ pawn, awards, leftColor, rightColor, minerva = null, agora = false, trailFrom = null, trailKey = 0 }: {
   pawn: number;
   awards: { p1At3: boolean; p1At6: boolean; p2At3: boolean; p2At6: boolean };
   leftColor: string;
   rightColor: string;
   minerva?: number | null;
   agora?: boolean;
+  /** Where the pawn stood before its last move (null: no move to show). */
+  trailFrom?: number | null;
+  /** Changes with every move, so the streak and the landing replay. */
+  trailKey?: number;
 }) {
   const xOf = (pos: number) => 20 + (pos + 9) * 38;
+  const clamp = (pos: number) => Math.max(-9, Math.min(9, pos));
   const spaces: ReactNode[] = [];
   for (let pos = -9; pos <= 9; pos++) {
     const d = Math.abs(pos);
-    const fill = d === 0 ? '#fbf1d6' : d <= 2 ? '#efe0b8' : d <= 5 ? '#e3c98e' : d <= 8 ? '#d4ad69' : pos < 0 ? leftColor : rightColor;
+    const seat = pos < 0 ? leftColor : rightColor;
+    const fill = d === 0 ? '#fbf3dc' : d <= 2 ? '#f0e2bd' : d <= 5 ? '#e2c891' : d <= 8 ? '#d0a862' : seat;
     spaces.push(<rect key={pos} x={xOf(pos) + 1} y={40} width={36} height={34} rx={3} fill={fill} {...LINE} />);
-    if (d === 9) spaces.push(<g key={`c${pos}`} transform={`translate(${xOf(pos) + 6.4} ${44}) scale(1.05)`}><CapitalGlyph color="#f3ecda" /></g>);
+    if (d > 0 && d < 9) {
+      spaces.push(<rect key={`w${pos}`} x={xOf(pos) + 1.6} y={40.6} width={34.8} height={32.8} rx={2.6} fill={seat} opacity={0.035 + d * 0.022} />);
+    }
+    if (d < 9) spaces.push(<rect key={`h${pos}`} x={xOf(pos) + 4} y={42.4} width={30} height={2.6} rx={1.3} fill="#ffffff" opacity={0.45} />);
   }
+  const capital = (pos: -9 | 9) => {
+    const fallen = pos < 0 ? pawn <= -9 : pawn >= 9;
+    return (
+      <g key={`c${pos}`} transform={`translate(${xOf(pos) + 6.4} 44) scale(1.05)`}>
+        <g className={`swd-capital${fallen ? ' fallen' : ''}`}>
+          <CapitalGlyph color="#f3ecda" />
+        </g>
+      </g>
+    );
+  };
   const zoneMarks = [-8.5, -5.5, -2.5, 2.5, 5.5, 8.5].map((edge) => (
     <line key={edge} x1={xOf(edge) + 19} y1={36} x2={xOf(edge) + 19} y2={78} {...line(INK, 2.2)} />
   ));
   const laurel = (pos: number, v: number) => (
     <g key={`l${pos}`} transform={`translate(${xOf(pos) + 19 - 15} 1) scale(1.25)`}><LaurelGlyph value={v} /></g>
   );
+  // The laurel of the zone the pawn stands in.
+  const d = Math.abs(clamp(pawn));
+  const liveZone = d === 0 || d === 9 ? null : Math.sign(pawn) * (d <= 2 ? 1.5 : d <= 5 ? 4 : 7);
   // A claimed token stays in the DOM, faded out, so it can fade (CSS) instead of popping.
   const loot = (pos: number, v: number, show: boolean) => (
     <g key={`t${pos}`} className={`swd-loot${show ? '' : ' taken'}`} transform={`translate(${xOf(pos) + 19 - 14} 79)`} aria-hidden={!show}>
       <rect x={0} y={0} width={28} height={22} rx={4} fill={agora ? '#3f3a4a' : '#9b2f22'} {...LINE} />
+      <rect x={2.4} y={2} width={23.2} height={2.4} rx={1.2} fill="#ffffff" opacity={0.25} />
       {agora ? (
         <g>
           <path d="M7 8 l7 -3.4 l7 3.4 v7 l-7 3.4 l-7 -3.4 Z" fill="#e8c35a" {...LINE} strokeWidth={0.8} />
@@ -3048,16 +3082,58 @@ export function MilitaryTrackArt({ pawn, awards, leftColor, rightColor, minerva 
       )}
     </g>
   );
-  const px = xOf(Math.max(-9, Math.min(9, pawn))) + 19;
+  const px = xOf(clamp(pawn)) + 19;
+  let trail: ReactNode = null;
+  if (trailFrom !== null && clamp(trailFrom) !== clamp(pawn)) {
+    const from = xOf(clamp(trailFrom)) + 19;
+    const right = pawn > trailFrom;
+    // Moving right is seat 0 pushing (its shields), moving left seat 1.
+    const pusher = right ? leftColor : rightColor;
+    trail = (
+      <g key={`trail${trailKey}`} aria-hidden="true">
+        <rect
+          className="swd-pawn-trail"
+          x={Math.min(from, px)}
+          y={51}
+          width={Math.abs(px - from)}
+          height={12}
+          rx={6}
+          fill={pusher}
+          style={{ transformOrigin: right ? 'left center' : 'right center' }}
+        />
+        <circle className="swd-pawn-ring" cx={px} cy={57} r={20} fill="none" stroke={pusher} strokeWidth={3} />
+      </g>
+    );
+  }
   return (
     <svg viewBox="0 0 760 104" width="100%" preserveAspectRatio="xMidYMid meet" role="img" aria-label={`Military track, pawn at ${pawn}`}>
-      <rect x={6} y={34} width={748} height={46} rx={9} fill="#7a5a34" {...LINE} />
+      {/* The rivals' glow behind their capitals */}
+      {([[-9, leftColor], [9, rightColor]] as const).map(([pos, color]) => (
+        <g key={`g${pos}`} className="swd-capital-glow" aria-hidden="true">
+          {[[66, 46, 0.06], [52, 38, 0.08], [40, 31, 0.1], [28, 25, 0.14]].map(([rx, ry, o]) => (
+            <ellipse key={rx} cx={xOf(pos) + 19} cy={57} rx={rx} ry={ry} fill={color} opacity={o} />
+          ))}
+        </g>
+      ))}
+      <rect x={2} y={30} width={756} height={54} rx={12} fill="#2e1d10" />
+      <rect x={6} y={34} width={748} height={46} rx={9} fill="#8a6434" {...LINE} />
+      <path d="M16 35.8 H744" {...line('#f2d08a', 1.2)} opacity={0.65} />
+      <path d="M16 78.4 H744" {...line('#3a2614', 1.4)} opacity={0.6} />
       {spaces}
+      {capital(-9)}
+      {capital(9)}
       {zoneMarks}
+      {liveZone !== null && (
+        <g className="swd-zone-live" aria-hidden="true">
+          <circle cx={xOf(liveZone) + 19} cy={16} r={19} fill="#ffd970" opacity={0.18} />
+          <circle cx={xOf(liveZone) + 19} cy={16} r={13.5} fill="#ffd970" opacity={0.3} />
+        </g>
+      )}
       {[-7, -4, -1.5, 1.5, 4, 7].map((p) => laurel(p, Math.abs(p) === 7 ? 10 : Math.abs(p) === 4 ? 5 : 2))}
       {[-9, 9].map((p) => (
         <g key={`w${p}`} transform={`translate(${xOf(p) + 19 - 13} 4) scale(1.1)`}>
           <path d="M5 18 L3 6 L8.5 11 L12 3 L15.5 11 L21 6 L19 18 Z" fill={GOLD} {...LINE} />
+          <path d="M6.6 16.6 L5.4 9.4 L8.8 12.4" {...line('#fff3c0', 1)} />
           <rect x={5} y={18} width={14} height={4} rx={1} fill={GOLD} {...LINE} />
         </g>
       ))}
@@ -3075,12 +3151,23 @@ export function MilitaryTrackArt({ pawn, awards, leftColor, rightColor, minerva 
           <path d="M-4 56 H4" {...line(INK, 1)} />
         </g>
       )}
+      {trail}
       {/* Positioned with a CSS transform so it slides (swd-pawn's transition). */}
       <g className="swd-pawn" style={{ transform: `translate(${px}px, 0px)` }}>
-        <ellipse cx={0} cy={77} rx={10} ry={3} fill="rgba(0,0,0,0.3)" />
-        <path d="M-8 40 L-6 32 H6 L8 40 V70 L5 76 H-5 L-8 70 Z" fill="#d12f26" {...LINE} strokeWidth={1.6} />
-        <path d="M-6 32 H6 L4 28 H-4 Z" fill="#e85a48" {...LINE} />
-        <path d="M0 42 V64 M-5 48 H5" {...line('#ffe7a6', 2)} />
+        <g className="swd-pawn-halo" aria-hidden="true">
+          <ellipse cx={0} cy={55} rx={24} ry={28} fill="#ff6a4a" opacity={0.12} />
+          <ellipse cx={0} cy={55} rx={15} ry={21} fill="#ff8a5a" opacity={0.18} />
+        </g>
+        <ellipse cx={0} cy={77} rx={11} ry={3.2} fill="rgba(0,0,0,0.35)" />
+        <g className="swd-pawn-body" key={`p${trailKey}`}>
+          <path d="M-8 40 L-6 32 H6 L8 40 V70 L5 76 H-5 L-8 70 Z" fill="#d12f26" />
+          <path d="M0 32 H6 L8 40 V70 L5 76 H0 Z" fill="#a51d17" />
+          <path d="M-5.6 42 V68" {...line('#ff8f78', 1.8)} />
+          <path d="M-6 32 H6 L4 28 H-4 Z" fill="#e85a48" {...LINE} />
+          <rect x={-8} y={38.6} width={16} height={3.2} fill={GOLD} {...THIN} />
+          <path d="M0 46 V64 M-4.6 51 H4.6" {...line('#ffe7a6', 2)} />
+          <path d="M-8 40 L-6 32 H6 L8 40 V70 L5 76 H-5 L-8 70 Z" fill="none" {...LINE} strokeWidth={1.6} />
+        </g>
       </g>
     </svg>
   );
